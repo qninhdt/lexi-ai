@@ -1,0 +1,51 @@
+[project]
+name = "lexi-ai"
+version = "0.1.0"
+description = "Lazy LLM dictionary library: synthesizes an English learner's dictionary with an LLM, anchored to Cambridge + WordNet."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "qninhdt", email = "qndt123@gmail.com" }
+]
+dependencies = [
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
+    "langchain-openai>=1.0",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "nltk>=3.9",
+]
+
+[project.optional-dependencies]
+# Local sense embeddings for semantic_search. Heavy (~200MB CPU); opt-in via
+# `uv sync --extra embeddings`. Lazy-imported in lexi_ai.embeddings only.
+embeddings = [
+    "torch>=2.2",
+    "transformers>=4.40",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.26",
+    "ruff>=0.9",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.7,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "lexi_ai"
+module-root = ""
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

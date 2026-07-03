@@ -1,0 +1,496 @@
+"""Lazy lookup API (Phase 6): the public ``Lexicon.get`` surface.
+
+Flow: normalize input -> resolve by match_key against words AND aliases ->
+branch on 0 / 1-done / 1-pending / N. Misses run the full lazy pipeline
+(reference -> generate -> persist) exactly once per key, guarded by a per-key
+asyncio lock plus a DB double-check (library, single-process — decision #18).
+
+``display`` is always ``render(norm)``; no display column is ever read.
+"""
+
+import asyncio
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
+
+from lexi_ai.config import Settings, get_settings
+from lexi_ai.constants import TIER_ORDER, canonical_cambridge_ref
+from lexi_ai.db import create_engine, create_session_factory, init_models, session_scope
+from lexi_ai.embeddings import Embedder
+from lexi_ai.generation.generator import Generator
+from lexi_ai.models import EntryLink, Sense, Word, WordAlias, WordTag
+from lexi_ai.normalize import match_key, render, tag_key
+from lexi_ai.persistence.repository import Repository
+from lexi_ai.read_models import (
+    AliasView,
+    Entry,
+    LinkView,
+    ReferenceView,
+    SearchResult,
+    SemanticHit,
+    SenseView,
+    TagCount,
+    TopicView,
+)
+from lexi_ai.references.cambridge import CambridgeSource
+from lexi_ai.references.loader import ReferenceBundle, ReferenceLoader
+from lexi_ai.references.wordnet import WordNetSource
+from lexi_ai.vectors import cosine, pack_vector, unpack_vector
+
+
+class Lexicon:
+    """Lazy-generation dictionary. Construct with :meth:`from_settings`."""
+
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        loader: ReferenceLoader,
+        generator: Generator,
+        repository: Repository,
+        engine: AsyncEngine | None = None,
+        embedder: Embedder | None = None,
+    ):
+        self._session_factory = session_factory
+        self._loader = loader
+        self._generator = generator
+        self._repo = repository
+        self._engine = engine
+        self._embedder = embedder or Embedder()
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    @classmethod
+    def from_settings(cls, settings: Settings | None = None) -> "Lexicon":
+        settings = settings or get_settings()
+        engine = create_engine(settings)
+        session_factory = create_session_factory(engine)
+        loader = ReferenceLoader(CambridgeSource(settings.cambridge_db_path), WordNetSource())
+        generator = Generator(settings=settings)
+        repository = Repository(session_factory)
+        embedder = Embedder(settings=settings)
+        return cls(session_factory, loader, generator, repository, engine=engine, embedder=embedder)
+
+    async def init(self) -> None:
+        """Create the generated-DB schema (idempotent)."""
+        engine = self._engine or self._session_factory.kw["bind"]
+        await init_models(engine)
+
+    # --- public API -------------------------------------------------------
+
+    async def search(self, query: str) -> list[SearchResult]:
+        """Search the dictionary for a raw string. Never generates (FREE).
+
+        Returns one ranked list (best first) mixing two kinds of hit:
+
+        * **generated** — a word already in the dictionary (``lexi_word_id`` set);
+          pass the id to :meth:`get`.
+        * **suggestion** — a reference word that *can* be generated
+          (``cambridge_id`` set); pass the result to :meth:`generate`.
+
+        A reference word whose ``match_key`` is already generated is folded into the
+        generated hit (shown once, as generated), so nothing is offered for
+        regeneration by mistake.
+        """
+        exact = await self._loader.cambridge.resolve_exact(query)
+        exact_ids = {ref.word_id for ref in exact}
+        ranked = await self._loader.cambridge.rank_similar(query)
+        # (cambridge_id, display, entry_type, score) — exact first at 1.0, then
+        # fuzzy; dedup by cambridge_id preserving the best (first) score.
+        refs: list[tuple[int, str, str | None, float]] = [
+            (r.word_id, r.display_form, r.entry_type, 1.0) for r in exact
+        ]
+        refs += [
+            (r.word_id, r.display_form, r.entry_type, score)
+            for r, score in ranked
+            if r.word_id not in exact_ids
+        ]
+        seen_ids: set[int] = set()
+        deduped: list[tuple[int, str, str | None, float]] = []
+        for cid, display, entry_type, score in refs:
+            if cid not in seen_ids:
+                seen_ids.add(cid)
+                deduped.append((cid, display, entry_type, score))
+
+        # A reference is "already generated" if a word carries its cambridge_id
+        # provenance (robust to display/norm key differences). Fold those into a
+        # single generated hit per lexi word so nothing is re-offered.
+        generated = await self._generated_by_cambridge([cid for cid, _, _, _ in deduped])
+        glosses = await self._loader.cambridge.first_definitions([cid for cid, _, _, _ in deduped])
+        results: list[SearchResult] = []
+        seen_lexi: set[int] = set()
+        for cid, display, entry_type, score in deduped:
+            hit = generated.get(cid)
+            if hit is not None:
+                lexi_id, gen_display, gen_type = hit
+                if lexi_id in seen_lexi:
+                    continue  # two Cambridge ids fold to one generated word
+                seen_lexi.add(lexi_id)
+                results.append(
+                    SearchResult(
+                        display=gen_display,
+                        entry_type=gen_type,
+                        score=score,
+                        lexi_word_id=lexi_id,
+                    )
+                )
+            else:
+                results.append(
+                    SearchResult(
+                        display=display,
+                        entry_type=entry_type,
+                        score=score,
+                        cambridge_id=cid,
+                        gloss=glosses.get(cid),
+                    )
+                )
+        results.sort(key=lambda r: (-r.score, r.display))
+        return results
+
+    async def get(self, lexi_word_id: int) -> Entry:
+        """Load a generated entry by its dictionary id. Never generates (FREE)."""
+        return await self._to_entry(lexi_word_id)
+
+    async def status(self, lexi_word_id: int) -> str | None:
+        """Status of a dictionary word (``done`` | ``pending`` | ``error``), or
+        ``None`` if no such id exists. Never generates (FREE)."""
+        async with session_scope(self._session_factory) as session:
+            row = await session.execute(select(Word.status).where(Word.id == lexi_word_id))
+            return row.scalar_one_or_none()
+
+    async def semantic_search(self, query: str, k: int = 10) -> list[SemanticHit]:
+        """Rank already-generated senses by meaning similarity to ``query``.
+
+        Embeds the query locally and ranks every done sense that carries a
+        current-model vector by cosine similarity, best first. FREE — never
+        generates a dictionary entry (only the short query is embedded). Returns
+        an empty list when nothing is embedded yet (e.g. the ``[embeddings]``
+        extra isn't installed) or ``k <= 0``.
+        """
+        if k <= 0:
+            return []
+        rows = await self._repo.embedded_senses(self._embedder.model_name)
+        if not rows:
+            return []
+        try:
+            qvec = await self._embedder.embed_one(query)
+        except Exception:  # noqa: BLE001 - best-effort: search degrades to [] on embed failure
+            return []
+        scored = sorted(
+            ((cosine(qvec, unpack_vector(row.embedding)), row) for row in rows),
+            key=lambda s: -s[0],
+        )
+        return [
+            SemanticHit(
+                lexi_word_id=row.word_id,
+                display=render(row.norm),
+                entry_type=row.entry_type,
+                score=score,
+                sense=SenseView(
+                    definition=row.definition, tier=row.tier, pos=None, cefr_level=None
+                ),
+            )
+            for score, row in scored[:k]
+        ]
+
+    async def backfill_embeddings(self, *, limit: int | None = None) -> int:
+        """Embed done senses that lack a current-model vector. Returns count embedded.
+
+        Fills gaps left by best-effort generation (extra not installed at gen
+        time) or by an embedding-model change (rows tagged with a different
+        model). Idempotent: a second call with everything embedded returns 0. No
+        LLM. Best-effort: returns 0 if the embeddings extra is unavailable.
+        """
+        return await self._embed_missing(limit=limit)
+
+    async def list_tags(self) -> list[TagCount]:
+        """Every topic tag with its live member count (over ``done`` words),
+        sorted count-desc then name. Never generates (FREE)."""
+        rows = await self._repo.count_tags()
+        return [TagCount(name=name, title=title, count=count) for name, title, count in rows]
+
+    async def words_by_tag(self, tag: str, *, limit: int | None = None) -> list[SearchResult]:
+        """Generated words carrying ``tag``, as generated-hit ``SearchResult``s.
+
+        The query is resolved via ``tag_key`` (the write-path function) so
+        ``"Business"``/``"business"``/``"cars"`` all hit the right tag. Never
+        generates (FREE); pass a hit's ``lexi_word_id`` to :meth:`get`.
+        """
+        rows = await self._repo.words_for_tag_key(tag_key(tag), limit=limit)
+        return [
+            SearchResult(display=render(norm), entry_type=etype, lexi_word_id=wid)
+            for wid, norm, etype in rows
+        ]
+
+    async def generate(self, source: SearchResult | str, *, force: bool = False) -> Entry:
+        """Generate (or return) the entry for a search result or a custom string.
+
+        * ``SearchResult`` — anchored to its Cambridge reference. If already
+          generated, returns the existing entry (no LLM) unless ``force``.
+        * ``str`` — a custom word Cambridge lacks; anchored to WordNet only.
+
+        A suggestion whose word already exists converges on that entry instead of
+        duplicating it. With ``force=True`` the entry is regenerated and overwritten
+        in place.
+        """
+        # Custom string: anchor to WordNet only, dedup by the string's match_key.
+        if isinstance(source, str):
+            return await self._generate_locked(match_key(source), source, None, force)
+
+        # Already-generated hit: return it, or re-anchor to its Cambridge id on force.
+        if source.lexi_word_id is not None:
+            if not force:
+                return await self._to_entry(source.lexi_word_id)
+            norm, cam_id = await self._word_norm_and_cambridge(source.lexi_word_id)
+            return await self._generate_locked(match_key(norm), norm, cam_id, True)
+
+        # Suggestion: cache-check by Cambridge provenance (robust to display/norm
+        # key differences), then generate anchored to that Cambridge id.
+        if source.cambridge_id is None:
+            raise ValueError("SearchResult has neither lexi_word_id nor cambridge_id")
+        if not force:
+            hit = await self._generated_by_cambridge([source.cambridge_id])
+            if source.cambridge_id in hit:
+                return await self._to_entry(hit[source.cambridge_id][0])
+        return await self._generate_locked(
+            match_key(source.display), source.display, source.cambridge_id, force
+        )
+
+    async def _generate_locked(
+        self, key: str, word: str, cambridge_id: int | None, force: bool
+    ) -> Entry:
+        """Locked generate-and-persist for one word key (double-checked)."""
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        try:
+            async with lock:
+                if not force:
+                    done = await self._done_ids(key)
+                    if done:
+                        return await self._to_entry(done[0])
+                result = await self._run_generation(word, cambridge_id)
+        finally:
+            self._evict_lock(key, lock)
+        return await self._entry_for_key(key, result)
+
+    async def _word_norm_and_cambridge(self, lexi_word_id: int) -> tuple[str, int | None]:
+        async with session_scope(self._session_factory) as session:
+            row = (
+                await session.execute(
+                    select(Word.norm, Word.cambridge_word_id).where(Word.id == lexi_word_id)
+                )
+            ).one()
+            return row[0], row[1]
+
+    async def _resolve(self, key: str) -> list[tuple[int, str]]:
+        """Return (word_id, status) for every word matching key via headword or alias."""
+        async with session_scope(self._session_factory) as session:
+            direct = await session.execute(
+                select(Word.id, Word.status).where(Word.match_key == key)
+            )
+            found: dict[int, str] = {wid: status for wid, status in direct}
+            via_alias = await session.execute(
+                select(Word.id, Word.status)
+                .join(WordAlias, WordAlias.word_id == Word.id)
+                .where(WordAlias.alias_match_key == key)
+            )
+            for wid, status in via_alias:
+                found.setdefault(wid, status)
+            return list(found.items())
+
+    async def _done_ids(self, key: str) -> list[int]:
+        """word_ids with a ``done`` entry for this match_key (headword or alias)."""
+        return [wid for wid, status in await self._resolve(key) if status == "done"]
+
+    async def _generated_by_cambridge(
+        self, cambridge_ids: list[int]
+    ) -> dict[int, tuple[int, str, str | None]]:
+        """For each Cambridge id already generated (``done``), its (lexi id, norm,
+        type). Keyed by ``cambridge_word_id`` provenance — robust to display/norm
+        key differences. First ``done`` row per id wins."""
+        if not cambridge_ids:
+            return {}
+        async with session_scope(self._session_factory) as session:
+            rows = await session.execute(
+                select(Word.cambridge_word_id, Word.id, Word.norm, Word.entry_type).where(
+                    Word.cambridge_word_id.in_(cambridge_ids), Word.status == "done"
+                )
+            )
+            out: dict[int, tuple[int, str, str | None]] = {}
+            for cam_id, wid, norm, entry_type in rows:
+                if cam_id is not None:
+                    out.setdefault(cam_id, (wid, render(norm), entry_type))
+            return out
+
+    # --- generation path --------------------------------------------------
+
+    async def _run_generation(self, word: str, cambridge_id: int | None):
+        """Build the bundle (Cambridge-anchored or custom), generate, persist.
+
+        After persistence, embed the new senses best-effort: an embedding failure
+        (extra missing, model load error) never fails the generation.
+        """
+        if cambridge_id is None:
+            bundle = await self._loader.bundle_custom(word)
+            cefr_map: dict[str, str] = {}
+        else:
+            got = await self._loader.bundle_by_id(cambridge_id)
+            if got is None:
+                raise ValueError(f"Cambridge word_id {cambridge_id} not found")
+            bundle = got
+            cefr_map = self._cefr_map(bundle)
+        try:
+            existing_tags = await self._repo.all_tags()
+        except Exception:  # noqa: BLE001 - vocab is best-effort; empty on failure
+            existing_tags = []
+        result = await self._generator.generate(bundle, existing_tags=existing_tags)
+        words = await self._repo.persist_result(
+            result, cambridge_word_id=cambridge_id, cambridge_cefr=cefr_map
+        )
+        await self._embed_words([w.id for w in words])
+        return result
+
+    # --- embeddings -------------------------------------------------------
+
+    async def _embed_words(self, word_ids: list[int]) -> int:
+        """Embed the senses of the given words, best-effort. Returns count embedded."""
+        return await self._embed_missing(word_ids=word_ids)
+
+    async def _embed_missing(
+        self, word_ids: list[int] | None = None, limit: int | None = None
+    ) -> int:
+        """Embed senses lacking a current-model vector; persist packed bytes.
+
+        Shared by the post-generation hook (``word_ids`` set) and
+        :meth:`backfill_embeddings` (``word_ids`` None). Best-effort: ANY embedding
+        failure (extra missing, model load, OOM, device, a misbehaving encoder)
+        embeds nothing and returns 0 — an embedding error must never fail an
+        already-persisted generation.
+        """
+        pending = await self._repo.senses_needing_embedding(
+            self._embedder.model_name, word_ids=word_ids, limit=limit
+        )
+        if not pending:
+            return 0
+        texts = [self._embed_text(norm, definition) for _sid, norm, definition in pending]
+        try:
+            vectors = await self._embedder.embed(texts)
+            if not vectors:
+                return 0
+            dim = len(vectors[0])
+            packed = [
+                (sid, pack_vector(vec))
+                for (sid, _norm, _definition), vec in zip(pending, vectors, strict=True)
+            ]
+        except Exception:  # noqa: BLE001 - best-effort: never fail generation on embed
+            return 0
+        return await self._repo.store_embeddings(packed, self._embedder.model_name, dim)
+
+    @staticmethod
+    def _embed_text(norm: str, definition: str) -> str:
+        """The text embedded for one sense: display headword + its definition."""
+        return f"{render(norm)}: {definition}"
+
+    async def _entry_for_key(self, key: str, result) -> Entry:
+        """Return the entry for the just-generated key, or the first unit as fallback."""
+        done = await self._done_ids(key)
+        if done:
+            return await self._to_entry(done[0])
+        # The queried key didn't match any generated unit exactly (e.g. the model
+        # normalized the norm differently); fall back to the first persisted unit.
+        fallback = await self._resolve(match_key(result.units[0].norm))
+        return await self._to_entry(fallback[0][0])
+
+    def _evict_lock(self, lock_key: str, lock: asyncio.Lock) -> None:
+        """Drop a per-key lock once idle, so _locks does not grow unbounded."""
+        if not lock.locked() and self._locks.get(lock_key) is lock:
+            del self._locks[lock_key]
+
+    @staticmethod
+    def _cefr_map(bundle: ReferenceBundle) -> dict[str, str]:
+        """Cambridge sense_id -> cefr, for the repository's Cambridge-first rule.
+
+        Keyed by the canonical ref form so it matches whatever the model echoes
+        back as ``source_ref`` (bare ``42`` or the prompt-shown ``sense#42``).
+        """
+        return {
+            canonical_cambridge_ref(str(s.cambridge_sense_id)): s.cefr_level
+            for s in bundle.cambridge_senses
+            if s.cefr_level
+        }
+
+    # --- read model assembly ---------------------------------------------
+
+    async def _to_entry(self, word_id: int) -> Entry:
+        async with session_scope(self._session_factory) as session:
+            word = (
+                await session.execute(
+                    select(Word)
+                    .options(
+                        selectinload(Word.senses).selectinload(Sense.references),
+                        selectinload(Word.senses).selectinload(Sense.examples),
+                        selectinload(Word.senses).selectinload(Sense.collocations),
+                        selectinload(Word.aliases),
+                        selectinload(Word.links_out).selectinload(EntryLink.to_word),
+                        selectinload(Word.tags).selectinload(WordTag.tag),
+                    )
+                    .where(Word.id == word_id)
+                )
+            ).scalar_one()
+            return self._build_entry(word)
+
+    @staticmethod
+    def _build_entry(word: Word) -> Entry:
+        senses = sorted(word.senses, key=lambda s: (TIER_ORDER.get(s.tier, 99), s.sense_order))
+        return Entry(
+            display=render(word.norm),
+            norm=word.norm,
+            entry_type=word.entry_type,
+            pos=word.pos,
+            status=word.status,
+            senses=[
+                SenseView(
+                    definition=s.definition,
+                    tier=s.tier,
+                    pos=s.pos,
+                    cefr_level=s.cefr_level,
+                    examples=[e.text for e in sorted(s.examples, key=lambda e: e.example_order)],
+                    references=[
+                        ReferenceView(source=r.source, source_ref=r.source_ref)
+                        for r in s.references
+                    ],
+                    guideword=s.guideword,
+                    # Stored comma-joined (a join of validated tokens or None);
+                    # split back to a list, None -> [].
+                    grammar=s.grammar.split(",") if s.grammar else [],
+                    register=s.register,
+                    connotation=s.connotation,
+                    collocations=[
+                        c.text for c in sorted(s.collocations, key=lambda c: c.collocation_order)
+                    ],
+                )
+                for s in senses
+            ],
+            aliases=[
+                AliasView(
+                    display=render(a.alias_norm),
+                    alias_norm=a.alias_norm,
+                    type=a.type,
+                    dialect=a.dialect,
+                )
+                for a in word.aliases
+            ],
+            # word_family / confused_with word-references surface HERE, via their
+            # rel_type — no dedicated field. They ride the normalized links_out
+            # path like synonyms; grouping by rel_type is a consumer concern.
+            links=[
+                LinkView(
+                    display=render(link.to_word.norm),
+                    norm=link.to_word.norm,
+                    rel_type=link.rel_type,
+                )
+                for link in word.links_out
+            ],
+            topics=[
+                TopicView(name=wt.tag.name, title=wt.tag.title)
+                for wt in sorted(word.tags, key=lambda wt: wt.tag.name)
+            ],
+        )
