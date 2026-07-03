@@ -64,6 +64,7 @@ The demos 01–07 use a `lookup(lex, raw)` helper in `_common.py` that wraps
 | `09_semantic_search.py` | rank generated senses by **meaning** via local embeddings (`semantic_search`, `backfill_embeddings`) |
 | `10_topic_tags.py` | open-vocabulary **topic tags** per word; browse via `list_tags` / `words_by_tag` |
 | `11_word_enrichment.py [word]` | learner-dictionary **enrichments**: guideword, grammar, register, connotation, collocations + word-family / confused-with links |
+| `12_question_engine.py [word]` | **question engine**: generate + grade questions across 4 formats; llm questions persist for 0-token reuse |
 
 ```bash
 uv run python examples/08_resolve_and_pick.py serendipity
@@ -128,6 +129,30 @@ uv run python examples/11_word_enrichment.py bank
 
 All fields are best-effort: a sense the model leaves unmarked still persists
 `done`, with empty/`None` enrichments.
+
+## Question engine (example 12)
+
+Turns a done word into vocabulary questions across four formats and grades
+answers. The three axes — format, generator, scorer — are wired through
+`answer_kind`, and the engine is a pure dispatcher: each format is a
+self-contained plugin that owns its own generation, grading, and persistence.
+
+- `definition_mcq` (rule) — "which word means <definition>?"
+- `cloze` (rule) — fill the blank in a real example sentence
+- `contextual_mcq` (llm) — MCQ from a novel context; **persists** for reuse
+- `use_in_sentence` (rule prompt, **llm-graded** by a rubric)
+
+Only `contextual_mcq` talks to an LLM and persists — it calls the store itself, so
+a re-run lists it back at zero token cost. The other three are ephemeral. Grading
+dispatches to the plugin: MCQs grade deterministically by index/value; the
+free-text answer is judged against a rubric by the LLM.
+
+```bash
+uv run python examples/12_question_engine.py eloquent
+```
+
+Distractors are best-effort (semantic neighbours, then shared topic tags), so an
+MCQ degrades to fewer options rather than fabricating a wrong answer.
 
 ## Notes
 

@@ -8,7 +8,10 @@ asyncio lock plus a DB double-check (library, single-process — decision #18).
 ``display`` is always ``render(norm)``; no display column is ever read.
 """
 
+from __future__ import annotations
+
 import asyncio
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -38,6 +41,9 @@ from lexi_ai.references.loader import ReferenceBundle, ReferenceLoader
 from lexi_ai.references.wordnet import WordNetSource
 from lexi_ai.vectors import cosine, pack_vector, unpack_vector
 
+if TYPE_CHECKING:
+    from lexi_ai.questions.engine import QuestionEngine
+
 
 class Lexicon:
     """Lazy-generation dictionary. Construct with :meth:`from_settings`."""
@@ -58,9 +64,11 @@ class Lexicon:
         self._engine = engine
         self._embedder = embedder or Embedder()
         self._locks: dict[str, asyncio.Lock] = {}
+        # Lazy questions engine (built on first access; see the `questions` property).
+        self._questions: QuestionEngine | None = None
 
     @classmethod
-    def from_settings(cls, settings: Settings | None = None) -> "Lexicon":
+    def from_settings(cls, settings: Settings | None = None) -> Lexicon:
         settings = settings or get_settings()
         engine = create_engine(settings)
         session_factory = create_session_factory(engine)
@@ -74,6 +82,60 @@ class Lexicon:
         """Create the generated-DB schema (idempotent)."""
         engine = self._engine or self._session_factory.kw["bind"]
         await init_models(engine)
+
+    @property
+    def questions(self) -> QuestionEngine:
+        """The question engine (generate/list/get/delete/grade). Built lazily.
+
+        Constructing a :class:`Lexicon` costs nothing extra until this is first
+        accessed. The two llm runnables (contextual-MCQ generator, rubric judge)
+        are built from settings the same way generation builds its model; a caller
+        wanting fakes constructs the engine directly instead of via this property.
+        """
+        if self._questions is None:
+            from lexi_ai.questions.distractors import DistractorProvider
+            from lexi_ai.questions.engine import QuestionEngine
+            from lexi_ai.questions.repository import QuestionRepository
+
+            self._questions = QuestionEngine(
+                QuestionRepository(self._session_factory),
+                DistractorProvider(self._repo, self._embedder),
+                llm=self._build_questions_llm(),
+                judge_llm=self._build_judge_llm(),
+            )
+        return self._questions
+
+    def _build_questions_llm(self) -> object | None:
+        """ChatOpenAI bound to ``GeneratedMCQ`` for the contextual-MCQ plugin."""
+        from lexi_ai.questions.schemas import GeneratedMCQ
+
+        return self._build_structured(GeneratedMCQ)
+
+    def _build_judge_llm(self) -> object | None:
+        """ChatOpenAI bound to ``Judgment`` for the rubric scorer."""
+        from lexi_ai.questions.schemas import Judgment
+
+        return self._build_structured(Judgment)
+
+    def _build_structured(self, schema: type) -> object | None:
+        """Build a structured-output runnable bound to ``schema`` from settings.
+
+        Returns ``None`` when no LLM is configured (empty api key), so the
+        llm-dependent formats degrade gracefully instead of failing at import.
+        Imported lazily so constructing a Lexicon needs no langchain/creds.
+        """
+        settings = get_settings()
+        if not settings.llm_api_key:
+            return None
+        from langchain_openai import ChatOpenAI
+
+        llm = ChatOpenAI(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            model=settings.llm_model,
+            temperature=settings.llm_temperature,
+        )
+        return llm.with_structured_output(schema)
 
     # --- public API -------------------------------------------------------
 
@@ -446,6 +508,7 @@ class Lexicon:
             entry_type=word.entry_type,
             pos=word.pos,
             status=word.status,
+            word_id=word.id,
             senses=[
                 SenseView(
                     definition=s.definition,
@@ -466,6 +529,7 @@ class Lexicon:
                     collocations=[
                         c.text for c in sorted(s.collocations, key=lambda c: c.collocation_order)
                     ],
+                    sense_id=s.id,
                 )
                 for s in senses
             ],

@@ -85,6 +85,11 @@ class Word(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    questions: Mapped[list["Question"]] = relationship(
+        back_populates="word",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class WordAlias(Base):
@@ -252,3 +257,32 @@ class WordTag(Base):
 
     word: Mapped["Word"] = relationship(back_populates="tags")
     tag: Mapped["Tag"] = relationship(back_populates="words")
+
+
+class Question(Base):
+    """A generated vocabulary question about a word (optionally a specific sense).
+
+    The polymorphic per-format content lives in ``payload`` as an app-serialized
+    JSON string (portable ``Text``, never native JSONB), so a new format needs no
+    new table — only a new plugin. Rows exist only for questions a plugin chose to
+    persist (it calls the question store itself); ephemeral questions never reach
+    here. No UNIQUE key: questions are content, not identity — the app decides dup
+    tolerance (contrast ``words.match_key``).
+    """
+
+    __tablename__ = "questions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    word_id: Mapped[int] = mapped_column(
+        ForeignKey("words.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Nullable: a whole-word question targets no single sense.
+    sense_id: Mapped[int | None] = mapped_column(ForeignKey("senses.id", ondelete="CASCADE"))
+    format: Mapped[str] = mapped_column(String(32), nullable=False)  # ∈ QUESTION_FORMATS
+    answer_kind: Mapped[str] = mapped_column(String(16), nullable=False)  # ∈ ANSWER_KINDS
+    payload: Mapped[str] = mapped_column(Text, nullable=False)  # app-level JSON string
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, server_default=func.now()
+    )
+
+    word: Mapped["Word"] = relationship(back_populates="questions")

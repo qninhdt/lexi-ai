@@ -36,6 +36,14 @@ lexi_ai/
     generator.py    LangChain 1.x ChatOpenAI.with_structured_output; retry
   persistence/
     repository.py   THE write path: upsert, dedup, stub-link, cefr, error path
+  questions/        generate + grade vocabulary questions from a done entry
+    base.py         plugin contract: QuestionContext, QuestionFormat, registry
+    distractors.py  best-effort wrong-option ladder (semantic -> topic)
+    schemas.py      GeneratedMCQ / Judgment (llm) + per-format payload validators
+    scoring.py      shared async grade helpers (single_choice / text_span / rubric)
+    formats.py      the four format plugins + registry wiring
+    repository.py   QuestionRepository (the questions write path; JSON at boundary)
+    engine.py       QuestionEngine — the dispatcher over plugins
   api.py            Lexicon.get() — the public lazy-lookup surface
   prep/
     phrase_overlap.py  Phase-7 one-off: classify Cambridge phrase_titles
@@ -58,7 +66,7 @@ is the durable backstop.
 
 ## Data model
 
-Nine tables in the *generated* DB (separate from read-only Cambridge, no cross-DB
+Ten tables in the *generated* DB (separate from read-only Cambridge, no cross-DB
 FK — decision #14):
 
 - `words` — `norm`, `match_key` (UNIQUE), `entry_type`, `status`
@@ -83,6 +91,11 @@ FK — decision #14):
 - `tags` — open-vocabulary topic tags; `name` slug + `title` display + `tag_key`
   (UNIQUE, the topic analogue of `match_key`, computed only by the repository).
 - `word_tags` — word↔tag join; UNIQUE(word_id, tag_id).
+- `questions` — generated vocabulary questions about a word (optionally a sense);
+  `format`, `answer_kind`, and a `payload` JSON string (app-serialized, portable
+  `Text` — the per-format content, so a new format needs no new table). No UNIQUE
+  key: questions are content, not identity. Only questions a plugin chose to
+  persist get a row (see below).
 
 **Word enrichment** (learner-dictionary content, LLM-authored): each generated
 word gets seven enrichments emitted in the same LLM call as senses — synthesized
@@ -103,6 +116,55 @@ dedups case/plural variants on the write path, and resolve-or-create under the
 UNIQUE key keeps one row per tag (title set once, first-seen). Browse via
 `list_tags()` (live member count) and `words_by_tag(tag)` (exact filter, resolved
 through `tag_key`). Both FREE — 0 LLM calls.
+
+## Question engine
+
+`Lexicon.questions` turns a `done` entry into vocabulary questions and grades
+answers. It *manages* questions (create / read / delete / grade); it does not
+*use* them — rotation, quiz sessions, SRS, and progress are the application's job.
+
+**Three axes wired through `answer_kind`.** A **format** declares an `answer_kind`
+(what an answer looks like: `single_choice` / `text_span` / `free_text`); a
+**generator** turns an entry into a question; a **scorer** turns `(question,
+answer)` into a score. A format is not bound to a backend — a rule and an LLM are
+just two ways to implement the same interface.
+
+**One plugin per format; the engine is a dispatcher.** Each format is a single
+plugin that owns BOTH halves — `async generate` and `async grade` — so the two
+cannot drift. The engine looks a plugin up by `format`, hands it a
+`QuestionContext` of capabilities (the entry, a distractor provider, optional
+bound `llm`/`judge` runnables, and a narrow `store` façade), and `await`s it. The
+engine never inspects which backend a plugin uses, and grading dispatches by
+`format` to the plugin, which delegates to a shared helper keyed to its
+`answer_kind` — so the same `grade_single_choice` grades any single-choice
+question regardless of who generated it.
+
+**A plugin owns its persistence.** There is no persistence rule in the engine: a
+plugin that wants a row calls `ctx.store.insert(...)` itself, inside its own
+`generate`; every other plugin returns ephemeral questions (`id=None`). The engine
+cannot tell the difference. `store` is the CRUD façade of `QuestionRepository`
+(the questions write path), so plugins get a DB door, not a session. Grading needs
+no DB — a freshly generated, never-stored question grades fine.
+
+The seed set proves the abstraction by covering every backend combination:
+
+| Format | answer_kind | Generator | Grader | Persists |
+|--------|-------------|-----------|--------|----------|
+| `definition_mcq` | `single_choice` | rule | rule (index) | no |
+| `cloze` | `text_span` | rule | rule (`match_key`) | no |
+| `contextual_mcq` | `single_choice` | llm | rule (index) | yes |
+| `use_in_sentence` | `free_text` | rule | llm (rubric) | no |
+
+`contextual_mcq` (llm-generated, rule-graded) and `use_in_sentence` (rule-generated,
+llm-graded) are the cross-axis proofs. Adding a format is one plugin class + one
+`register(...)` line; the registry validates the format↔answer_kind coupling at
+import time (a mis-wire is an import error). Payload is app-level JSON in a `Text`
+column (the one deviation from native typing), (de)serialized only at the
+repository boundary, which rejects an embedded NUL so it round-trips safely on
+Postgres. Distractors are best-effort (semantic neighbours, then shared topic
+tags); an MCQ degrades to fewer options rather than fabricating. The LLM plugin and
+judge are injectable, so the whole subsystem tests with fake runnables and zero
+network.
 
 **Portability:** only `Text`/`String`/`Integer`/`DateTime`/`LargeBinary` — no
 JSONB/ARRAY/native
@@ -132,10 +194,14 @@ Env vars (prefix `LEXI_`): `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`,
 
 ## Testing
 
-174 tests, `uv run pytest`. No live LLM calls (fake runnables). Reference and
+206 tests, `uv run pytest`. No live LLM calls (fake runnables). Reference and
 phrase-overlap tests run against the real Cambridge `./data` and skip if absent.
 The suite includes regression tests for a multi-agent review pass: Postgres
 NUL-safety of `match_key`, concurrent-insert savepoint recovery, the
 Cambridge-first CEFR contract (`sense#42` vs bare `42`), per-key lock eviction,
 and the word-enrichment write→read spine (word-reference normalization/dedup,
 closed-vocab enum rejection, collocation ordering + sanitization, eager-load).
+The question engine is covered end-to-end: each format's generate + grade, the
+two cross-axis proofs, plugin-owned persistence (the engine stays blind to it),
+the registry coupling guard, a one-line new-format extensibility proof, and
+payload round-trip (unicode + NUL rejection).

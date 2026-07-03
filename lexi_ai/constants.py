@@ -100,6 +100,24 @@ CONNOTATIONS = frozenset({"positive", "negative", "neutral"})
 # sense_reference.source
 REFERENCE_SOURCES = frozenset({"cambridge", "wordnet"})
 
+# --- questions subsystem vocabularies -------------------------------------
+#
+# Three axes wired through ``answer_kind``: a format DECLARES an answer_kind, a
+# generator PRODUCES a question, a scorer GRADES it — dispatched by answer_kind,
+# never by which backend produced the question. Adding a format = one id here +
+# one registry row.
+
+# questions.format (v1 seed set).
+QUESTION_FORMATS = frozenset({"definition_mcq", "cloze", "contextual_mcq", "use_in_sentence"})
+
+# questions.answer_kind — the coupling contract a scorer dispatches on.
+ANSWER_KINDS = frozenset({"single_choice", "text_span", "free_text"})
+
+# Score.kind — how a verdict was reached (deterministic rule vs llm judge). This
+# is caller-facing OUTPUT the scorer reports about itself; the engine never reads
+# it (the engine is interface-driven and does not branch on backend identity).
+SCORE_KINDS = frozenset({"rule", "llm"})
+
 
 def canonical_cambridge_ref(source_ref: str) -> str:
     """Canonicalize a Cambridge sense reference to its bare numeric id.

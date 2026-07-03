@@ -28,6 +28,10 @@ class SenseView:
     register: str | None = None
     connotation: str | None = None
     collocations: list[str] = field(default_factory=list)
+    # DB id of the sense, when this view was assembled from a persisted sense
+    # (None for views synthesized without a row). Lets the questions engine record
+    # which sense a generated question targets, for provenance.
+    sense_id: int | None = None
 
 
 @dataclass
@@ -60,6 +64,9 @@ class Entry:
     entry_type: str | None
     pos: str | None
     status: str
+    # DB id of the underlying word. Lets the questions engine stamp/list questions
+    # by word without a second lookup. Populated in ``api._build_entry``.
+    word_id: int
     senses: list[SenseView] = field(default_factory=list)
     aliases: list[AliasView] = field(default_factory=list)
     links: list[LinkView] = field(default_factory=list)
@@ -112,3 +119,36 @@ class SemanticHit:
     entry_type: str | None
     score: float
     sense: SenseView
+
+
+@dataclass
+class Question:
+    """A vocabulary question about a word (public read view).
+
+    ``id`` is ``None`` for an ephemeral question a plugin chose not to persist;
+    a persisted question carries its DB id. ``payload`` is the parsed per-format
+    dict (prompt, options, correct index, rubric, ... — shape depends on
+    ``format``); the DB stores it as a JSON string, the read layer parses it.
+    """
+
+    id: int | None
+    word_id: int
+    sense_id: int | None
+    format: str
+    answer_kind: str
+    payload: dict
+
+
+@dataclass
+class Score:
+    """The result of grading an answer to a :class:`Question`.
+
+    ``kind`` records how the verdict was reached (``'rule'`` deterministic vs
+    ``'llm'`` judge) for the caller's information only. ``feedback`` is populated
+    by the llm-judge path and is ``None`` for rule grading.
+    """
+
+    correct: bool
+    score: float  # 0.0..1.0
+    kind: str  # ∈ SCORE_KINDS
+    feedback: str | None = None

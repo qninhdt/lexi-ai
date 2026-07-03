@@ -185,9 +185,9 @@ def test_schema_compiles_on_both_dialects():
 
     from lexi_ai.models import Base
 
-    # The tag + collocation tables ride the same portability guarantee as the rest.
+    # The tag + collocation + questions tables ride the same portability guarantee.
     table_names = set(Base.metadata.tables)
-    assert {"tags", "word_tags", "collocations"} <= table_names
+    assert {"tags", "word_tags", "collocations", "questions"} <= table_names
 
     for dialect in (postgresql.dialect(), sqlite.dialect()):
         for table in Base.metadata.sorted_tables:
