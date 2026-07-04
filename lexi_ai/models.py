@@ -259,6 +259,102 @@ class WordTag(Base):
     tag: Mapped["Tag"] = relationship(back_populates="words")
 
 
+class Theme(Base):
+    """A user-authored style voice ("Harry Potter", "humorous"). ``theme_key`` is
+    the lossy dedup key (repository-computed via ``normalize.theme_key``, like
+    ``tag_key`` but WITHOUT singularization — a name is a proper voice, not a noun
+    phrase). ``name``/``style_prompt`` are set once on create (first-seen wins).
+
+    Themes are addressed BY KEY at the API (``get``/``generate_theme`` take a
+    ``theme_key`` string), so — unlike ``tag_key`` — the key is intentionally
+    exposed in the read model.
+    """
+
+    __tablename__ = "themes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Lossy, CODE-computed. UNIQUE = durable dedup + concurrency guard (like tags).
+    theme_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    style_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, server_default=func.now()
+    )
+
+    themed_senses: Mapped[list["ThemedSense"]] = relationship(
+        back_populates="theme",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class ThemedSense(Base):
+    """A neutral sense restyled in a theme's voice. One row per (sense, theme).
+    Deleting either the neutral sense or the theme cascades this away."""
+
+    __tablename__ = "themed_senses"
+    __table_args__ = (UniqueConstraint("sense_id", "theme_id", name="uq_themed_sense"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sense_id: Mapped[int] = mapped_column(
+        ForeignKey("senses.id", ondelete="CASCADE"), nullable=False
+    )
+    theme_id: Mapped[int] = mapped_column(
+        ForeignKey("themes.id", ondelete="CASCADE"), nullable=False
+    )
+    definition: Mapped[str] = mapped_column(Text, nullable=False)
+
+    theme: Mapped["Theme"] = relationship(back_populates="themed_senses")
+    examples: Mapped[list["ThemedExample"]] = relationship(
+        back_populates="themed_sense",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class ThemedExample(Base):
+    """A fresh in-voice example authored for a themed sense (mirrors ``Example``)."""
+
+    __tablename__ = "themed_examples"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    themed_sense_id: Mapped[int] = mapped_column(
+        ForeignKey("themed_senses.id", ondelete="CASCADE"), nullable=False
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    example_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    themed_sense: Mapped["ThemedSense"] = relationship(back_populates="examples")
+
+
+class Asset(Base):
+    """A content-addressed derived asset (translation text, TTS clip).
+
+    Identity is ``(content_hash, kind, params)`` — the hash of the EXACT source
+    text plus a normalized param token. No FK to senses/words: the source is
+    identified by its CONTENT, not its location, so themed vs neutral text hash
+    differently (distinct rows) and identical text dedups for free. ``text_value``
+    holds inline results (translation); ``file_path`` points at a binary clip
+    (TTS) relative to ``LEXI_ASSET_CACHE_DIR``.
+    """
+
+    __tablename__ = "assets"
+    __table_args__ = (
+        UniqueConstraint("content_hash", "kind", "params", name="uq_asset_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # ∈ ASSET_KINDS
+    params: Mapped[str] = mapped_column(String(64), nullable=False)
+    text_value: Mapped[str | None] = mapped_column(Text)
+    file_path: Mapped[str | None] = mapped_column(Text)
+    meta: Mapped[str | None] = mapped_column(Text)  # optional app-JSON
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, server_default=func.now()
+    )
+
+
 class Question(Base):
     """A generated vocabulary question about a word (optionally a specific sense).
 

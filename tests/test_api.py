@@ -597,3 +597,32 @@ async def test_generate_exposes_topics_and_injects_vocab(engine):
     # The second generation must SEE the existing vocab injected for reuse.
     await lex.generate((await lex.search("apple"))[0])
     assert ("business", "Business & Finance") in gen.last_existing_tags
+
+
+async def test_get_senses_resolves_by_id(engine):
+    lex, _gen, _sf = _make_lexicon(
+        engine,
+        cam_words={1: ("color", "word", ["color"])},
+        norm_by_id={1: "color"},
+        results_by_word={match_key("color"): GeneratedResult(units=[_entry("color")])},
+    )
+    entry = await lex.generate((await lex.search("color"))[0])
+    sense_ids = [s.sense_id for s in entry.senses]
+    assert sense_ids and all(sid is not None for sid in sense_ids)
+
+    views = await lex.get_senses(sense_ids)
+    assert len(views) == len(sense_ids)
+    assert views[0].definition == "def of color"
+    assert views[0].sense_id == sense_ids[0]
+
+
+async def test_get_senses_empty_and_missing(engine):
+    lex, _gen, _sf = _make_lexicon(
+        engine,
+        cam_words={1: ("color", "word", ["color"])},
+        norm_by_id={1: "color"},
+        results_by_word={match_key("color"): GeneratedResult(units=[_entry("color")])},
+    )
+    assert await lex.get_senses([]) == []
+    # Unknown ids are skipped, not errored.
+    assert await lex.get_senses([999999]) == []

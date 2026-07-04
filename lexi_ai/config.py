@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     llm_temperature: float = 0.1
 
+    # Optional per-task model override for translation. Empty → falls back to
+    # ``llm_model`` (shares the same base_url/api_key/temperature).
+    translate_model: str = ""
+
     # Generated dictionary DB (read/write). Async SQLite by default.
     db_url: str = "sqlite+aiosqlite:///./lexi.db"
 
@@ -36,6 +40,19 @@ class Settings(BaseSettings):
     embedding_device: str = "cpu"
     embedding_batch_size: int = 32
     embedding_max_length: int = 256
+
+    # Content-addressed asset cache (translation text in DB, TTS clips on disk).
+    # ``asset_cache_dir`` is where binary assets (TTS) are written, sharded by
+    # content-hash prefix; DB rows store paths RELATIVE to it.
+    asset_cache_dir: str = "./lexi-assets"
+
+    # TTS provider (interface + stub this round — synthesis is NOT wired yet).
+    # Defined so the seam is complete/documented; a real provider reads these.
+    tts_base_url: str = ""
+    tts_api_key: str = ""
+    tts_model: str = ""
+    tts_voice: str = "alloy"
+    tts_format: str = "mp3"
 
 
 def get_settings() -> Settings:

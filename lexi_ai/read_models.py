@@ -74,6 +74,35 @@ class Entry:
 
 
 @dataclass
+class Theme:
+    """A style voice (public read view). ``key`` is the normalized dedup key and
+    is intentionally exposed — callers pass it back to ``get``/``generate_theme``
+    to address a theme (unlike ``tag_key``, which stays repository-internal)."""
+
+    key: str
+    name: str
+    style_prompt: str
+
+
+@dataclass
+class Asset:
+    """A cached derived asset (public read view). ``text_value`` holds inline
+    results (translation); ``file_path`` points at a binary clip (TTS) relative
+    to the asset cache dir. ``ready`` tells a ready asset from a placeholder."""
+
+    kind: str
+    params: str
+    text_value: str | None = None
+    file_path: str | None = None
+    meta: str | None = None
+
+    @property
+    def ready(self) -> bool:
+        """True when the asset carries usable content (inline text or a file)."""
+        return self.text_value is not None or self.file_path is not None
+
+
+@dataclass
 class SearchResult:
     """One hit from :meth:`Lexicon.search` — a single ranked list mixes two kinds.
 

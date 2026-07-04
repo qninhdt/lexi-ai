@@ -18,6 +18,15 @@ cost zero tokens.
   (word-family, confused-with), all emitted in the same LLM call.
 - **Topic tags & semantic search** — browse words by open-vocabulary topic tags,
   or rank senses by meaning with local embeddings (optional extra).
+- **Themes** — restyle an entry's definitions and examples in a named voice
+  ("Harry Potter", "humorous") authored via `create_theme`. Themed content
+  overlays the neutral entry (the canonical `match_key` invariant is untouched)
+  and is generated once after the neutral content, then cached — the app picks
+  one active theme like a light/dark-mode switch.
+- **Cached assets** — content-addressed cache for derived text: **translation**
+  (real, LLM-backed) and **text-to-speech** (interface + stub this round). Keyed
+  by a hash of the exact source text, so themed vs neutral text get distinct
+  assets, identical text dedups, and a repeat call spends zero tokens.
 - **Question engine** — turn a generated word into vocabulary questions across
   four formats and grade answers. Each format is a self-contained plugin owning
   its own generation, grading, and persistence; the engine is a pure dispatcher.
@@ -55,6 +64,16 @@ async def main():
     score = await lex.questions.grade(questions[0], answer=2)
     print(score.correct, score.score)
 
+    # Themes: author a voice once, generate themed content, read the overlay.
+    theme = await lex.create_theme("Pirate", "narrate like a salty pirate")
+    await lex.generate_theme(entry.word_id, theme.key)   # one LLM call, cached
+    themed = await lex.get(entry.word_id, theme_key=theme.key)
+    print(themed.senses[0].definition)                   # restyled definition
+
+    # Cached assets: translation is real; a repeat call spends zero tokens.
+    print(await lex.translate(entry.senses[0].definition, "vi"))
+    # TTS is interface-only this round — the stub raises until a provider lands.
+
 asyncio.run(main())
 ```
 
@@ -62,6 +81,16 @@ Configuration is env-driven (prefix `LEXI_`): `LLM_BASE_URL`, `LLM_API_KEY`,
 `LLM_MODEL`, `DB_URL`, `CAMBRIDGE_DB_PATH`. Copy `examples/.env.example` to `.env`
 to get started. The model is **never hardcoded** — it comes only from
 `LEXI_LLM_MODEL`.
+
+Asset and theme knobs (all `LEXI_`-prefixed):
+
+- `ASSET_CACHE_DIR` — where TTS clips are written (default `./lexi-assets`);
+  translation results live in the DB.
+- `TRANSLATE_MODEL` — optional per-task model override for translation; falls
+  back to `LLM_MODEL` when empty.
+- `TTS_BASE_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `TTS_FORMAT` —
+  reserved for the TTS provider. Defined but **unused this round** (TTS ships as
+  an interface + stub; the stub raises rather than caching fake audio).
 
 ### Question formats (v1)
 

@@ -100,6 +100,9 @@ CONNOTATIONS = frozenset({"positive", "negative", "neutral"})
 # sense_reference.source
 REFERENCE_SOURCES = frozenset({"cambridge", "wordnet"})
 
+# assets.kind — content-addressed derived-asset cache (translation, TTS).
+ASSET_KINDS = frozenset({"translate", "tts"})
+
 # --- questions subsystem vocabularies -------------------------------------
 #
 # Three axes wired through ``answer_kind``: a format DECLARES an answer_kind, a

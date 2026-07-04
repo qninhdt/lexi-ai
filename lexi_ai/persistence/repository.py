@@ -14,8 +14,8 @@ durable backstop; a concurrent insert that trips it is recovered via SAVEPOINT
 re-fetch (decision #18 — single-process library, so this is a rare edge).
 """
 
-from collections.abc import Iterable
-from typing import NamedTuple, cast
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -38,11 +38,17 @@ from lexi_ai.models import (
     Sense,
     SenseReference,
     Tag,
+    Theme,
+    ThemedExample,
+    ThemedSense,
     Word,
     WordAlias,
     WordTag,
 )
-from lexi_ai.normalize import _CTRL_RE, match_key, tag_key
+from lexi_ai.normalize import _CTRL_RE, match_key, tag_key, theme_key
+
+if TYPE_CHECKING:
+    from lexi_ai.theming.schemas import ThemedResult
 
 
 class EmbeddedSenseRow(NamedTuple):
@@ -366,6 +372,10 @@ class Repository:
     _MAX_TAG_KEY = 255  # must match Tag.tag_key String(255) — NFKD can expand a key
     _MAX_GUIDEWORD = 64  # must match Sense.guideword String(64)
     _MAX_COLLOCATION = 512  # Collocation.text is Text (unbounded) — generous sanity cap only
+    _MAX_THEME_NAME = 128  # Theme.name is Text (unbounded) — generous sanity cap only
+    _MAX_THEME_KEY = 255  # must match Theme.theme_key String(255)
+    _MAX_STYLE_PROMPT = 4000  # Theme.style_prompt is Text (unbounded) — generous sanity cap
+    _MAX_THEMED_TEXT = 4000  # ThemedSense.definition / ThemedExample.text (Text) — generous cap
 
     @staticmethod
     def _clean(s: str, cap: int) -> str:
@@ -435,6 +445,139 @@ class Repository:
     async def _get_tag(self, session: AsyncSession, key: str) -> Tag | None:
         result = await session.execute(select(Tag).where(Tag.tag_key == key))
         return result.scalar_one_or_none()
+
+    # --- themes (resolve-or-create by theme_key) --------------------------
+
+    async def create_theme(self, name: str, style_prompt: str) -> Theme:
+        """Resolve-or-create a theme by ``theme_key``.
+
+        Re-creating a name that normalizes to an existing key returns that row
+        (first-seen ``name``/``style_prompt`` win). An empty-key name raises
+        ``ValueError`` — a create API fails loudly (unlike best-effort tag skips).
+        Concurrent create of the same key is recovered via SAVEPOINT re-fetch.
+        """
+        key = theme_key(name)
+        if not key or len(key) > self._MAX_THEME_KEY:
+            raise ValueError(f"theme name yields no valid key: {name!r}")
+        clean_name = self._clean(name, self._MAX_THEME_NAME)
+        clean_prompt = self._clean(style_prompt, self._MAX_STYLE_PROMPT)
+        async with session_scope(self._session_factory) as session:
+            existing = await self._get_theme(session, key)
+            if existing is not None:
+                return existing
+            theme = Theme(theme_key=key, name=clean_name, style_prompt=clean_prompt)
+            try:
+                async with session.begin_nested():
+                    session.add(theme)
+                    await session.flush()
+            except IntegrityError:
+                existing = await self._get_theme(session, key)
+                if existing is None:
+                    raise
+                return existing
+            return theme
+
+    async def list_themes(self) -> list[Theme]:
+        """Every theme, name-sorted. FREE — never calls an LLM."""
+        async with session_scope(self._session_factory) as session:
+            rows = await session.execute(select(Theme).order_by(Theme.name))
+            return list(rows.scalars())
+
+    async def _get_theme(self, session: AsyncSession, key: str) -> Theme | None:
+        result = await session.execute(select(Theme).where(Theme.theme_key == key))
+        return result.scalar_one_or_none()
+
+    async def persist_themed(
+        self, theme_id: int, result: "ThemedResult", sense_ids: Sequence[int]
+    ) -> None:
+        """Overwrite the themed rows for ``(sense_ids, theme_id)`` in place.
+
+        ``sense_ids`` is the ordered list of neutral sense ids (the api layer
+        supplies it in the SAME order it numbered the senses in the prompt), so
+        ``result.senses[i]`` maps to ``sense_ids[i]``. A count mismatch is a hard
+        error (never a silent zip): the model returned the wrong number of senses.
+        Per sense: delete the existing themed row (cascades themed_examples), then
+        insert fresh + its ordered themed examples. Core delete + explicit-FK insert
+        only (never touch relationship collections on a persistent object).
+        """
+        if len(result.senses) != len(sense_ids):
+            raise ValueError(
+                f"themed sense count {len(result.senses)} != neutral sense count "
+                f"{len(sense_ids)}"
+            )
+        async with session_scope(self._session_factory) as session:
+            for sense_id, themed in zip(sense_ids, result.senses, strict=True):
+                await session.execute(
+                    delete(ThemedSense).where(
+                        ThemedSense.sense_id == sense_id,
+                        ThemedSense.theme_id == theme_id,
+                    )
+                )
+                definition = self._clean(themed.definition, self._MAX_THEMED_TEXT)
+                row = ThemedSense(sense_id=sense_id, theme_id=theme_id, definition=definition)
+                session.add(row)
+                await session.flush()
+                order = 0
+                for ex in themed.examples:
+                    text = self._clean(ex, self._MAX_THEMED_TEXT)
+                    if not text:
+                        continue
+                    session.add(
+                        ThemedExample(themed_sense_id=row.id, text=text, example_order=order)
+                    )
+                    order += 1
+            await session.flush()
+
+    async def themed_for_word(
+        self, word_id: int, theme_id: int
+    ) -> dict[int, tuple[str, list[str]]]:
+        """Overlay map ``{sense_id: (themed_definition, [themed_examples])}`` for a
+        word under one theme. One companion query per word (no N+1); senses without
+        a themed row are simply absent (the read layer falls back to neutral)."""
+        async with session_scope(self._session_factory) as session:
+            rows = await session.execute(
+                select(ThemedSense.id, ThemedSense.sense_id, ThemedSense.definition)
+                .join(Sense, Sense.id == ThemedSense.sense_id)
+                .where(Sense.word_id == word_id, ThemedSense.theme_id == theme_id)
+            )
+            themed = [(tsid, sid, definition) for tsid, sid, definition in rows]
+            if not themed:
+                return {}
+            ex_rows = await session.execute(
+                select(ThemedExample.themed_sense_id, ThemedExample.text)
+                .where(ThemedExample.themed_sense_id.in_([t[0] for t in themed]))
+                .order_by(ThemedExample.example_order)
+            )
+            examples: dict[int, list[str]] = {}
+            for tsid, text in ex_rows:
+                examples.setdefault(tsid, []).append(text)
+            return {sid: (definition, examples.get(tsid, [])) for tsid, sid, definition in themed}
+
+    async def resolve_theme(self, key: str) -> tuple[int, str] | None:
+        """``(theme_id, style_prompt)`` for a ``theme_key``, or ``None`` if unknown."""
+        async with session_scope(self._session_factory) as session:
+            row = await session.execute(
+                select(Theme.id, Theme.style_prompt).where(Theme.theme_key == key)
+            )
+            found = row.first()
+            return (found[0], found[1]) if found is not None else None
+
+    async def senses_for_theming(
+        self, word_id: int
+    ) -> list[tuple[int, str, str | None, str | None, str]]:
+        """Ordered ``(sense_id, definition, pos, guideword, tier)`` for a word.
+
+        Sorted by ``sense_order`` then ``id`` for a deterministic prompt numbering:
+        the api layer passes these ids to :meth:`persist_themed` in the SAME order
+        it numbers them in the prompt, so themed index ``i`` maps to ``sense_ids[i]``.
+        """
+        async with session_scope(self._session_factory) as session:
+            rows = await session.execute(
+                select(Sense.id, Sense.definition, Sense.pos, Sense.guideword, Sense.tier)
+                .where(Sense.word_id == word_id)
+                .order_by(Sense.sense_order, Sense.id)
+            )
+            return [(sid, d, pos, gw, tier) for sid, d, pos, gw, tier in rows]
 
     @staticmethod
     def _resolve_cefr(sense: GeneratedSense, cefr_map: dict[str, str]) -> str | None:

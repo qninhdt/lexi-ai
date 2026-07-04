@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from lexi_ai.assets.repository import AssetRepository, content_hash, normalize_asset_params
 from lexi_ai.config import Settings, get_settings
 from lexi_ai.constants import TIER_ORDER, canonical_cambridge_ref
 from lexi_ai.db import create_engine, create_session_factory, init_models, session_scope
@@ -24,9 +25,11 @@ from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
 from lexi_ai.models import EntryLink, Sense, Word, WordAlias, WordTag
 from lexi_ai.normalize import match_key, render, tag_key
+from lexi_ai.normalize import theme_key as _norm_theme_key
 from lexi_ai.persistence.repository import Repository
 from lexi_ai.read_models import (
     AliasView,
+    Asset,
     Entry,
     LinkView,
     ReferenceView,
@@ -34,6 +37,7 @@ from lexi_ai.read_models import (
     SemanticHit,
     SenseView,
     TagCount,
+    Theme,
     TopicView,
 )
 from lexi_ai.references.cambridge import CambridgeSource
@@ -56,6 +60,7 @@ class Lexicon:
         repository: Repository,
         engine: AsyncEngine | None = None,
         embedder: Embedder | None = None,
+        assets: AssetRepository | None = None,
     ):
         self._session_factory = session_factory
         self._loader = loader
@@ -63,6 +68,7 @@ class Lexicon:
         self._repo = repository
         self._engine = engine
         self._embedder = embedder or Embedder()
+        self._assets = assets
         self._locks: dict[str, asyncio.Lock] = {}
         # Lazy questions engine (built on first access; see the `questions` property).
         self._questions: QuestionEngine | None = None
@@ -76,7 +82,16 @@ class Lexicon:
         generator = Generator(settings=settings)
         repository = Repository(session_factory)
         embedder = Embedder(settings=settings)
-        return cls(session_factory, loader, generator, repository, engine=engine, embedder=embedder)
+        assets = AssetRepository(session_factory, settings.asset_cache_dir)
+        return cls(
+            session_factory,
+            loader,
+            generator,
+            repository,
+            engine=engine,
+            embedder=embedder,
+            assets=assets,
+        )
 
     async def init(self) -> None:
         """Create the generated-DB schema (idempotent)."""
@@ -208,9 +223,67 @@ class Lexicon:
         results.sort(key=lambda r: (-r.score, r.display))
         return results
 
-    async def get(self, lexi_word_id: int) -> Entry:
-        """Load a generated entry by its dictionary id. Never generates (FREE)."""
-        return await self._to_entry(lexi_word_id)
+    async def get(self, lexi_word_id: int, theme_key: str | None = None) -> Entry:
+        """Load a generated entry by its dictionary id. Never generates (FREE).
+
+        ``theme_key`` (the normalized key string from ``create_theme``/
+        ``list_themes`` — NOT a name or object) overlays themed definition +
+        examples where a themed row exists, falling back to neutral per-sense.
+        An unknown ``theme_key`` raises ``ValueError`` (silently returning neutral
+        would hide a caller bug). ``None`` (default) is the neutral entry unchanged.
+        """
+        if theme_key is None:
+            return await self._to_entry(lexi_word_id)
+        resolved = await self._repo.resolve_theme(_norm_theme_key(theme_key))
+        if resolved is None:
+            raise ValueError(f"unknown theme: {theme_key!r}")
+        theme_id, _style = resolved
+        return await self._to_entry(lexi_word_id, theme_id=theme_id)
+
+    async def get_senses(self, sense_ids: list[int]) -> list[SenseView]:
+        """Batch-resolve senses by their DB ids. Never generates (FREE).
+
+        Returns a SenseView per found id, preserving the input order. Ids with no
+        row are silently skipped (caller tolerates missing senses). Relationships
+        are eager-loaded inside the session so views survive after it closes.
+        """
+        if not sense_ids:
+            return []
+        async with session_scope(self._session_factory) as session:
+            rows = (
+                await session.execute(
+                    select(Sense)
+                    .options(
+                        selectinload(Sense.references),
+                        selectinload(Sense.examples),
+                        selectinload(Sense.collocations),
+                    )
+                    .where(Sense.id.in_(sense_ids))
+                )
+            ).scalars()
+            by_id = {s.id: self._build_sense_view(s) for s in rows}
+        return [by_id[sid] for sid in sense_ids if sid in by_id]
+
+    @staticmethod
+    def _build_sense_view(s: Sense) -> SenseView:
+        return SenseView(
+            definition=s.definition,
+            tier=s.tier,
+            pos=s.pos,
+            cefr_level=s.cefr_level,
+            examples=[e.text for e in sorted(s.examples, key=lambda e: e.example_order)],
+            references=[
+                ReferenceView(source=r.source, source_ref=r.source_ref) for r in s.references
+            ],
+            guideword=s.guideword,
+            grammar=s.grammar.split(",") if s.grammar else [],
+            register=s.register,
+            connotation=s.connotation,
+            collocations=[
+                c.text for c in sorted(s.collocations, key=lambda c: c.collocation_order)
+            ],
+            sense_id=s.id,
+        )
 
     async def status(self, lexi_word_id: int) -> str | None:
         """Status of a dictionary word (``done`` | ``pending`` | ``error``), or
@@ -282,6 +355,150 @@ class Lexicon:
             SearchResult(display=render(norm), entry_type=etype, lexi_word_id=wid)
             for wid, norm, etype in rows
         ]
+
+    async def create_theme(self, name: str, style_prompt: str) -> Theme:
+        """Create (or resolve) a style theme by its normalized ``theme_key``.
+
+        Re-creating a name that normalizes to an existing key returns that theme
+        (first-seen ``name``/``style_prompt`` win). An empty-key name raises
+        ``ValueError``. Never calls an LLM.
+        """
+        theme = await self._repo.create_theme(name, style_prompt)
+        return Theme(key=theme.theme_key, name=theme.name, style_prompt=theme.style_prompt)
+
+    async def list_themes(self) -> list[Theme]:
+        """Every style theme, name-sorted. Never generates (FREE)."""
+        return [
+            Theme(key=t.theme_key, name=t.name, style_prompt=t.style_prompt)
+            for t in await self._repo.list_themes()
+        ]
+
+    async def generate_theme(self, lexi_word_id: int, theme_key: str) -> Entry:
+        """Restyle a done word's senses into a theme's voice (one LLM call).
+
+        ``theme_key`` is the normalized key string (from ``create_theme``/
+        ``list_themes``) — NOT a name or object. An unknown key raises
+        ``ValueError``. The word must be ``done`` (mirrors the questions-engine
+        guard). Writes one themed_senses row per neutral sense + fresh in-voice
+        examples; re-running overwrites in place. Returns the themed entry (overlay).
+        """
+        resolved = await self._repo.resolve_theme(_norm_theme_key(theme_key))
+        if resolved is None:
+            raise ValueError(f"unknown theme: {theme_key!r}")
+        theme_id, style_prompt = resolved
+
+        status = await self.status(lexi_word_id)
+        if status != "done":
+            raise ValueError(f"word {lexi_word_id} is not done (status={status!r})")
+
+        neutral = await self._repo.senses_for_theming(lexi_word_id)
+        if not neutral:
+            raise ValueError(f"word {lexi_word_id} has no senses to theme")
+        sense_ids = [row[0] for row in neutral]
+        facts = [(d, pos, gw, tier) for _sid, d, pos, gw, tier in neutral]
+
+        generator = self._themed_generator()
+        if generator is None:
+            raise ValueError("no LLM configured for themed generation")
+        result = await generator.generate(style_prompt, facts)
+        await self._repo.persist_themed(theme_id, result, sense_ids)
+        return await self._to_entry(lexi_word_id, theme_id=theme_id)
+
+    def _themed_generator(self):
+        """Lazy themed generator; ``None`` when no LLM is configured (empty key).
+
+        An injected generator (``self._themed_gen`` pre-set, e.g. a test fake) is
+        used as-is, bypassing the api-key gate.
+        """
+        if getattr(self, "_themed_gen", None) is not None:
+            return self._themed_gen
+        settings = get_settings()
+        if not settings.llm_api_key:
+            return None
+        from lexi_ai.theming.generator import ThemedGenerator
+
+        self._themed_gen = ThemedGenerator(settings=settings)
+        return self._themed_gen
+
+    # --- cached assets ----------------------------------------------------
+
+    async def translate(self, text: str, lang: str) -> str:
+        """Translate ``text`` into ``lang``, cache-first (content-addressed).
+
+        A second call for the same ``(text, lang)`` spends ZERO LLM (cache hit).
+        Themed and neutral text hash differently, so each gets its own asset;
+        identical text dedups. Empty/whitespace text returns as-is (no LLM, no
+        row). Raises ``ValueError`` when no LLM is configured.
+        """
+        if not text.strip():
+            return text
+        assets = self._require_assets()
+        params = normalize_asset_params("translate", lang=lang)
+        h = content_hash(text)
+        cached = await assets.get(h, "translate", params)
+        if cached is not None and cached.text_value is not None:
+            return cached.text_value
+        translator = self._translator()
+        if translator is None:
+            raise ValueError("no LLM configured for translation")
+        result = await translator.translate(text, lang)
+        stored = await assets.put_text(h, "translate", params, result)
+        return stored.text_value or result
+
+    def _require_assets(self) -> AssetRepository:
+        """The asset cache, constructed lazily from settings if not injected."""
+        if self._assets is None:
+            self._assets = AssetRepository(
+                self._session_factory, get_settings().asset_cache_dir
+            )
+        return self._assets
+
+    def _translator(self):
+        """Lazy translator; ``None`` when no LLM is configured (empty api key).
+
+        An injected translator (``self._translator_impl`` pre-set) is used as-is.
+        """
+        if getattr(self, "_translator_impl", None) is not None:
+            return self._translator_impl
+        settings = get_settings()
+        if not settings.llm_api_key:
+            return None
+        from lexi_ai.assets.translate import Translator
+
+        self._translator_impl = Translator(settings=settings)
+        return self._translator_impl
+
+    async def tts(self, text: str, voice: str | None = None, fmt: str | None = None) -> Asset:
+        """Synthesize speech for ``text``, cache-first (content-addressed).
+
+        A cache hit returns the ``Asset`` WITHOUT calling the provider. On a miss
+        the provider is invoked — this round it is a STUB that raises
+        ``NotImplementedError`` (no fake audio is cached, so the miss leaves no
+        row/file). Empty/whitespace text short-circuits. When a real provider is
+        configured, its bytes are stored via ``put_file`` and the ``Asset`` returned.
+        """
+        settings = get_settings()
+        voice = voice if voice is not None else settings.tts_voice
+        fmt = fmt if fmt is not None else settings.tts_format
+        if not text.strip():
+            return Asset(kind="tts", params=normalize_asset_params("tts", voice=voice, fmt=fmt))
+        assets = self._require_assets()
+        params = normalize_asset_params("tts", voice=voice, fmt=fmt)
+        h = content_hash(text)
+        cached = await assets.get(h, "tts", params)
+        if cached is not None:
+            return cached
+        provider = self._tts_provider()
+        data = await provider.synthesize(text, voice, fmt)  # stub raises here
+        return await assets.put_file(h, "tts", params, data, ext=fmt)
+
+    def _tts_provider(self):
+        """Lazy TTS provider; defaults to the stub until a real one is injected."""
+        if getattr(self, "_tts_impl", None) is None:
+            from lexi_ai.assets.tts import StubTTSProvider
+
+            self._tts_impl = StubTTSProvider()
+        return self._tts_impl
 
     async def generate(self, source: SearchResult | str, *, force: bool = False) -> Entry:
         """Generate (or return) the entry for a search result or a custom string.
@@ -481,7 +698,10 @@ class Lexicon:
 
     # --- read model assembly ---------------------------------------------
 
-    async def _to_entry(self, word_id: int) -> Entry:
+    async def _to_entry(self, word_id: int, theme_id: int | None = None) -> Entry:
+        themed_map = (
+            await self._repo.themed_for_word(word_id, theme_id) if theme_id is not None else None
+        )
         async with session_scope(self._session_factory) as session:
             word = (
                 await session.execute(
@@ -497,11 +717,14 @@ class Lexicon:
                     .where(Word.id == word_id)
                 )
             ).scalar_one()
-            return self._build_entry(word)
+            return self._build_entry(word, themed_map=themed_map)
 
     @staticmethod
-    def _build_entry(word: Word) -> Entry:
+    def _build_entry(
+        word: Word, themed_map: dict[int, tuple[str, list[str]]] | None = None
+    ) -> Entry:
         senses = sorted(word.senses, key=lambda s: (TIER_ORDER.get(s.tier, 99), s.sense_order))
+        overlay = themed_map or {}
         return Entry(
             display=render(word.norm),
             norm=word.norm,
@@ -511,11 +734,18 @@ class Lexicon:
             word_id=word.id,
             senses=[
                 SenseView(
-                    definition=s.definition,
+                    # Overlay themed def+examples per-sense where a themed row
+                    # exists; neutral fallback otherwise. All OTHER fields stay
+                    # neutral — themes cover definition + examples only this round.
+                    definition=overlay[s.id][0] if s.id in overlay else s.definition,
                     tier=s.tier,
                     pos=s.pos,
                     cefr_level=s.cefr_level,
-                    examples=[e.text for e in sorted(s.examples, key=lambda e: e.example_order)],
+                    examples=(
+                        overlay[s.id][1]
+                        if s.id in overlay
+                        else [e.text for e in sorted(s.examples, key=lambda e: e.example_order)]
+                    ),
                     references=[
                         ReferenceView(source=r.source, source_ref=r.source_ref)
                         for r in s.references

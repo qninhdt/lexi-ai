@@ -21,7 +21,7 @@ A ``/`` is kept literal (decision #8): ``match_key`` never splits on it.
 import re
 import unicodedata
 
-__all__ = ["match_key", "render", "tag_key", "PLACEHOLDER_RE"]
+__all__ = ["match_key", "render", "tag_key", "theme_key", "PLACEHOLDER_RE"]
 
 # --- placeholder canonical map (single source of truth) -------------------
 #
@@ -200,3 +200,28 @@ def tag_key(s: str) -> str:
     if not s:
         return ""
     return _singularize(s)
+
+
+# --- theme_key (theme dedup) ----------------------------------------------
+#
+# theme_key is to themes what tag_key is to topic tags: a deterministic, lossy,
+# repository dedup key. Shares tag_key's pipeline (lowercase, strip diacritics,
+# control-char safe, collapse whitespace) but deliberately does NOT singularize:
+# theme names are proper voices ("Harry Potter", "The Witches"), not noun
+# phrases, so folding "witches" -> "witch" would corrupt a name. The ~5 shared
+# lines are duplicated rather than factored so the two keys can evolve freely.
+
+
+def theme_key(s: str) -> str:
+    """Deterministic lossy dedup key for a theme name.
+
+    Pipeline: lowercase -> strip diacritics -> strip control chars (incl NUL,
+    Postgres-rejected) -> collapse whitespace -> strip. NO singularization
+    (unlike ``tag_key``): a theme name is a proper voice, not a noun phrase.
+    Returns "" when nothing survives; the create API rejects an empty key.
+    """
+    s = s.lower()
+    s = _strip_diacritics(s)
+    s = _CTRL_RE.sub(" ", s)
+    s = _WS_RE.sub(" ", s).strip()
+    return s
