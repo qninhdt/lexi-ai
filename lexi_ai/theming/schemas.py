@@ -42,9 +42,6 @@ class GeneratedTheme(BaseModel):
             "It must clearly guide them on how to restyle dictionary definitions and write example sentences in this specific voice."
         )
     )
-    emoji: str = Field(
-        description="A single representative emoji (e.g., '🏴‍☠️')."
-    )
     tone: list[str] = Field(
         description="A list of 2-4 tone adjectives representing this style (e.g., ['adventurous', 'salty', 'archaic'])."
     )

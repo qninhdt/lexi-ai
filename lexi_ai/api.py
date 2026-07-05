@@ -223,20 +223,24 @@ class Lexicon:
         results.sort(key=lambda r: (-r.score, r.display))
         return results
 
-    async def get(self, lexi_word_id: int, theme_key: str | None = None) -> Entry:
+    async def get(self, lexi_word_id: int, theme: str | int | None = None) -> Entry:
         """Load a generated entry by its dictionary id. Never generates (FREE).
 
-        ``theme_key`` (the normalized key string from ``create_theme``/
-        ``list_themes`` — NOT a name or object) overlays themed definition +
+        ``theme`` (theme key or ID) overlays themed definition +
         examples where a themed row exists, falling back to neutral per-sense.
-        An unknown ``theme_key`` raises ``ValueError`` (silently returning neutral
+        An unknown ``theme`` raises ``ValueError`` (silently returning neutral
         would hide a caller bug). ``None`` (default) is the neutral entry unchanged.
         """
-        if theme_key is None:
+        if theme is None:
             return await self._to_entry(lexi_word_id)
-        resolved = await self._repo.resolve_theme(_norm_theme_key(theme_key))
+        if isinstance(theme, int):
+            resolved = await self._repo.resolve_theme(theme)
+        else:
+            resolved = await self._repo.resolve_theme(theme)
+            if resolved is None:
+                resolved = await self._repo.resolve_theme(_norm_theme_key(theme))
         if resolved is None:
-            raise ValueError(f"unknown theme: {theme_key!r}")
+            raise ValueError(f"unknown theme: {theme!r}")
         theme_id, _style = resolved
         return await self._to_entry(lexi_word_id, theme_id=theme_id)
 
@@ -361,7 +365,6 @@ class Lexicon:
         name: str,
         style_prompt: str,
         description: str | None = None,
-        emoji: str | None = None,
         tone: str | None = None,
     ) -> Theme:
         """Create (or resolve/update) a style theme by its normalized ``theme_key``.
@@ -370,14 +373,13 @@ class Lexicon:
         with the latest prompt and metadata.
         """
         theme = await self._repo.create_theme(
-            name, style_prompt, description=description, emoji=emoji, tone=tone
+            name, style_prompt, description=description, tone=tone
         )
         return Theme(
             key=theme.theme_key,
             name=theme.name,
             style_prompt=theme.style_prompt,
             description=theme.description,
-            emoji=theme.emoji,
             tone=theme.tone,
         )
 
@@ -389,7 +391,6 @@ class Lexicon:
                 name=t.name,
                 style_prompt=t.style_prompt,
                 description=t.description,
-                emoji=t.emoji,
                 tone=t.tone,
             )
             for t in await self._repo.list_themes()
@@ -399,7 +400,7 @@ class Lexicon:
         """Generate (or recreate/update) a style theme using an LLM.
 
         The LLM expands the simple key and prompt into a detailed theme profile
-        (name, description, style_prompt, emoji, tone). The theme is persisted in
+        (name, description, style_prompt, tone). The theme is persisted in
         the database and returned.
         """
         norm_key = _norm_theme_key(key)
@@ -413,7 +414,6 @@ class Lexicon:
             name=generated.name,
             style_prompt=generated.style_prompt,
             description=generated.description,
-            emoji=generated.emoji,
             tone=",".join(generated.tone) if generated.tone else None,
             key=norm_key,
             overwrite=True,
@@ -424,7 +424,6 @@ class Lexicon:
             name=theme.name,
             style_prompt=theme.style_prompt,
             description=theme.description,
-            emoji=theme.emoji,
             tone=theme.tone,
         )
 
@@ -585,8 +584,12 @@ class Lexicon:
                 )
 
         if theme is not None:
-            theme_key_norm = _norm_theme_key(theme)
-            resolved = await self._repo.resolve_theme(theme_key_norm)
+            if isinstance(theme, int):
+                resolved = await self._repo.resolve_theme(theme)
+            else:
+                resolved = await self._repo.resolve_theme(theme)
+                if resolved is None:
+                    resolved = await self._repo.resolve_theme(_norm_theme_key(theme))
             if resolved is None:
                 raise ValueError(f"unknown theme: {theme!r}")
             theme_id, style_prompt = resolved

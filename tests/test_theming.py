@@ -193,7 +193,6 @@ async def test_generate_theme_metadata(session_factory):
             name="The Salty Pirate Captain",
             description="Salty sea-themed dictionary entries.",
             style_prompt="Salty instructions.",
-            emoji="🏴‍☠️",
             tone=["salty", "adventurous"]
         )
     )
@@ -203,7 +202,6 @@ async def test_generate_theme_metadata(session_factory):
     assert theme.key == "pirate"
     assert theme.description == "Salty sea-themed dictionary entries."
     assert theme.style_prompt == "Salty instructions."
-    assert theme.emoji == "🏴‍☠️"
     assert theme.tone == "salty,adventurous"
     assert gen.calls == 1
 
@@ -276,7 +274,7 @@ async def test_get_neutral_unchanged(session_factory):
 async def test_get_theme_none_is_neutral(session_factory):
     word_id, _ = await _make_done_word(session_factory)
     lex = _lexicon(session_factory)
-    entry = await lex.get(word_id, theme_key=None)
+    entry = await lex.get(word_id, theme=None)
     assert entry.senses[0].definition == "neutral def 0"
 
 
@@ -284,7 +282,7 @@ async def test_get_unknown_theme_raises(session_factory):
     word_id, _ = await _make_done_word(session_factory)
     lex = _lexicon(session_factory)
     with pytest.raises(ValueError):
-        await lex.get(word_id, theme_key="ghost")
+        await lex.get(word_id, theme="ghost")
 
 
 async def test_get_per_sense_fallback(session_factory, repo):
@@ -297,6 +295,20 @@ async def test_get_per_sense_fallback(session_factory, repo):
         )
         await session.flush()
     lex = _lexicon(session_factory)
-    entry = await lex.get(word_id, theme_key="bard")
+    entry = await lex.get(word_id, theme="bard")
     assert entry.senses[0].definition == "themed only 0"  # themed
     assert entry.senses[1].definition == "neutral def 1"  # fallback
+
+
+async def test_get_and_generate_by_theme_id(session_factory, repo):
+    word_id, sense_ids = await _make_done_word(session_factory)
+    theme = await repo.create_theme("Bard", "speak like a bard")
+    
+    # Resolve by integer ID
+    lex = _lexicon(session_factory)
+    entry = await lex.get(word_id, theme=theme.id)
+    assert entry.senses[0].definition == "neutral def 0"
+    
+    # Resolve by string ID
+    entry2 = await lex.get(word_id, theme=str(theme.id))
+    assert entry2.senses[0].definition == "neutral def 0"

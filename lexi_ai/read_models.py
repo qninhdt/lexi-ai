@@ -83,7 +83,6 @@ class Theme:
     name: str
     style_prompt: str
     description: str | None = None
-    emoji: str | None = None
     tone: str | None = None
 
 

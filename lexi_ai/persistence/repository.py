@@ -453,7 +453,6 @@ class Repository:
         name: str,
         style_prompt: str,
         description: str | None = None,
-        emoji: str | None = None,
         tone: str | None = None,
         key: str | None = None,
         overwrite: bool = False,
@@ -468,7 +467,6 @@ class Repository:
         clean_name = self._clean(name, self._MAX_THEME_NAME)
         clean_prompt = self._clean(style_prompt, self._MAX_STYLE_PROMPT)
         clean_desc = self._clean(description, 1000) if description else None
-        clean_emoji = self._clean(emoji, 16) if emoji else None
         clean_tone = self._clean(tone, 255) if tone else None
         async with session_scope(self._session_factory) as session:
             existing = await self._get_theme(session, final_key)
@@ -477,7 +475,6 @@ class Repository:
                     existing.name = clean_name
                     existing.style_prompt = clean_prompt
                     existing.description = clean_desc
-                    existing.emoji = clean_emoji
                     existing.tone = clean_tone
                 return existing
             theme = Theme(
@@ -485,7 +482,6 @@ class Repository:
                 name=clean_name,
                 style_prompt=clean_prompt,
                 description=clean_desc,
-                emoji=clean_emoji,
                 tone=clean_tone,
             )
             try:
@@ -500,7 +496,6 @@ class Repository:
                     existing.name = clean_name
                     existing.style_prompt = clean_prompt
                     existing.description = clean_desc
-                    existing.emoji = clean_emoji
                     existing.tone = clean_tone
                 return existing
             return theme
@@ -580,12 +575,23 @@ class Repository:
                 examples.setdefault(tsid, []).append(text)
             return {sid: (definition, examples.get(tsid, [])) for tsid, sid, definition in themed}
 
-    async def resolve_theme(self, key: str) -> tuple[int, str] | None:
-        """``(theme_id, style_prompt)`` for a ``theme_key``, or ``None`` if unknown."""
+    async def resolve_theme(self, key_or_id: str | int) -> tuple[int, str] | None:
+        """``(theme_id, style_prompt)`` for a ``theme_key`` or ``theme_id``, or ``None`` if unknown."""
         async with session_scope(self._session_factory) as session:
-            row = await session.execute(
-                select(Theme.id, Theme.style_prompt).where(Theme.theme_key == key)
-            )
+            if isinstance(key_or_id, int):
+                row = await session.execute(
+                    select(Theme.id, Theme.style_prompt).where(Theme.id == key_or_id)
+                )
+            else:
+                try:
+                    theme_id = int(key_or_id)
+                    row = await session.execute(
+                        select(Theme.id, Theme.style_prompt).where(Theme.id == theme_id)
+                    )
+                except ValueError:
+                    row = await session.execute(
+                        select(Theme.id, Theme.style_prompt).where(Theme.theme_key == key_or_id)
+                    )
             found = row.first()
             return (found[0], found[1]) if found is not None else None
 
