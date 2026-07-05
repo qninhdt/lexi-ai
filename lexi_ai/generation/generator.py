@@ -15,8 +15,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 
 from lexi_ai.config import Settings, get_settings
-from lexi_ai.generation.prompts import SYSTEM_PROMPT, format_bundle
 from lexi_ai.generation.schemas import GeneratedResult
+from lexi_ai.llm import ainvoke_structured
+from lexi_ai.prompts import PromptLoader
 from lexi_ai.references.loader import ReferenceBundle
 
 
@@ -62,22 +63,30 @@ class Generator:
     async def generate(
         self, bundle: ReferenceBundle, existing_tags: Sequence[tuple[str, str]] = ()
     ) -> GeneratedResult:
+        system_content = PromptLoader.render("senses_generation_system")
+        alts = (
+            ", ".join(f"{a}({t})" for a, t in bundle.cambridge_alternatives)
+            if bundle.cambridge_alternatives
+            else None
+        )
+        user_content = PromptLoader.render(
+            "senses_generation_user",
+            word=bundle.word_raw,
+            cambridge_word_raw=bundle.word_raw,
+            cambridge_entry_type=bundle.entry_type,
+            cambridge_senses=bundle.cambridge_senses,
+            cambridge_alternatives=alts,
+            wordnet_synsets=bundle.wordnet_synsets,
+            existing_tags=existing_tags,
+        )
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=format_bundle(bundle, existing_tags)),
+            SystemMessage(content=system_content),
+            HumanMessage(content=user_content),
         ]
-        last_exc: Exception | None = None
-        for attempt in range(self._max_retries):
-            try:
-                result = await self.llm.ainvoke(messages)
-                # with_structured_output returns the validated model instance.
-                if isinstance(result, GeneratedResult):
-                    return result
-                # Some providers return a dict when include_raw or json_mode.
-                return GeneratedResult.model_validate(result)
-            except Exception as exc:  # noqa: BLE001 - retried, then re-raised
-                last_exc = exc
-                if attempt < self._max_retries - 1:
-                    await asyncio.sleep(self._base_delay * (2**attempt))
-        assert last_exc is not None
-        raise last_exc
+        return await ainvoke_structured(
+            self.llm,
+            messages,
+            GeneratedResult,
+            max_retries=self._max_retries,
+            base_delay=self._base_delay,
+        )

@@ -1,0 +1,16 @@
+VOICE / STYLE:
+{{ style_prompt }}
+
+Restyle the following {{ neutral_senses | length }} sense(s) into that voice. Return exactly {{ neutral_senses | length }} themed sense(s) in the same order.
+
+{% for s in neutral_senses %}
+Sense {{ loop.index }}:
+  definition: {{ s.definition }}
+  tier: {{ s.tier }}
+  {% if s.pos %}
+  part of speech: {{ s.pos }}
+  {% endif %}
+  {% if s.guideword %}
+  guideword: {{ s.guideword }}
+  {% endif %}
+{% endfor %}

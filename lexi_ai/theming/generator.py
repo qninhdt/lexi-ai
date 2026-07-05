@@ -8,11 +8,14 @@ with exponential backoff.
 import asyncio
 from collections.abc import Sequence
 
+from collections.abc import Sequence
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 
 from lexi_ai.config import Settings, get_settings
-from lexi_ai.theming.prompts import SYSTEM_PROMPT, format_themed
+from lexi_ai.llm import ainvoke_structured
+from lexi_ai.prompts import PromptLoader
 from lexi_ai.theming.schemas import ThemedResult
 
 
@@ -60,27 +63,31 @@ class ThemedGenerator:
         style_prompt: str,
         neutral_senses: Sequence[tuple[str, str | None, str | None, str]],
     ) -> ThemedResult:
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=format_themed(style_prompt, neutral_senses)),
+        mapped_senses = [
+            {"definition": d, "pos": pos, "guideword": gw, "tier": tier}
+            for d, pos, gw, tier in neutral_senses
         ]
-        last_exc: Exception | None = None
-        for attempt in range(self._max_retries):
-            try:
-                result = await self.llm.ainvoke(messages)
-                if isinstance(result, ThemedResult):
-                    return result
-                return ThemedResult.model_validate(result)
-            except Exception as exc:  # noqa: BLE001 - retried, then re-raised
-                last_exc = exc
-                if attempt < self._max_retries - 1:
-                    await asyncio.sleep(self._base_delay * (2**attempt))
-        assert last_exc is not None
-        raise last_exc
+        system_content = PromptLoader.render("themed_restyling_system")
+        user_content = PromptLoader.render(
+            "themed_restyling_user",
+            style_prompt=style_prompt,
+            neutral_senses=mapped_senses,
+        )
+        messages = [
+            SystemMessage(content=system_content),
+            HumanMessage(content=user_content),
+        ]
+        return await ainvoke_structured(
+            self.llm,
+            messages,
+            ThemedResult,
+            max_retries=self._max_retries,
+            base_delay=self._base_delay,
+        )
 
 
 class ThemeMetadataGenerator:
-    """Turn a name/key and a style concept prompt into a detailed theme (name, description, style_prompt, emoji, tone)."""
+    """Turn a name/key and a style concept prompt into a detailed theme."""
 
     def __init__(
         self,
@@ -108,23 +115,23 @@ class ThemeMetadataGenerator:
             self._llm = llm.with_structured_output(GeneratedTheme)
         return self._llm
 
-    async def generate(self, key: str, prompt: str) -> GeneratedTheme:
-        from lexi_ai.theming.prompts import THEME_METADATA_SYSTEM_PROMPT, format_theme_metadata
+    async def generate(self, key: str, prompt: str) -> object:
+        from lexi_ai.theming.schemas import GeneratedTheme
+
+        system_content = PromptLoader.render("theme_metadata_system")
+        user_content = PromptLoader.render(
+            "theme_metadata_user",
+            key=key,
+            prompt=prompt,
+        )
         messages = [
-            SystemMessage(content=THEME_METADATA_SYSTEM_PROMPT),
-            HumanMessage(content=format_theme_metadata(key, prompt)),
+            SystemMessage(content=system_content),
+            HumanMessage(content=user_content),
         ]
-        last_exc: Exception | None = None
-        for attempt in range(self._max_retries):
-            try:
-                result = await self.llm.ainvoke(messages)
-                from lexi_ai.theming.schemas import GeneratedTheme
-                if isinstance(result, GeneratedTheme):
-                    return result
-                return GeneratedTheme.model_validate(result)
-            except Exception as exc:  # noqa: BLE001 - retried, then re-raised
-                last_exc = exc
-                if attempt < self._max_retries - 1:
-                    await asyncio.sleep(self._base_delay * (2**attempt))
-        assert last_exc is not None
-        raise last_exc
+        return await ainvoke_structured(
+            self.llm,
+            messages,
+            GeneratedTheme,
+            max_retries=self._max_retries,
+            base_delay=self._base_delay,
+        )

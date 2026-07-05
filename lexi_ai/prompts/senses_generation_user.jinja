@@ -1,0 +1,41 @@
+Generate the dictionary entry for: {{ word }}
+
+CAMBRIDGE entry: {{ cambridge_word_raw }}{% if cambridge_entry_type %}  [entry_type={{ cambridge_entry_type }}]{% endif %}
+{% for s in cambridge_senses %}
+  sense#{{ s.cambridge_sense_id }} (pos={{ s.pos }}, cefr={{ s.cefr_level }}{% if s.guideword %}, guideword={{ s.guideword }}{% endif %})
+    def: {{ s.definition }}
+    {% for ex in s.examples[:3] %}
+    ex: {{ ex }}
+    {% endfor %}
+    {% if s.synonyms %}
+    syn: {{ s.synonyms[:8] | join(', ') }}
+    {% endif %}
+    {% if s.antonyms %}
+    ant: {{ s.antonyms[:8] | join(', ') }}
+    {% endif %}
+{% else %}
+  (no entry found)
+{% endfor %}
+{% if cambridge_alternatives %}
+  alternatives: {{ cambridge_alternatives }}
+{% endif %}
+
+WORDNET synsets:
+{% for s in wordnet_synsets %}
+  {{ s.name }} (pos={{ s.pos }}): {{ s.definition }}
+    {% if s.lemmas %}
+    lemmas: {{ s.lemmas[:8] | join(', ') }}
+    {% endif %}
+    {% for ex in s.examples[:2] %}
+    ex: {{ ex }}
+    {% endfor %}
+{% else %}
+  (no synsets — this is normal for idioms/expressions)
+{% endfor %}
+
+EXISTING TOPICS (reuse when one fits; invent new only if none matches):
+{% for name, title in existing_tags %}
+  {{ name }} — {{ title }}
+{% else %}
+  (none yet — follow the convention)
+{% endfor %}

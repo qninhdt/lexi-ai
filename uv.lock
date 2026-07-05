@@ -276,7 +276,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -713,11 +713,13 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
+    { name = "jinja2" },
     { name = "langchain-openai" },
     { name = "nltk" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "uuid-utils" },
 ]
 
 [package.optional-dependencies]
@@ -736,6 +738,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "jinja2", specifier = ">=3.1.6" },
     { name = "langchain-openai", specifier = ">=1.0" },
     { name = "nltk", specifier = ">=3.9" },
     { name = "pydantic", specifier = ">=2" },
@@ -743,6 +746,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "torch", marker = "extra == 'embeddings'", specifier = ">=2.2" },
     { name = "transformers", marker = "extra == 'embeddings'", specifier = ">=4.40" },
+    { name = "uuid-utils", specifier = ">=0.16" },
 ]
 provides-extras = ["embeddings"]
 

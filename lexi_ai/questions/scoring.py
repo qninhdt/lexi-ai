@@ -12,15 +12,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 
 from lexi_ai.normalize import match_key
-from lexi_ai.questions.llm import ainvoke_structured
+from lexi_ai.llm import ainvoke_structured
 from lexi_ai.questions.schemas import Judgment
 from lexi_ai.read_models import Question, Score
 
-_RUBRIC_SYSTEM = (
-    "You are a strict but fair language tutor grading whether a learner's sentence "
-    "uses a target word correctly, per a rubric. Return a boolean verdict, a 0..1 "
-    "score, and one short line of feedback."
-)
+from lexi_ai.prompts import PromptLoader
+
+_RUBRIC_SYSTEM = PromptLoader.render("rubric_scoring_system")
 
 
 async def grade_single_choice(question: Question, answer: object) -> Score:
@@ -59,11 +57,12 @@ async def grade_rubric(question: Question, answer: object, *, judge: Runnable) -
     if judge is None:
         raise ValueError("rubric grading requires a judge runnable (ctx.judge is None)")
     payload = question.payload
-    human = (
-        f"Target word: {payload['target_norm']}\n"
-        f"Rubric: {payload['rubric']}\n"
-        f"Prompt shown to the learner: {payload['prompt']}\n"
-        f"Learner's answer: {answer}"
+    human = PromptLoader.render(
+        "rubric_scoring_user",
+        target_norm=payload["target_norm"],
+        rubric=payload["rubric"],
+        prompt=payload["prompt"],
+        answer=answer,
     )
     judgment = await ainvoke_structured(
         judge,

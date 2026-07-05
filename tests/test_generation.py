@@ -10,7 +10,7 @@ from langchain_core.runnables import RunnableLambda
 from pydantic import ValidationError
 
 from lexi_ai.generation.generator import Generator
-from lexi_ai.generation.prompts import SYSTEM_PROMPT, format_bundle
+from lexi_ai.prompts import PromptLoader
 from lexi_ai.generation.schemas import (
     GeneratedEntry,
     GeneratedResult,
@@ -81,17 +81,36 @@ def _fake_llm(result: GeneratedResult) -> RunnableLambda:
 # --- prompt assembly ------------------------------------------------------
 
 
+def _format_bundle(bundle: ReferenceBundle, existing_tags: list = []) -> str:
+    alts = (
+        ", ".join(f"{a}({t})" for a, t in bundle.cambridge_alternatives)
+        if bundle.cambridge_alternatives
+        else None
+    )
+    return PromptLoader.render(
+        "senses_generation_user",
+        word=bundle.word_raw,
+        cambridge_word_raw=bundle.word_raw,
+        cambridge_entry_type=bundle.entry_type,
+        cambridge_senses=bundle.cambridge_senses,
+        cambridge_alternatives=alts,
+        wordnet_synsets=bundle.wordnet_synsets,
+        existing_tags=existing_tags,
+    )
+
+
 def test_prompt_includes_rubric_and_both_sources():
-    body = format_bundle(_bundle_book())
+    body = _format_bundle(_bundle_book())
     assert "CAMBRIDGE" in body
     assert "WORDNET" in body
     assert "book" in body
     # System prompt carries the tier rubric + split rule.
-    assert "core" in SYSTEM_PROMPT and "SPLIT" in SYSTEM_PROMPT
+    system_prompt = PromptLoader.render("senses_generation_system")
+    assert "core" in system_prompt and "SPLIT" in system_prompt
 
 
 def test_prompt_marks_empty_wordnet():
-    body = format_bundle(_bundle_expression())
+    body = _format_bundle(_bundle_expression())
     assert "no synsets" in body.lower()
 
 

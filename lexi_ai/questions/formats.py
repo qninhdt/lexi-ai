@@ -21,7 +21,7 @@ from lexi_ai.questions.base import (
     QuestionContext,
     register,
 )
-from lexi_ai.questions.llm import ainvoke_structured
+from lexi_ai.llm import ainvoke_structured
 from lexi_ai.questions.schemas import (
     ClozePayload,
     GeneratedMCQ,
@@ -36,12 +36,9 @@ from lexi_ai.read_models import Entry, Question, Score, SenseView
 _MCQ_OPTIONS = 4
 _MCQ_MIN_DISTRACTORS = 1
 
-_CONTEXTUAL_SYSTEM = (
-    "You write a single vocabulary multiple-choice question. Given a target word "
-    "and one of its senses, produce a novel sentence or context that implies that "
-    "sense with the word blanked or replaced, the correct answer (the target word), "
-    "and 2-3 plausible but wrong distractor words."
-)
+from lexi_ai.prompts import PromptLoader
+
+_CONTEXTUAL_SYSTEM = PromptLoader.render("contextual_mcq_system")
 
 
 def _core_sense(entry: Entry) -> SenseView | None:
@@ -149,7 +146,11 @@ class ContextualMCQ:
         sense = _core_sense(entry)
         if sense is None:
             return []
-        human = f"Target word: {entry.display}\nSense: {sense.definition}"
+        human = PromptLoader.render(
+            "contextual_mcq_user",
+            word=entry.display,
+            definition=sense.definition,
+        )
         mcq = await ainvoke_structured(
             ctx.llm,
             [SystemMessage(content=_CONTEXTUAL_SYSTEM), HumanMessage(content=human)],
