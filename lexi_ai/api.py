@@ -369,12 +369,36 @@ class Lexicon:
     ) -> Theme:
         """Create (or resolve/update) a style theme by its normalized ``theme_key``.
 
-        Re-creating a name that normalizes to an existing key updates that theme
-        with the latest prompt and metadata.
+        If ``description`` and ``tone`` are provided, the theme is registered
+        directly (no LLM). Otherwise, the LLM expands the theme name/key and style_prompt
+        into a detailed theme profile (name, description, style_prompt, tone) before saving.
         """
-        theme = await self._repo.create_theme(
-            name, style_prompt, description=description, tone=tone
-        )
+        norm_key = _norm_theme_key(name)
+        if not norm_key:
+            raise ValueError(f"theme name yields no valid key: {name!r}")
+
+        if description is None or tone is None:
+            generator = self._theme_metadata_generator()
+            generated = await generator.generate(norm_key, style_prompt)
+
+            theme = await self._repo.create_theme(
+                name=generated.name,
+                style_prompt=generated.style_prompt,
+                description=generated.description,
+                tone=",".join(generated.tone) if generated.tone else None,
+                key=norm_key,
+                overwrite=True,
+            )
+        else:
+            theme = await self._repo.create_theme(
+                name=name,
+                style_prompt=style_prompt,
+                description=description,
+                tone=tone,
+                key=norm_key,
+                overwrite=True,
+            )
+
         return Theme(
             key=theme.theme_key,
             name=theme.name,
@@ -395,37 +419,6 @@ class Lexicon:
             )
             for t in await self._repo.list_themes()
         ]
-
-    async def generate_theme(self, key: str, prompt: str) -> Theme:
-        """Generate (or recreate/update) a style theme using an LLM.
-
-        The LLM expands the simple key and prompt into a detailed theme profile
-        (name, description, style_prompt, tone). The theme is persisted in
-        the database and returned.
-        """
-        norm_key = _norm_theme_key(key)
-        if not norm_key:
-            raise ValueError(f"theme key/name yields no valid key: {key!r}")
-
-        generator = self._theme_metadata_generator()
-        generated = await generator.generate(norm_key, prompt)
-
-        theme = await self._repo.create_theme(
-            name=generated.name,
-            style_prompt=generated.style_prompt,
-            description=generated.description,
-            tone=",".join(generated.tone) if generated.tone else None,
-            key=norm_key,
-            overwrite=True,
-        )
-
-        return Theme(
-            key=theme.theme_key,
-            name=theme.name,
-            style_prompt=theme.style_prompt,
-            description=theme.description,
-            tone=theme.tone,
-        )
 
     async def _run_themed_generation(self, lexi_word_id: int, theme_id: int, style_prompt: str) -> None:
         status = await self.status(lexi_word_id)

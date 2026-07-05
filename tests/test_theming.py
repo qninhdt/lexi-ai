@@ -197,7 +197,7 @@ async def test_generate_theme_metadata(session_factory):
         )
     )
     lex = _lexicon(session_factory, theme_meta_gen=gen)
-    theme = await lex.generate_theme("pirate", "speak like a pirate")
+    theme = await lex.create_theme("pirate", "speak like a pirate")
     assert theme.name == "The Salty Pirate Captain"
     assert theme.key == "pirate"
     assert theme.description == "Salty sea-themed dictionary entries."
@@ -218,7 +218,7 @@ async def test_generate_theme_end_to_end(session_factory):
         )
     )
     lex = _lexicon(session_factory, gen)
-    await lex.create_theme("Bard", "speak like a bard")
+    await lex.create_theme("Bard", "speak like a bard", description="poetic", tone="bardic")
 
     source = SearchResult(display="dragon", entry_type="word", lexi_word_id=word_id)
     entry = await lex.generate(source, theme="bard")
@@ -242,7 +242,7 @@ async def test_generate_theme_requires_done_word(session_factory):
         wid = word.id
     gen = FakeThemedGenerator(ThemedResult(senses=[ThemedSenseSchema(definition="x")]))
     lex = _lexicon(session_factory, gen)
-    await lex.create_theme("Bard", "voice")
+    await lex.create_theme("Bard", "voice", description="voice", tone="tone")
     
     source = SearchResult(display="pending", entry_type="word", lexi_word_id=wid)
     with pytest.raises(ValueError, match="is not done"):
