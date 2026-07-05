@@ -64,10 +64,10 @@ async def main():
     score = await lex.questions.grade(questions[0], answer=2)
     print(score.correct, score.score)
 
-    # Themes: author a voice once, generate themed content, read the overlay.
+    # Themes: author a voice once (LLM-expanded if description/tone are omitted,
+    # generated in-line the first time a word is fetched under it), read the overlay.
     theme = await lex.create_theme("Pirate", "narrate like a salty pirate")
-    await lex.generate_theme(entry.word_id, theme.key)   # one LLM call, cached
-    themed = await lex.get(entry.word_id, theme_key=theme.key)
+    themed = await lex.generate(results[0], theme=theme.key)
     print(themed.senses[0].definition)                   # restyled definition
 
     # Cached assets: translation is real; a repeat call spends zero tokens.
@@ -91,6 +91,16 @@ Asset and theme knobs (all `LEXI_`-prefixed):
 - `TTS_BASE_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `TTS_FORMAT` —
   reserved for the TTS provider. Defined but **unused this round** (TTS ships as
   an interface + stub; the stub raises rather than caching fake audio).
+
+### Managing & batch
+
+Every resource has get/list/delete alongside create — `get_theme`/`update_theme`/
+`delete_theme`, `delete_entry`/`list_entries`/`list_entries_by_tag`,
+`rename_tag`/`delete_tag`/`merge_tags`, `get_asset`/`list_assets`/`delete_asset`/
+`purge_assets`. Bulk variants (`generate_many`, `get_many`, `translate_many`,
+`get_status_many`, `lex.questions.grade_many`) run concurrently and return a
+`list[BatchResult]` — one entry per input, in order; a failed item never aborts
+the rest (check `result.ok` / `result.value` / `result.error`).
 
 ### Question formats (v1)
 

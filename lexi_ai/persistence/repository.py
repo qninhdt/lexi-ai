@@ -112,6 +112,37 @@ class Repository:
             rows = await session.execute(select(Word.match_key).where(Word.status == "done"))
             return {r[0] for r in rows}
 
+    # --- word management (delete / paginate) ------------------------------
+
+    async def delete_word(self, word_id: int) -> bool:
+        """Delete a word by id; return whether a row was removed.
+
+        Children (senses, aliases, links, tags, questions) are removed by the
+        DB-level ``ON DELETE CASCADE`` FKs (SQLite pragma enabled in ``db.py``),
+        so a single Core ``delete`` suffices — no relationship walk."""
+        async with session_scope(self._session_factory) as session:
+            result = await session.execute(delete(Word).where(Word.id == word_id))
+            return (cast("CursorResult", result).rowcount or 0) > 0
+
+    async def list_words(
+        self, status: str = "done", limit: int | None = None, offset: int = 0
+    ) -> list[tuple[int, str, str | None]]:
+        """Paginated dictionary browse as ``(id, norm, entry_type)``, norm-sorted.
+
+        Filters by ``status`` (default ``done`` — the same population as the tag
+        browse). The api layer turns rows into lightweight ``SearchResult``s."""
+        async with session_scope(self._session_factory) as session:
+            stmt = (
+                select(Word.id, Word.norm, Word.entry_type)
+                .where(Word.status == status)
+                .order_by(Word.norm)
+                .offset(offset)
+            )
+            if limit is not None:
+                stmt = stmt.limit(limit)
+            rows = await session.execute(stmt)
+            return [(wid, norm, etype) for wid, norm, etype in rows]
+
     # --- topic tags (reads — never calls an LLM) --------------------------
 
     async def all_tags(self) -> list[tuple[str, str]]:
@@ -446,6 +477,75 @@ class Repository:
         result = await session.execute(select(Tag).where(Tag.tag_key == key))
         return result.scalar_one_or_none()
 
+    # --- tag management (curate the LLM-authored vocab) --------------------
+
+    async def rename_tag(self, tag: str, name: str | None = None, title: str | None = None) -> bool:
+        """Update an existing tag's display ``name``/``title`` in place.
+
+        Resolved via ``tag_key(tag)`` — the SAME normalizer as the write path, so
+        casing/plural variants all hit. ``tag_key`` itself is immutable (it is the
+        dedup identity, set once at creation); only display text changes. Returns
+        whether a matching tag was found. At least one of ``name``/``title`` must
+        be given.
+        """
+        if name is None and title is None:
+            raise ValueError("rename_tag requires name and/or title")
+        async with session_scope(self._session_factory) as session:
+            existing = await self._get_tag(session, tag_key(tag))
+            if existing is None:
+                return False
+            if name is not None:
+                existing.name = self._clean(name, self._MAX_TAG)
+            if title is not None:
+                existing.title = self._clean(title, self._MAX_TITLE)
+            return True
+
+    async def delete_tag(self, tag: str) -> bool:
+        """Delete a tag by (resolved) key; return whether one was removed.
+
+        Cascades ``word_tags`` (the DB-level FK); the tagged words themselves are
+        untouched — they simply lose this one topic."""
+        async with session_scope(self._session_factory) as session:
+            result = await session.execute(delete(Tag).where(Tag.tag_key == tag_key(tag)))
+            return (cast("CursorResult", result).rowcount or 0) > 0
+
+    async def merge_tags(self, sources: Sequence[str], into: str) -> int:
+        """Fold every ``sources`` tag into ``into``, then delete the sources.
+
+        ``into`` must already exist (``ValueError`` otherwise) — merging never
+        invents the destination tag. Each source's ``word_tags`` rows are
+        re-pointed to ``into``'s id; a word already carrying both tags would
+        collide on ``UNIQUE(word_id, tag_id)``, so that duplicate association is
+        dropped instead of re-pointed. Returns the number of associations
+        actually re-pointed (dropped duplicates are not counted).
+        """
+        async with session_scope(self._session_factory) as session:
+            target = await self._get_tag(session, tag_key(into))
+            if target is None:
+                raise ValueError(f"unknown destination tag: {into!r}")
+            moved = 0
+            for source in sources:
+                src_tag = await self._get_tag(session, tag_key(source))
+                if src_tag is None or src_tag.id == target.id:
+                    continue
+                links = (
+                    await session.execute(select(WordTag).where(WordTag.tag_id == src_tag.id))
+                ).scalars()
+                for link in links:
+                    dup = await session.execute(
+                        select(WordTag.id).where(
+                            WordTag.word_id == link.word_id, WordTag.tag_id == target.id
+                        )
+                    )
+                    if dup.first() is not None:
+                        await session.delete(link)
+                    else:
+                        link.tag_id = target.id
+                        moved += 1
+                await session.flush()
+                await session.execute(delete(Tag).where(Tag.id == src_tag.id))
+            return moved
+
     # --- themes (resolve-or-create by theme_key) --------------------------
 
     async def create_theme(
@@ -509,6 +609,50 @@ class Repository:
     async def _get_theme(self, session: AsyncSession, key: str) -> Theme | None:
         result = await session.execute(select(Theme).where(Theme.theme_key == key))
         return result.scalar_one_or_none()
+
+    # --- theme management (get one / update / delete) ----------------------
+
+    async def get_theme(self, key: str) -> Theme | None:
+        """A theme by ``theme_key`` (raw display name resolved via ``theme_key``
+        by the api layer), or ``None`` if absent. FREE."""
+        async with session_scope(self._session_factory) as session:
+            return await self._get_theme(session, key)
+
+    async def update_theme(
+        self,
+        key: str,
+        name: str | None = None,
+        style_prompt: str | None = None,
+        description: str | None = None,
+        tone: str | None = None,
+    ) -> Theme | None:
+        """Partially update an EXISTING theme's fields; ``theme_key`` is immutable
+        (renaming ``name`` never re-keys the theme, so callers keep addressing it
+        by the same key). Returns the updated row, or ``None`` if ``key`` is
+        unknown (the api layer raises for that case — unlike ``create_theme``,
+        this never creates)."""
+        async with session_scope(self._session_factory) as session:
+            existing = await self._get_theme(session, key)
+            if existing is None:
+                return None
+            if name is not None:
+                existing.name = self._clean(name, self._MAX_THEME_NAME)
+            if style_prompt is not None:
+                existing.style_prompt = self._clean(style_prompt, self._MAX_STYLE_PROMPT)
+            if description is not None:
+                existing.description = self._clean(description, 1000)
+            if tone is not None:
+                existing.tone = self._clean(tone, 255)
+            return existing
+
+    async def delete_theme(self, key: str) -> bool:
+        """Delete a theme by ``theme_key``; return whether one was removed.
+
+        Cascades ``themed_senses``/``themed_examples`` (DB-level FKs); the
+        neutral entries themselves are untouched."""
+        async with session_scope(self._session_factory) as session:
+            result = await session.execute(delete(Theme).where(Theme.theme_key == key))
+            return (cast("CursorResult", result).rowcount or 0) > 0
 
     async def persist_themed(
         self, theme_id: int, result: "ThemedResult", sense_ids: Sequence[int]

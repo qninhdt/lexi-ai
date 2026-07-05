@@ -16,7 +16,7 @@ from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.models import Example, Sense, ThemedExample, ThemedSense, Word
 from lexi_ai.persistence.repository import Repository
 from lexi_ai.read_models import Entry
-from lexi_ai.theming.prompts import format_themed
+from lexi_ai.prompts import PromptLoader
 from lexi_ai.theming.schemas import ThemedResult, GeneratedTheme
 from lexi_ai.theming.schemas import ThemedSense as ThemedSenseSchema
 
@@ -81,12 +81,27 @@ def test_themed_sense_defaults_examples_empty():
 # --- prompt formatter -----------------------------------------------------
 
 
+def _format_themed(
+    style_prompt: str,
+    neutral_senses: list[tuple[str, str | None, str | None, str]],
+) -> str:
+    mapped_senses = [
+        {"definition": d, "pos": pos, "guideword": gw, "tier": tier}
+        for d, pos, gw, tier in neutral_senses
+    ]
+    return PromptLoader.render(
+        "themed_restyling_user",
+        style_prompt=style_prompt,
+        neutral_senses=mapped_senses,
+    )
+
+
 def test_format_themed_has_facts_not_neutral_examples():
     neutral = [
         ("a scaly beast", "noun", "CREATURE", "core"),
         ("to hoard", None, None, "common"),
     ]
-    prompt = format_themed("speak like a bard", neutral)
+    prompt = _format_themed("speak like a bard", neutral)
     # Facts present.
     assert "a scaly beast" in prompt
     assert "CREATURE" in prompt
@@ -266,7 +281,7 @@ async def test_generate_theme_unknown_theme_raises(session_factory):
 async def test_get_neutral_unchanged(session_factory):
     word_id, _ = await _make_done_word(session_factory)
     lex = _lexicon(session_factory)
-    entry = await lex.get(word_id)
+    entry = await lex.get_entry(word_id)
     assert entry.senses[0].definition == "neutral def 0"
     assert entry.senses[0].examples == ["neutral example 0"]
 
@@ -274,7 +289,7 @@ async def test_get_neutral_unchanged(session_factory):
 async def test_get_theme_none_is_neutral(session_factory):
     word_id, _ = await _make_done_word(session_factory)
     lex = _lexicon(session_factory)
-    entry = await lex.get(word_id, theme=None)
+    entry = await lex.get_entry(word_id, theme=None)
     assert entry.senses[0].definition == "neutral def 0"
 
 
@@ -282,7 +297,7 @@ async def test_get_unknown_theme_raises(session_factory):
     word_id, _ = await _make_done_word(session_factory)
     lex = _lexicon(session_factory)
     with pytest.raises(ValueError):
-        await lex.get(word_id, theme="ghost")
+        await lex.get_entry(word_id, theme="ghost")
 
 
 async def test_get_per_sense_fallback(session_factory, repo):
@@ -295,7 +310,7 @@ async def test_get_per_sense_fallback(session_factory, repo):
         )
         await session.flush()
     lex = _lexicon(session_factory)
-    entry = await lex.get(word_id, theme="bard")
+    entry = await lex.get_entry(word_id, theme="bard")
     assert entry.senses[0].definition == "themed only 0"  # themed
     assert entry.senses[1].definition == "neutral def 1"  # fallback
 
@@ -306,9 +321,9 @@ async def test_get_and_generate_by_theme_id(session_factory, repo):
     
     # Resolve by integer ID
     lex = _lexicon(session_factory)
-    entry = await lex.get(word_id, theme=theme.id)
+    entry = await lex.get_entry(word_id, theme=theme.id)
     assert entry.senses[0].definition == "neutral def 0"
     
     # Resolve by string ID
-    entry2 = await lex.get(word_id, theme=str(theme.id))
+    entry2 = await lex.get_entry(word_id, theme=str(theme.id))
     assert entry2.senses[0].definition == "neutral def 0"

@@ -123,7 +123,7 @@ async def test_confused_with_links(engine):
     repo = Repository(sf)
     words = await repo.persist_result(_result("affect", related=[("effect", "confused_with")]))
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get(words[0].id)
+    entry = await lex.get_entry(words[0].id)
 
     confused = [ln for ln in entry.links if ln.rel_type == "confused_with"]
     assert len(confused) == 1
@@ -146,7 +146,7 @@ async def test_sense_labels_round_trip(engine):
         )
     )
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get(words[0].id)
+    entry = await lex.get_entry(words[0].id)
     sense = entry.senses[0]
 
     assert sense.guideword == "PUT"
@@ -191,7 +191,7 @@ async def test_collocations_ordered_and_sanitized(engine):
         )
     )
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get(words[0].id)
+    entry = await lex.get_entry(words[0].id)
     cols = entry.senses[0].collocations
 
     # NUL/newline collapsed to a space, whitespace-only dropped, order preserved.
@@ -219,7 +219,7 @@ async def test_empty_enrichment_persists_done(engine):
     assert words[0].status == "done"
 
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get(words[0].id)
+    entry = await lex.get_entry(words[0].id)
     sense = entry.senses[0]
     assert sense.guideword is None
     assert sense.grammar == []
@@ -238,7 +238,7 @@ async def test_collocations_no_detached_load(engine):
     repo = Repository(sf)
     words = await repo.persist_result(_result("draw", collocations=["draw a line", "draw water"]))
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get(words[0].id)
+    entry = await lex.get_entry(words[0].id)
 
     # No DetachedInstanceError / MissingGreenlet on this access.
     assert entry.senses[0].collocations == ["draw a line", "draw water"]

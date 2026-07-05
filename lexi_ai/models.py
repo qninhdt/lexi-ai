@@ -265,9 +265,9 @@ class Theme(Base):
     ``tag_key`` but WITHOUT singularization — a name is a proper voice, not a noun
     phrase). ``name``/``style_prompt`` are set once on create (first-seen wins).
 
-    Themes are addressed BY KEY at the API (``get``/``generate_theme`` take a
-    ``theme_key`` string), so — unlike ``tag_key`` — the key is intentionally
-    exposed in the read model.
+    Themes are addressed BY KEY at the API (``get_entry``/``generate``/
+    ``get_theme``/``update_theme``/``delete_theme`` take a ``theme_key`` string),
+    so — unlike ``tag_key`` — the key is intentionally exposed in the read model.
     """
 
     __tablename__ = "themes"

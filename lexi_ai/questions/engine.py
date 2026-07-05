@@ -8,6 +8,7 @@ branch on which backend a plugin uses — "who persists" and "rule vs llm" are
 plugin concerns the engine cannot see.
 """
 
+import asyncio
 from collections.abc import Sequence
 
 from langchain_core.runnables import Runnable
@@ -15,7 +16,7 @@ from langchain_core.runnables import Runnable
 from lexi_ai.questions.base import REGISTRY, QuestionContext, QuestionFormat
 from lexi_ai.questions.distractors import DistractorProvider
 from lexi_ai.questions.repository import QuestionRepository
-from lexi_ai.read_models import Entry, Question, Score
+from lexi_ai.read_models import BatchResult, Entry, Question, Score
 
 
 class QuestionEngine:
@@ -69,6 +70,29 @@ class QuestionEngine:
         (a client can grade a just-generated ephemeral question).
         """
         return await self._plugin(question.format).grade(self._ctx(None), question, answer)
+
+    async def grade_many(
+        self, pairs: list[tuple[Question, object]], *, concurrency: int = 5
+    ) -> list[BatchResult]:
+        """Batch :meth:`grade` — one :class:`BatchResult` per ``(question, answer)``
+        pair, in order, up to ``concurrency`` in flight. Grading may hit an LLM
+        judge (fallible per item), so one pair's failure never aborts the rest."""
+        if not pairs:
+            return []
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _one(pair: tuple[Question, object]) -> Score:
+            question, answer = pair
+            async with sem:
+                return await self.grade(question, answer)
+
+        raw = await asyncio.gather(*(_one(p) for p in pairs), return_exceptions=True)
+        return [
+            BatchResult(key=pair, error=str(r))
+            if isinstance(r, Exception)
+            else BatchResult(key=pair, value=r)
+            for pair, r in zip(pairs, raw, strict=True)
+        ]
 
     # --- CRUD passthrough (persisted questions) ---------------------------
 

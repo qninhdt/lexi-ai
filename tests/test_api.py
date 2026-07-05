@@ -268,11 +268,11 @@ async def test_get_and_status_by_lexi_id(engine):
     lexi_id = (await lex.search("color"))[0].lexi_word_id
     assert lexi_id is not None
 
-    fetched = await lex.get(lexi_id)
+    fetched = await lex.get_entry(lexi_id)
     assert fetched.norm == entry.norm
-    assert await lex.status(lexi_id) == "done"
+    assert await lex.get_status(lexi_id) == "done"
     # Unknown id → None, no crash.
-    assert await lex.status(999999) is None
+    assert await lex.get_status(999999) is None
 
 
 async def test_search_finds_custom_word(engine):
@@ -507,7 +507,7 @@ async def test_semantic_search_ranks_by_meaning(engine):
     assert [h.score for h in hits] == sorted((h.score for h in hits), reverse=True)
     assert all(isinstance(h.lexi_word_id, int) for h in hits)
     # The hit's word id resolves via the normal read path.
-    top = await lex.get(hits[0].lexi_word_id)
+    top = await lex.get_entry(hits[0].lexi_word_id)
     assert top.display == hits[0].display
 
 

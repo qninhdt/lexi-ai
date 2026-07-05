@@ -1,4 +1,4 @@
-"""Lazy lookup API (Phase 6): the public ``Lexicon.get`` surface.
+"""Lazy lookup API (Phase 6): the public ``Lexicon.get_entry`` surface.
 
 Flow: normalize input -> resolve by match_key against words AND aliases ->
 branch on 0 / 1-done / 1-pending / N. Misses run the full lazy pipeline
@@ -30,6 +30,7 @@ from lexi_ai.persistence.repository import Repository
 from lexi_ai.read_models import (
     AliasView,
     Asset,
+    BatchResult,
     Entry,
     LinkView,
     ReferenceView,
@@ -223,7 +224,7 @@ class Lexicon:
         results.sort(key=lambda r: (-r.score, r.display))
         return results
 
-    async def get(self, lexi_word_id: int, theme: str | int | None = None) -> Entry:
+    async def get_entry(self, word_id: int, theme: str | int | None = None) -> Entry:
         """Load a generated entry by its dictionary id. Never generates (FREE).
 
         ``theme`` (theme key or ID) overlays themed definition +
@@ -232,7 +233,7 @@ class Lexicon:
         would hide a caller bug). ``None`` (default) is the neutral entry unchanged.
         """
         if theme is None:
-            return await self._to_entry(lexi_word_id)
+            return await self._to_entry(word_id)
         if isinstance(theme, int):
             resolved = await self._repo.resolve_theme(theme)
         else:
@@ -242,7 +243,7 @@ class Lexicon:
         if resolved is None:
             raise ValueError(f"unknown theme: {theme!r}")
         theme_id, _style = resolved
-        return await self._to_entry(lexi_word_id, theme_id=theme_id)
+        return await self._to_entry(word_id, theme_id=theme_id)
 
     async def get_senses(self, sense_ids: list[int]) -> list[SenseView]:
         """Batch-resolve senses by their DB ids. Never generates (FREE).
@@ -289,12 +290,34 @@ class Lexicon:
             sense_id=s.id,
         )
 
-    async def status(self, lexi_word_id: int) -> str | None:
+    async def get_many(
+        self, word_ids: list[int], theme: str | int | None = None
+    ) -> list[BatchResult]:
+        """Batch :meth:`get_entry` — one :class:`BatchResult` per input id, in
+        order. Never generates (FREE). A missing/invalid id is reported as a
+        failed item (``error`` set) rather than aborting the whole batch."""
+
+        async def _one(word_id: int) -> Entry:
+            return await self.get_entry(word_id, theme=theme)
+
+        return await self._gather_batch(word_ids, _one)
+
+    async def get_status(self, word_id: int) -> str | None:
         """Status of a dictionary word (``done`` | ``pending`` | ``error``), or
         ``None`` if no such id exists. Never generates (FREE)."""
         async with session_scope(self._session_factory) as session:
-            row = await session.execute(select(Word.status).where(Word.id == lexi_word_id))
+            row = await session.execute(select(Word.status).where(Word.id == word_id))
             return row.scalar_one_or_none()
+
+    async def get_status_many(self, word_ids: list[int]) -> list[BatchResult]:
+        """Batch :meth:`get_status` — one :class:`BatchResult` per input id, in
+        order (``value`` is ``None`` for an unknown id — that is a valid answer,
+        not a failure). Never generates (FREE)."""
+
+        async def _one(word_id: int) -> str | None:
+            return await self.get_status(word_id)
+
+        return await self._gather_batch(word_ids, _one)
 
     async def semantic_search(self, query: str, k: int = 10) -> list[SemanticHit]:
         """Rank already-generated senses by meaning similarity to ``query``.
@@ -347,18 +370,57 @@ class Lexicon:
         rows = await self._repo.count_tags()
         return [TagCount(name=name, title=title, count=count) for name, title, count in rows]
 
-    async def words_by_tag(self, tag: str, *, limit: int | None = None) -> list[SearchResult]:
+    async def list_entries_by_tag(
+        self, tag: str, *, limit: int | None = None
+    ) -> list[SearchResult]:
         """Generated words carrying ``tag``, as generated-hit ``SearchResult``s.
 
         The query is resolved via ``tag_key`` (the write-path function) so
         ``"Business"``/``"business"``/``"cars"`` all hit the right tag. Never
-        generates (FREE); pass a hit's ``lexi_word_id`` to :meth:`get`.
+        generates (FREE); pass a hit's ``lexi_word_id`` to :meth:`get_entry`.
         """
         rows = await self._repo.words_for_tag_key(tag_key(tag), limit=limit)
         return [
             SearchResult(display=render(norm), entry_type=etype, lexi_word_id=wid)
             for wid, norm, etype in rows
         ]
+
+    async def list_entries(
+        self, *, status: str = "done", limit: int | None = None, offset: int = 0
+    ) -> list[SearchResult]:
+        """Paginated browse of the whole dictionary, norm-sorted. Never
+        generates (FREE). Lightweight rows (like :meth:`list_entries_by_tag`) —
+        pass a hit's ``lexi_word_id`` to :meth:`get_entry` for the full entry."""
+        rows = await self._repo.list_words(status=status, limit=limit, offset=offset)
+        return [
+            SearchResult(display=render(norm), entry_type=etype, lexi_word_id=wid)
+            for wid, norm, etype in rows
+        ]
+
+    async def delete_entry(self, word_id: int) -> bool:
+        """Delete a dictionary word and all its content; return whether a row
+        was removed. Cascades senses, aliases, links, tags, and questions (the
+        DB-level ``ON DELETE CASCADE`` FKs, already wired)."""
+        return await self._repo.delete_word(word_id)
+
+    async def rename_tag(
+        self, tag: str, *, name: str | None = None, title: str | None = None
+    ) -> bool:
+        """Update an existing topic tag's display ``name``/``title``. The
+        underlying dedup key is immutable — this never merges/re-keys a tag
+        (see :meth:`merge_tags` for that). Returns whether ``tag`` was found."""
+        return await self._repo.rename_tag(tag, name=name, title=title)
+
+    async def delete_tag(self, tag: str) -> bool:
+        """Delete a topic tag; return whether one was found. Tagged words are
+        untouched — they simply lose this one topic."""
+        return await self._repo.delete_tag(tag)
+
+    async def merge_tags(self, sources: list[str], into: str) -> int:
+        """Fold ``sources`` tags into ``into``, then delete the sources.
+        ``into`` must already exist (``ValueError`` otherwise). Returns the
+        number of word-tag associations re-pointed."""
+        return await self._repo.merge_tags(sources, into)
 
     async def create_theme(
         self,
@@ -420,8 +482,59 @@ class Lexicon:
             for t in await self._repo.list_themes()
         ]
 
-    async def _run_themed_generation(self, lexi_word_id: int, theme_id: int, style_prompt: str) -> None:
-        status = await self.status(lexi_word_id)
+    async def get_theme(self, key: str) -> Theme | None:
+        """A style theme by key (raw display name resolved via the same
+        normalizer as :meth:`create_theme`), or ``None`` if unknown. FREE."""
+        theme = await self._repo.get_theme(_norm_theme_key(key))
+        if theme is None:
+            return None
+        return Theme(
+            key=theme.theme_key,
+            name=theme.name,
+            style_prompt=theme.style_prompt,
+            description=theme.description,
+            tone=theme.tone,
+        )
+
+    async def update_theme(
+        self,
+        key: str,
+        *,
+        name: str | None = None,
+        style_prompt: str | None = None,
+        description: str | None = None,
+        tone: str | None = None,
+    ) -> Theme:
+        """Partially update an EXISTING theme's fields (unset args are left
+        unchanged). The theme's key is immutable — renaming ``name`` never
+        re-keys it. Raises ``ValueError`` if ``key`` is unknown (unlike
+        :meth:`create_theme`, this never creates)."""
+        theme = await self._repo.update_theme(
+            _norm_theme_key(key),
+            name=name,
+            style_prompt=style_prompt,
+            description=description,
+            tone=tone,
+        )
+        if theme is None:
+            raise ValueError(f"unknown theme: {key!r}")
+        return Theme(
+            key=theme.theme_key,
+            name=theme.name,
+            style_prompt=theme.style_prompt,
+            description=theme.description,
+            tone=theme.tone,
+        )
+
+    async def delete_theme(self, key: str) -> bool:
+        """Delete a style theme by key; return whether one was removed.
+        Cascades its themed senses/examples; neutral entries are untouched."""
+        return await self._repo.delete_theme(_norm_theme_key(key))
+
+    async def _run_themed_generation(
+        self, lexi_word_id: int, theme_id: int, style_prompt: str
+    ) -> None:
+        status = await self.get_status(lexi_word_id)
         if status != "done":
             raise ValueError(f"word {lexi_word_id} is not done (status={status!r})")
 
@@ -476,6 +589,18 @@ class Lexicon:
         stored = await assets.put_text(h, "translate", params, result)
         return stored.text_value or result
 
+    async def translate_many(
+        self, texts: list[str], lang: str, *, concurrency: int = 5
+    ) -> list[BatchResult]:
+        """Batch :meth:`translate` — one :class:`BatchResult` per input text, in
+        order, up to ``concurrency`` in flight. Cache-first per item, so a
+        repeated text within (or across) calls spends zero LLM."""
+
+        async def _one(text: str) -> str:
+            return await self.translate(text, lang)
+
+        return await self._gather_batch(texts, _one, concurrency=concurrency)
+
     def _require_assets(self) -> AssetRepository:
         """The asset cache, constructed lazily from settings if not injected."""
         if self._assets is None:
@@ -528,6 +653,27 @@ class Lexicon:
 
             self._tts_impl = StubTTSProvider()
         return self._tts_impl
+
+    async def get_asset(self, asset_id: int) -> Asset | None:
+        """A cached asset (translation or TTS) by its id, or ``None``. FREE."""
+        return await self._require_assets().get_by_id(asset_id)
+
+    async def list_assets(
+        self, *, kind: str | None = None, limit: int | None = None, offset: int = 0
+    ) -> list[Asset]:
+        """Cached assets, oldest first, optionally filtered by ``kind``
+        (``"translate"`` | ``"tts"``). FREE."""
+        return await self._require_assets().list(kind=kind, limit=limit, offset=offset)
+
+    async def delete_asset(self, asset_id: int) -> bool:
+        """Delete a cached asset by id (and its backing file, if any); return
+        whether one was removed."""
+        return await self._require_assets().delete(asset_id)
+
+    async def purge_assets(self, *, kind: str | None = None) -> int:
+        """Delete every cached asset (optionally one ``kind``), unlinking their
+        backing files. Returns the number removed."""
+        return await self._require_assets().purge(kind=kind)
 
     async def generate(
         self,
@@ -596,6 +742,25 @@ class Lexicon:
             entry = await self._to_entry(entry.word_id, theme_id)
 
         return entry
+
+    async def generate_many(
+        self,
+        sources: list[SearchResult | str],
+        *,
+        force: bool = False,
+        theme: str | None = None,
+        concurrency: int = 5,
+    ) -> list[BatchResult]:
+        """Batch :meth:`generate` — one :class:`BatchResult` per input source, in
+        order, up to ``concurrency`` in flight. Each item goes through the SAME
+        :meth:`generate`, so two items resolving to the same word still generate
+        exactly once (the existing per-``match_key`` lock + DB double-check is
+        reused unchanged) — no new locking logic here."""
+
+        async def _one(source: SearchResult | str) -> Entry:
+            return await self.generate(source, force=force, theme=theme)
+
+        return await self._gather_batch(sources, _one, concurrency=concurrency)
 
     async def _generate_locked(
         self, key: str, word: str, cambridge_id: int | None, force: bool
@@ -745,6 +910,32 @@ class Lexicon:
         """Drop a per-key lock once idle, so _locks does not grow unbounded."""
         if not lock.locked() and self._locks.get(lock_key) is lock:
             del self._locks[lock_key]
+
+    @staticmethod
+    async def _gather_batch(items: list, fn, concurrency: int | None = None) -> list[BatchResult]:
+        """Run ``fn(item)`` for every item, wrapping outcomes as order-aligned
+        ``BatchResult``s. One item's exception is captured, never cancels or
+        aborts the others (``asyncio.gather(..., return_exceptions=True)``).
+        ``concurrency`` bounds in-flight calls via a semaphore (for LLM-backed
+        batches); ``None`` runs everything at once (cheap DB-only batches)."""
+        if not items:
+            return []
+        if concurrency is None:
+            raw = await asyncio.gather(*(fn(item) for item in items), return_exceptions=True)
+        else:
+            sem = asyncio.Semaphore(concurrency)
+
+            async def _guarded(item):
+                async with sem:
+                    return await fn(item)
+
+            raw = await asyncio.gather(*(_guarded(item) for item in items), return_exceptions=True)
+        return [
+            BatchResult(key=item, error=str(r))
+            if isinstance(r, Exception)
+            else BatchResult(key=item, value=r)
+            for item, r in zip(items, raw, strict=True)
+        ]
 
     @staticmethod
     def _cefr_map(bundle: ReferenceBundle) -> dict[str, str]:

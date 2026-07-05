@@ -76,8 +76,9 @@ class Entry:
 @dataclass
 class Theme:
     """A style voice (public read view). ``key`` is the normalized dedup key and
-    is intentionally exposed — callers pass it back to ``get``/``generate_theme``
-    to address a theme (unlike ``tag_key``, which stays repository-internal)."""
+    is intentionally exposed — callers pass it back to ``get_entry``/``generate``
+    (and to ``get_theme``/``update_theme``/``delete_theme``) to address a theme
+    (unlike ``tag_key``, which stays repository-internal)."""
 
     key: str
     name: str
@@ -90,13 +91,18 @@ class Theme:
 class Asset:
     """A cached derived asset (public read view). ``text_value`` holds inline
     results (translation); ``file_path`` points at a binary clip (TTS) relative
-    to the asset cache dir. ``ready`` tells a ready asset from a placeholder."""
+    to the asset cache dir. ``ready`` tells a ready asset from a placeholder.
+
+    ``id`` is the DB id when this view was assembled from a persisted row (the
+    handle passed to ``get_asset``/``delete_asset``); ``None`` for a placeholder
+    synthesized without a row (e.g. an empty-text short-circuit)."""
 
     kind: str
     params: str
     text_value: str | None = None
     file_path: str | None = None
     meta: str | None = None
+    id: int | None = None
 
     @property
     def ready(self) -> bool:
@@ -109,7 +115,7 @@ class SearchResult:
     """One hit from :meth:`Lexicon.search` — a single ranked list mixes two kinds.
 
     ``generated`` (``lexi_word_id`` set): an entry that already exists in the
-    dictionary; pass the id to :meth:`Lexicon.get`. ``suggestion``
+    dictionary; pass the id to :meth:`Lexicon.get_entry`. ``suggestion``
     (``cambridge_id`` set, ``lexi_word_id`` is ``None``): a reference word that
     can be generated; pass the result to :meth:`Lexicon.generate`.
     """
@@ -143,7 +149,7 @@ class SemanticHit:
     """One hit from :meth:`Lexicon.semantic_search` — a generated sense ranked by
     cosine similarity of its embedding to the query. ``score`` is in ``[-1, 1]``
     (1 = identical direction). ``sense`` is the matched sense; ``lexi_word_id``
-    points at its owning word (pass to :meth:`Lexicon.get` for the full entry)."""
+    points at its owning word (pass to :meth:`Lexicon.get_entry` for the full entry)."""
 
     lexi_word_id: int
     display: str
@@ -183,3 +189,24 @@ class Score:
     score: float  # 0.0..1.0
     kind: str  # ∈ SCORE_KINDS
     feedback: str | None = None
+
+
+@dataclass
+class BatchResult:
+    """One item's outcome in a batch call (``*_many``).
+
+    Results are order-aligned with the inputs (``results[i]`` for ``inputs[i]``);
+    ``key`` additionally echoes the input identity for convenience. Exactly one
+    side is meaningful: ``ok`` True → read ``value``; ``ok`` False → read
+    ``error`` (a short message). A batch never aborts on one item — a failed item
+    is reported here while its siblings still complete.
+    """
+
+    key: object
+    value: object | None = None
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """True when this item succeeded (no error captured)."""
+        return self.error is None

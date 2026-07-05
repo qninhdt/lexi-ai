@@ -16,7 +16,7 @@ Each tag has a short ``name`` slug and a human ``title`` (set once, first-seen).
 Flow:
   1. generate a handful of words (topics ride the same LLM call as senses)
   2. list_tags()      -> every topic + its live member count (FREE)
-  3. words_by_tag(t)  -> every generated word carrying a topic (FREE)
+  3. list_entries_by_tag(t)  -> every generated word carrying a topic (FREE)
 """
 
 import asyncio
@@ -53,8 +53,8 @@ async def main() -> None:
         #    casing/plural variants of the query all hit.
         if tags:
             top = tags[0]
-            print(f"\n=== words_by_tag({top.name!r}) ===")
-            for hit in await lex.words_by_tag(top.name):
+            print(f"\n=== list_entries_by_tag({top.name!r}) ===")
+            for hit in await lex.list_entries_by_tag(top.name):
                 print(f"   · {hit.display}  ({hit.entry_type})")
     finally:
         await aclose(lex)

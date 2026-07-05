@@ -7,7 +7,7 @@ A raw string is ambiguous, so you never generate from it directly. You:
   2. inspect / pick one (item 0 is the best match)
   3. generate(result) -> the Entry (generates once, then cached)
 
-Also shows status() (FREE) and generate(raw) for a word Cambridge lacks.
+Also shows get_status() (FREE) and generate(raw) for a word Cambridge lacks.
 
     uv run python examples/08_resolve_and_pick.py [query]
 """
@@ -40,7 +40,7 @@ async def main(query: str) -> None:
 
         # 3. introspect before generating — FREE.
         if best.generated:
-            print(f"  status: {await lex.status(best.lexi_word_id)!r}")
+            print(f"  status: {await lex.get_status(best.lexi_word_id)!r}")
         else:
             print("  status: not generated yet (no lexi_word_id)")
 

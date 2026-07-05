@@ -62,7 +62,7 @@ The demos 01–07 use a `lookup(lex, raw)` helper in `_common.py` that wraps
 | `07_inspect_matching.py [word]` | how a string maps to Cambridge + WordNet anchors |
 | `08_resolve_and_pick.py [query]` | the real `resolve → pick → get(sug)` flow + `peek`/`exists`/`status`/`add` |
 | `09_semantic_search.py` | rank generated senses by **meaning** via local embeddings (`semantic_search`, `backfill_embeddings`) |
-| `10_topic_tags.py` | open-vocabulary **topic tags** per word; browse via `list_tags` / `words_by_tag` |
+| `10_topic_tags.py` | open-vocabulary **topic tags** per word; browse via `list_tags` / `list_entries_by_tag` |
 | `11_word_enrichment.py [word]` | learner-dictionary **enrichments**: guideword, grammar, register, connotation, collocations + word-family / confused-with links |
 | `12_question_engine.py [word]` | **question engine**: generate + grade questions across 4 formats; llm questions persist for 0-token reuse |
 
@@ -105,8 +105,8 @@ uv run python examples/10_topic_tags.py
 ```
 
 Browse is FREE (no LLM): `list_tags()` enumerates every topic with its live member
-count; `words_by_tag("business")` returns the generated words carrying it (resolved
-via `tag_key`, so `"Business"` and `"business"` hit the same tag).
+count; `list_entries_by_tag("business")` returns the generated words carrying it
+(resolved via `tag_key`, so `"Business"` and `"business"` hit the same tag).
 
 ## Word enrichment (example 11)
 
