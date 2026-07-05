@@ -719,7 +719,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "sqlalchemy", extra = ["asyncio"] },
-    { name = "uuid-utils" },
 ]
 
 [package.optional-dependencies]
@@ -746,7 +745,6 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "torch", marker = "extra == 'embeddings'", specifier = ">=2.2" },
     { name = "transformers", marker = "extra == 'embeddings'", specifier = ">=4.40" },
-    { name = "uuid-utils", specifier = ">=0.16" },
 ]
 provides-extras = ["embeddings"]
 
