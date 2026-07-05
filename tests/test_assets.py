@@ -48,6 +48,11 @@ def test_translate_params_stable():
     assert normalize_asset_params("translate", lang=" VI ") == "vi"
 
 
+def test_translate_params_invalid_raises():
+    with pytest.raises(ValueError, match="invalid/unsupported language code"):
+        normalize_asset_params("translate", lang="invalid_code")
+
+
 def test_tts_params_stable():
     assert normalize_asset_params("tts", voice="Alloy", fmt="MP3") == "alloy|mp3"
     assert normalize_asset_params("tts", voice=None, fmt=None) == "|"

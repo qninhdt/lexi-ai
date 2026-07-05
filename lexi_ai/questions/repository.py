@@ -74,9 +74,7 @@ class QuestionRepository:
     async def delete(self, question_id: int) -> bool:
         """Delete a question by id; return whether a row was removed."""
         async with session_scope(self._session_factory) as session:
-            result = await session.execute(
-                delete(QuestionRow).where(QuestionRow.id == question_id)
-            )
+            result = await session.execute(delete(QuestionRow).where(QuestionRow.id == question_id))
             return (result.rowcount or 0) > 0
 
 

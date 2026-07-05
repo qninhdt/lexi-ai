@@ -448,9 +448,7 @@ class Lexicon:
     def _require_assets(self) -> AssetRepository:
         """The asset cache, constructed lazily from settings if not injected."""
         if self._assets is None:
-            self._assets = AssetRepository(
-                self._session_factory, get_settings().asset_cache_dir
-            )
+            self._assets = AssetRepository(self._session_factory, get_settings().asset_cache_dir)
         return self._assets
 
     def _translator(self):

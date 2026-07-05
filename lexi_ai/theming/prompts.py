@@ -24,8 +24,9 @@ parts of speech, or senses.\
 """
 
 
-def _sense_facts(index: int, definition: str, pos: str | None, guideword: str | None,
-                 tier: str) -> str:
+def _sense_facts(
+    index: int, definition: str, pos: str | None, guideword: str | None, tier: str
+) -> str:
     """One numbered neutral sense block (facts only — NO examples)."""
     lines = [f"Sense {index}:", f"  definition: {definition}", f"  tier: {tier}"]
     if pos:

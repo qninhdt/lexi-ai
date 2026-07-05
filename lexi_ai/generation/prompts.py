@@ -56,6 +56,28 @@ clearly apply, an empty field is fine):
   (make a decision, heavy rain). Illustrative phrases, NOT headwords.\
 """
 
+EXAMPLES_RULE = """\
+EXAMPLES TARGET MARKING (critical):
+- For every example sentence under each sense, you MUST wrap the target word/phrase or its inflected form using <t inf="value">...</t> tags.
+- The `inf` attribute must be one of the following exact values representing the grammatical inflection:
+  * "base": base form (e.g. glisten, run, cat)
+  * "past": past simple tense (e.g. glistened, ran)
+  * "past_participle": past participle (e.g. glistened, run in "has run")
+  * "present_3sg": third-person singular present (e.g. glistens, runs)
+  * "ing": -ing form (e.g. glistening, running)
+  * "plural": plural noun (e.g. cats)
+  * "comparative": comparative (e.g. happier)
+  * "superlative": superlative (e.g. happiest)
+- Examples:
+  * Word "glisten":
+    - "The snow <t inf="past">glistened</t> in the morning light."
+    - "Her eyes <t inf="base">glisten</t> with tears."
+    - "The wet leaves were <t inf="ing">glistening</t> after the rain."
+  * Phrase "bring up":
+    - "She <t inf="past">brought</t> the children <t inf="base">up</t> alone."
+- Ensure every single example has the target word/phrase correctly wrapped in <t inf="...">...</t>. Do NOT output any example without target markup tags.\
+"""
+
 SYSTEM_PROMPT = f"""\
 You are a lexicographer building an English learner's dictionary. You SYNTHESIZE \
 the best learner-facing sense list — you do not copy the source verbatim.
@@ -85,6 +107,8 @@ cefr_level: when a sense maps to a Cambridge sense that carries a CEFR value, \
 reuse that value; otherwise assign one from tier and context.
 
 {SENSE_LABELS_RULE}
+
+{EXAMPLES_RULE}
 
 TOPICS (broad subject-area tags):
 - Assign 1-3 broad topic tags naming the word's subject area (e.g. food, \

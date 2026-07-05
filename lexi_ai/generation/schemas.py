@@ -79,7 +79,16 @@ class GeneratedSense(BaseModel):
     cefr_level: str | None = Field(
         default=None, description="A1..C2; prefer the Cambridge value when mapped."
     )
-    examples: list[str] = Field(default_factory=list)
+    examples: list[str] = Field(
+        default_factory=list,
+        description=(
+            "1-3 natural English example sentences illustrating this sense. "
+            "For every sentence, you MUST wrap the target word/phrase (or its inflected forms) "
+            "using <t inf=\"value\">...</t> tags. Valid inf values are: "
+            "base | past | past_participle | present_3sg | ing | plural | comparative | superlative. "
+            "Example for 'glisten': 'The snow <t inf=\"past\">glistened</t> in the sun.'"
+        ),
+    )
     references: list[GeneratedReference] = Field(
         default_factory=list,
         description="N-N provenance to source senses/synsets; may be empty.",

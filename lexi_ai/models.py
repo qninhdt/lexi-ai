@@ -339,9 +339,7 @@ class Asset(Base):
     """
 
     __tablename__ = "assets"
-    __table_args__ = (
-        UniqueConstraint("content_hash", "kind", "params", name="uq_asset_identity"),
-    )
+    __table_args__ = (UniqueConstraint("content_hash", "kind", "params", name="uq_asset_identity"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

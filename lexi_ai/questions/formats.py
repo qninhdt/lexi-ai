@@ -89,9 +89,7 @@ class DefinitionMCQ:
         sense = _core_sense(entry)
         if sense is None:
             return []
-        distractors = await ctx.distractors.for_word(
-            entry, k=_MCQ_OPTIONS - 1, pos=sense.pos
-        )
+        distractors = await ctx.distractors.for_word(entry, k=_MCQ_OPTIONS - 1, pos=sense.pos)
         stem = f"Which word means: {sense.definition}"
         seed = f"definition_mcq:{match_key(entry.norm)}"
         q = _mcq_question(entry, sense, stem, seed, distractors)

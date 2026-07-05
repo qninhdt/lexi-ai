@@ -502,8 +502,7 @@ class Repository:
         """
         if len(result.senses) != len(sense_ids):
             raise ValueError(
-                f"themed sense count {len(result.senses)} != neutral sense count "
-                f"{len(sense_ids)}"
+                f"themed sense count {len(result.senses)} != neutral sense count {len(sense_ids)}"
             )
         async with session_scope(self._session_factory) as session:
             for sense_id, themed in zip(sense_ids, result.senses, strict=True):

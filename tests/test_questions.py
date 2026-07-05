@@ -190,8 +190,9 @@ async def test_cloze_skips_when_target_only_appears_as_substring(session_factory
 async def test_contextual_mcq_merges_and_filters_llm_distractors(session_factory):
     wid, sid = await _seed_word(session_factory)
     # llm proposes the correct answer inside its own distractors -> filtered out
-    mcq = GeneratedMCQ(stem="His ____ speech moved us.", correct="eloquent",
-                       distractors=["eloquent", "terse"])
+    mcq = GeneratedMCQ(
+        stem="His ____ speech moved us.", correct="eloquent", distractors=["eloquent", "terse"]
+    )
     ctx = _mcq_ctx(_entry(wid, sid), llm=_fake_llm(mcq))
     qs = await ContextualMCQ().generate(ctx, n=1)
     assert len(qs) == 1
@@ -226,7 +227,10 @@ async def test_generate_option_order_is_deterministic(session_factory):
 
 def _mcq_question(options, correct_index) -> Question:
     return Question(
-        id=None, word_id=1, sense_id=None, format="definition_mcq",
+        id=None,
+        word_id=1,
+        sense_id=None,
+        format="definition_mcq",
         answer_kind="single_choice",
         payload={"stem": "s", "options": options, "correct_index": correct_index},
     )
@@ -258,12 +262,24 @@ async def test_grade_text_span_rides_the_one_normalizer():
     # and diacritics — but NOT spelling variants (colour != color; that is an
     # alias concern, not normalization). This proves cloze grading can never drift
     # from how the dictionary keys words.
-    q = Question(id=None, word_id=1, sense_id=None, format="cloze", answer_kind="text_span",
-                 payload={"stem_with_blank": "_", "answer_norm": "café"})
-    assert (await grade_text_span(q, "cafe")).correct is True     # diacritic folds
+    q = Question(
+        id=None,
+        word_id=1,
+        sense_id=None,
+        format="cloze",
+        answer_kind="text_span",
+        payload={"stem_with_blank": "_", "answer_norm": "café"},
+    )
+    assert (await grade_text_span(q, "cafe")).correct is True  # diacritic folds
     assert (await grade_text_span(q, "  CAFÉ ")).correct is True  # case + whitespace fold
-    q2 = Question(id=None, word_id=1, sense_id=None, format="cloze", answer_kind="text_span",
-                  payload={"stem_with_blank": "_", "answer_norm": "color"})
+    q2 = Question(
+        id=None,
+        word_id=1,
+        sense_id=None,
+        format="cloze",
+        answer_kind="text_span",
+        payload={"stem_with_blank": "_", "answer_norm": "color"},
+    )
     assert (await grade_text_span(q2, "colour")).correct is False  # spelling is NOT folded
 
 
@@ -386,9 +402,14 @@ async def test_engine_is_blind_to_persistence(session_factory):
         answer_kind = "single_choice"
 
         async def generate(self, ctx, n=1):
-            q = Question(id=None, word_id=ctx.entry.word_id, sense_id=None,
-                         format=self.format, answer_kind=self.answer_kind,
-                         payload={"stem": "s", "options": ["eloquent", "x"], "correct_index": 0})
+            q = Question(
+                id=None,
+                word_id=ctx.entry.word_id,
+                sense_id=None,
+                format=self.format,
+                answer_kind=self.answer_kind,
+                payload={"stem": "s", "options": ["eloquent", "x"], "correct_index": 0},
+            )
             stored = await ctx.store.insert(q)
             persisted_flag["stored"] = True
             return [stored]
@@ -399,8 +420,16 @@ async def test_engine_is_blind_to_persistence(session_factory):
     class _Ephemeral(_Persisting):
         async def generate(self, ctx, n=1):
             payload = {"stem": "s", "options": ["eloquent", "x"], "correct_index": 0}
-            return [Question(id=None, word_id=ctx.entry.word_id, sense_id=None,
-                             format=self.format, answer_kind=self.answer_kind, payload=payload)]
+            return [
+                Question(
+                    id=None,
+                    word_id=ctx.entry.word_id,
+                    sense_id=None,
+                    format=self.format,
+                    answer_kind=self.answer_kind,
+                    payload=payload,
+                )
+            ]
 
     wid, sid = await _seed_word(session_factory)
     entry = _entry(wid, sid)
@@ -457,10 +486,20 @@ async def test_one_line_extensibility_new_plugin(session_factory):
         answer_kind = "single_choice"
 
         async def generate(self, ctx, n=1):
-            return [Question(id=None, word_id=ctx.entry.word_id, sense_id=None,
-                             format=self.format, answer_kind=self.answer_kind,
-                             payload={"stem": "pick eloquent", "options": ["eloquent", "x"],
-                                      "correct_index": 0})]
+            return [
+                Question(
+                    id=None,
+                    word_id=ctx.entry.word_id,
+                    sense_id=None,
+                    format=self.format,
+                    answer_kind=self.answer_kind,
+                    payload={
+                        "stem": "pick eloquent",
+                        "options": ["eloquent", "x"],
+                        "correct_index": 0,
+                    },
+                )
+            ]
 
         async def grade(self, ctx, question, answer):
             return await grade_single_choice(question, answer)
@@ -490,8 +529,16 @@ async def test_payload_unicode_round_trips(session_factory):
     wid, _sid = await _seed_word(session_factory)
     repo = QuestionRepository(session_factory)
     payload = {"stem_with_blank": "café ____ naïve", "answer_norm": "résumé", "opts": ["a", "b"]}
-    q = await repo.insert(Question(id=None, word_id=wid, sense_id=None, format="cloze",
-                                   answer_kind="text_span", payload=payload))
+    q = await repo.insert(
+        Question(
+            id=None,
+            word_id=wid,
+            sense_id=None,
+            format="cloze",
+            answer_kind="text_span",
+            payload=payload,
+        )
+    )
     got = await repo.get(q.id)
     assert got.payload == payload  # nested + unicode survive byte-for-byte
 
@@ -500,6 +547,13 @@ async def test_payload_nul_is_rejected(session_factory):
     wid, _sid = await _seed_word(session_factory)
     repo = QuestionRepository(session_factory)
     with pytest.raises(ValueError, match="NUL"):
-        await repo.insert(Question(id=None, word_id=wid, sense_id=None, format="cloze",
-                                   answer_kind="text_span",
-                                   payload={"stem_with_blank": "a\x00b", "answer_norm": "x"}))
+        await repo.insert(
+            Question(
+                id=None,
+                word_id=wid,
+                sense_id=None,
+                format="cloze",
+                answer_kind="text_span",
+                payload={"stem_with_blank": "a\x00b", "answer_norm": "x"},
+            )
+        )
