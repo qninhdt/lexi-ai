@@ -57,3 +57,22 @@ def format_themed(
         f"Return exactly {len(blocks)} themed sense(s) in the same order.\n\n"
         f"{body}"
     )
+
+
+THEME_METADATA_SYSTEM_PROMPT = """\
+You are a creative dictionary theme designer. Your job is to take a theme identifier key and a basic style prompt, and expand it into a fully-realized dictionary theme profile.
+
+You must output:
+1. A creative, catchy display name for the theme (e.g., "The Salty Pirate Captain" for key "pirate").
+2. A short creative description/introduction to the style (e.g., "Restyles everything using salty sea jargon, nautical references, and pirate slang.").
+3. An expanded, highly detailed, and robust set of instructions (style_prompt) that other LLMs will use to translate dictionary definitions and write example sentences in this specific voice. Be very specific about tone, vocabulary substitutions, and sentence structure.
+4. A single representative emoji (e.g., "🏴‍☠️").
+5. A list of 2-4 tone adjectives representing this style.
+"""
+
+
+def format_theme_metadata(key: str, prompt: str) -> str:
+    return (
+        f"Theme Key: {key}\n"
+        f"Style Prompt Concept: {prompt}\n"
+    )

@@ -448,32 +448,60 @@ class Repository:
 
     # --- themes (resolve-or-create by theme_key) --------------------------
 
-    async def create_theme(self, name: str, style_prompt: str) -> Theme:
+    async def create_theme(
+        self,
+        name: str,
+        style_prompt: str,
+        description: str | None = None,
+        emoji: str | None = None,
+        tone: str | None = None,
+        key: str | None = None,
+        overwrite: bool = False,
+    ) -> Theme:
         """Resolve-or-create a theme by ``theme_key``.
 
-        Re-creating a name that normalizes to an existing key returns that row
-        (first-seen ``name``/``style_prompt`` win). An empty-key name raises
-        ``ValueError`` — a create API fails loudly (unlike best-effort tag skips).
-        Concurrent create of the same key is recovered via SAVEPOINT re-fetch.
+        If ``overwrite`` is True, existing theme fields are updated.
         """
-        key = theme_key(name)
-        if not key or len(key) > self._MAX_THEME_KEY:
-            raise ValueError(f"theme name yields no valid key: {name!r}")
+        final_key = theme_key(key) if key is not None else theme_key(name)
+        if not final_key or len(final_key) > self._MAX_THEME_KEY:
+            raise ValueError(f"theme key/name yields no valid key: {key or name!r}")
         clean_name = self._clean(name, self._MAX_THEME_NAME)
         clean_prompt = self._clean(style_prompt, self._MAX_STYLE_PROMPT)
+        clean_desc = self._clean(description, 1000) if description else None
+        clean_emoji = self._clean(emoji, 16) if emoji else None
+        clean_tone = self._clean(tone, 255) if tone else None
         async with session_scope(self._session_factory) as session:
-            existing = await self._get_theme(session, key)
+            existing = await self._get_theme(session, final_key)
             if existing is not None:
+                if overwrite:
+                    existing.name = clean_name
+                    existing.style_prompt = clean_prompt
+                    existing.description = clean_desc
+                    existing.emoji = clean_emoji
+                    existing.tone = clean_tone
                 return existing
-            theme = Theme(theme_key=key, name=clean_name, style_prompt=clean_prompt)
+            theme = Theme(
+                theme_key=final_key,
+                name=clean_name,
+                style_prompt=clean_prompt,
+                description=clean_desc,
+                emoji=clean_emoji,
+                tone=clean_tone,
+            )
             try:
                 async with session.begin_nested():
                     session.add(theme)
                     await session.flush()
             except IntegrityError:
-                existing = await self._get_theme(session, key)
+                existing = await self._get_theme(session, final_key)
                 if existing is None:
                     raise
+                if overwrite:
+                    existing.name = clean_name
+                    existing.style_prompt = clean_prompt
+                    existing.description = clean_desc
+                    existing.emoji = clean_emoji
+                    existing.tone = clean_tone
                 return existing
             return theme
 

@@ -277,6 +277,9 @@ class Theme(Base):
     theme_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     style_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    emoji: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    tone: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, server_default=func.now()
     )

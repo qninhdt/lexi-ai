@@ -27,3 +27,24 @@ class ThemedResult(BaseModel):
             "Return exactly as many senses as were given, no more, no fewer."
         ),
     )
+
+
+class GeneratedTheme(BaseModel):
+    name: str = Field(
+        description="A creative and catchy display name for the theme (e.g., 'The Salty Pirate Captain')."
+    )
+    description: str = Field(
+        description="A short creative description explaining the style's vibe and context (1-2 sentences)."
+    )
+    style_prompt: str = Field(
+        description=(
+            "An expanded, highly detailed set of system instructions for other LLMs. "
+            "It must clearly guide them on how to restyle dictionary definitions and write example sentences in this specific voice."
+        )
+    )
+    emoji: str = Field(
+        description="A single representative emoji (e.g., '🏴‍☠️')."
+    )
+    tone: list[str] = Field(
+        description="A list of 2-4 tone adjectives representing this style (e.g., ['adventurous', 'salty', 'archaic'])."
+    )

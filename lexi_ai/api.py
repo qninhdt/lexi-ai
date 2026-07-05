@@ -356,37 +356,79 @@ class Lexicon:
             for wid, norm, etype in rows
         ]
 
-    async def create_theme(self, name: str, style_prompt: str) -> Theme:
-        """Create (or resolve) a style theme by its normalized ``theme_key``.
+    async def create_theme(
+        self,
+        name: str,
+        style_prompt: str,
+        description: str | None = None,
+        emoji: str | None = None,
+        tone: str | None = None,
+    ) -> Theme:
+        """Create (or resolve/update) a style theme by its normalized ``theme_key``.
 
-        Re-creating a name that normalizes to an existing key returns that theme
-        (first-seen ``name``/``style_prompt`` win). An empty-key name raises
-        ``ValueError``. Never calls an LLM.
+        Re-creating a name that normalizes to an existing key updates that theme
+        with the latest prompt and metadata.
         """
-        theme = await self._repo.create_theme(name, style_prompt)
-        return Theme(key=theme.theme_key, name=theme.name, style_prompt=theme.style_prompt)
+        theme = await self._repo.create_theme(
+            name, style_prompt, description=description, emoji=emoji, tone=tone
+        )
+        return Theme(
+            key=theme.theme_key,
+            name=theme.name,
+            style_prompt=theme.style_prompt,
+            description=theme.description,
+            emoji=theme.emoji,
+            tone=theme.tone,
+        )
 
     async def list_themes(self) -> list[Theme]:
         """Every style theme, name-sorted. Never generates (FREE)."""
         return [
-            Theme(key=t.theme_key, name=t.name, style_prompt=t.style_prompt)
+            Theme(
+                key=t.theme_key,
+                name=t.name,
+                style_prompt=t.style_prompt,
+                description=t.description,
+                emoji=t.emoji,
+                tone=t.tone,
+            )
             for t in await self._repo.list_themes()
         ]
 
-    async def generate_theme(self, lexi_word_id: int, theme_key: str) -> Entry:
-        """Restyle a done word's senses into a theme's voice (one LLM call).
+    async def generate_theme(self, key: str, prompt: str) -> Theme:
+        """Generate (or recreate/update) a style theme using an LLM.
 
-        ``theme_key`` is the normalized key string (from ``create_theme``/
-        ``list_themes``) — NOT a name or object. An unknown key raises
-        ``ValueError``. The word must be ``done`` (mirrors the questions-engine
-        guard). Writes one themed_senses row per neutral sense + fresh in-voice
-        examples; re-running overwrites in place. Returns the themed entry (overlay).
+        The LLM expands the simple key and prompt into a detailed theme profile
+        (name, description, style_prompt, emoji, tone). The theme is persisted in
+        the database and returned.
         """
-        resolved = await self._repo.resolve_theme(_norm_theme_key(theme_key))
-        if resolved is None:
-            raise ValueError(f"unknown theme: {theme_key!r}")
-        theme_id, style_prompt = resolved
+        norm_key = _norm_theme_key(key)
+        if not norm_key:
+            raise ValueError(f"theme key/name yields no valid key: {key!r}")
 
+        generator = self._theme_metadata_generator()
+        generated = await generator.generate(norm_key, prompt)
+
+        theme = await self._repo.create_theme(
+            name=generated.name,
+            style_prompt=generated.style_prompt,
+            description=generated.description,
+            emoji=generated.emoji,
+            tone=",".join(generated.tone) if generated.tone else None,
+            key=norm_key,
+            overwrite=True,
+        )
+
+        return Theme(
+            key=theme.theme_key,
+            name=theme.name,
+            style_prompt=theme.style_prompt,
+            description=theme.description,
+            emoji=theme.emoji,
+            tone=theme.tone,
+        )
+
+    async def _run_themed_generation(self, lexi_word_id: int, theme_id: int, style_prompt: str) -> None:
         status = await self.status(lexi_word_id)
         if status != "done":
             raise ValueError(f"word {lexi_word_id} is not done (status={status!r})")
@@ -398,27 +440,24 @@ class Lexicon:
         facts = [(d, pos, gw, tier) for _sid, d, pos, gw, tier in neutral]
 
         generator = self._themed_generator()
-        if generator is None:
-            raise ValueError("no LLM configured for themed generation")
         result = await generator.generate(style_prompt, facts)
         await self._repo.persist_themed(theme_id, result, sense_ids)
-        return await self._to_entry(lexi_word_id, theme_id=theme_id)
 
     def _themed_generator(self):
-        """Lazy themed generator; ``None`` when no LLM is configured (empty key).
+        """Lazy themed generator; uses settings/OpenAI proxy by default."""
+        if getattr(self, "_themed_gen", None) is None:
+            from lexi_ai.theming.generator import ThemedGenerator
 
-        An injected generator (``self._themed_gen`` pre-set, e.g. a test fake) is
-        used as-is, bypassing the api-key gate.
-        """
-        if getattr(self, "_themed_gen", None) is not None:
-            return self._themed_gen
-        settings = get_settings()
-        if not settings.llm_api_key:
-            return None
-        from lexi_ai.theming.generator import ThemedGenerator
-
-        self._themed_gen = ThemedGenerator(settings=settings)
+            self._themed_gen = ThemedGenerator(settings=get_settings())
         return self._themed_gen
+
+    def _theme_metadata_generator(self):
+        """Lazy theme metadata generator."""
+        if getattr(self, "_theme_meta_gen", None) is None:
+            from lexi_ai.theming.generator import ThemeMetadataGenerator
+
+            self._theme_meta_gen = ThemeMetadataGenerator(settings=get_settings())
+        return self._theme_meta_gen
 
     # --- cached assets ----------------------------------------------------
 
@@ -498,7 +537,13 @@ class Lexicon:
             self._tts_impl = StubTTSProvider()
         return self._tts_impl
 
-    async def generate(self, source: SearchResult | str, *, force: bool = False) -> Entry:
+    async def generate(
+        self,
+        source: SearchResult | str,
+        *,
+        force: bool = False,
+        theme: str | None = None,
+    ) -> Entry:
         """Generate (or return) the entry for a search result or a custom string.
 
         * ``SearchResult`` — anchored to its Cambridge reference. If already
@@ -508,29 +553,53 @@ class Lexicon:
         A suggestion whose word already exists converges on that entry instead of
         duplicating it. With ``force=True`` the entry is regenerated and overwritten
         in place.
+
+        If a ``theme`` (name or key) is provided, the generated/resolved entry is
+        automatically restyled in that theme's voice (if not already done).
         """
         # Custom string: anchor to WordNet only, dedup by the string's match_key.
         if isinstance(source, str):
-            return await self._generate_locked(match_key(source), source, None, force)
-
+            entry = await self._generate_locked(match_key(source), source, None, force)
         # Already-generated hit: return it, or re-anchor to its Cambridge id on force.
-        if source.lexi_word_id is not None:
+        elif source.lexi_word_id is not None:
             if not force:
-                return await self._to_entry(source.lexi_word_id)
-            norm, cam_id = await self._word_norm_and_cambridge(source.lexi_word_id)
-            return await self._generate_locked(match_key(norm), norm, cam_id, True)
+                entry = await self._to_entry(source.lexi_word_id)
+            else:
+                norm, cam_id = await self._word_norm_and_cambridge(source.lexi_word_id)
+                entry = await self._generate_locked(match_key(norm), norm, cam_id, True)
+        # Suggestion: cache-check by Cambridge provenance, then generate.
+        else:
+            if source.cambridge_id is None:
+                raise ValueError("SearchResult has neither lexi_word_id nor cambridge_id")
+            if not force:
+                hit = await self._generated_by_cambridge([source.cambridge_id])
+                if source.cambridge_id in hit:
+                    entry = await self._to_entry(hit[source.cambridge_id][0])
+                else:
+                    entry = await self._generate_locked(
+                        match_key(source.display), source.display, source.cambridge_id, force
+                    )
+            else:
+                entry = await self._generate_locked(
+                    match_key(source.display), source.display, source.cambridge_id, force
+                )
 
-        # Suggestion: cache-check by Cambridge provenance (robust to display/norm
-        # key differences), then generate anchored to that Cambridge id.
-        if source.cambridge_id is None:
-            raise ValueError("SearchResult has neither lexi_word_id nor cambridge_id")
-        if not force:
-            hit = await self._generated_by_cambridge([source.cambridge_id])
-            if source.cambridge_id in hit:
-                return await self._to_entry(hit[source.cambridge_id][0])
-        return await self._generate_locked(
-            match_key(source.display), source.display, source.cambridge_id, force
-        )
+        if theme is not None:
+            theme_key_norm = _norm_theme_key(theme)
+            resolved = await self._repo.resolve_theme(theme_key_norm)
+            if resolved is None:
+                raise ValueError(f"unknown theme: {theme!r}")
+            theme_id, style_prompt = resolved
+
+            # Check if themed overlay already exists for this entry
+            overlay = await self._repo.themed_for_word(entry.word_id, theme_id)
+            if not overlay or force:
+                await self._run_themed_generation(entry.word_id, theme_id, style_prompt)
+
+            # Reload entry with the theme overlay
+            entry = await self._to_entry(entry.word_id, theme_id)
+
+        return entry
 
     async def _generate_locked(
         self, key: str, word: str, cambridge_id: int | None, force: bool

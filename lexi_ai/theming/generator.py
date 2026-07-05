@@ -77,3 +77,54 @@ class ThemedGenerator:
                     await asyncio.sleep(self._base_delay * (2**attempt))
         assert last_exc is not None
         raise last_exc
+
+
+class ThemeMetadataGenerator:
+    """Turn a name/key and a style concept prompt into a detailed theme (name, description, style_prompt, emoji, tone)."""
+
+    def __init__(
+        self,
+        structured_llm: Runnable | None = None,
+        settings: Settings | None = None,
+        max_retries: int = 3,
+        base_delay: float = 0.5,
+    ):
+        self._settings = settings or get_settings()
+        self._llm = structured_llm
+        self._max_retries = max_retries
+        self._base_delay = base_delay
+
+    @property
+    def llm(self) -> Runnable:
+        if self._llm is None:
+            from lexi_ai.theming.schemas import GeneratedTheme
+            from langchain_openai import ChatOpenAI
+            llm = ChatOpenAI(
+                base_url=self._settings.llm_base_url,
+                api_key=self._settings.llm_api_key,
+                model=self._settings.llm_model,
+                temperature=self._settings.llm_temperature,
+            )
+            self._llm = llm.with_structured_output(GeneratedTheme)
+        return self._llm
+
+    async def generate(self, key: str, prompt: str) -> GeneratedTheme:
+        from lexi_ai.theming.prompts import THEME_METADATA_SYSTEM_PROMPT, format_theme_metadata
+        messages = [
+            SystemMessage(content=THEME_METADATA_SYSTEM_PROMPT),
+            HumanMessage(content=format_theme_metadata(key, prompt)),
+        ]
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries):
+            try:
+                result = await self.llm.ainvoke(messages)
+                from lexi_ai.theming.schemas import GeneratedTheme
+                if isinstance(result, GeneratedTheme):
+                    return result
+                return GeneratedTheme.model_validate(result)
+            except Exception as exc:  # noqa: BLE001 - retried, then re-raised
+                last_exc = exc
+                if attempt < self._max_retries - 1:
+                    await asyncio.sleep(self._base_delay * (2**attempt))
+        assert last_exc is not None
+        raise last_exc

@@ -17,7 +17,7 @@ from lexi_ai.models import Example, Sense, ThemedExample, ThemedSense, Word
 from lexi_ai.persistence.repository import Repository
 from lexi_ai.read_models import Entry
 from lexi_ai.theming.prompts import format_themed
-from lexi_ai.theming.schemas import ThemedResult
+from lexi_ai.theming.schemas import ThemedResult, GeneratedTheme
 from lexi_ai.theming.schemas import ThemedSense as ThemedSenseSchema
 
 
@@ -165,14 +165,51 @@ class FakeThemedGenerator:
         return self._result
 
 
-def _lexicon(session_factory, themed_gen=None):
+class FakeThemeMetadataGenerator:
+    """Returns a canned GeneratedTheme."""
+
+    def __init__(self, result: GeneratedTheme):
+        self._result = result
+        self.calls = 0
+
+    async def generate(self, key, prompt):
+        self.calls += 1
+        return self._result
+
+
+def _lexicon(session_factory, themed_gen=None, theme_meta_gen=None):
     lex = Lexicon(session_factory, None, None, Repository(session_factory))  # type: ignore[arg-type]
     if themed_gen is not None:
         lex._themed_gen = themed_gen
+    if theme_meta_gen is not None:
+        lex._theme_meta_gen = theme_meta_gen
     return lex
 
 
+async def test_generate_theme_metadata(session_factory):
+    from lexi_ai.theming.schemas import GeneratedTheme
+    gen = FakeThemeMetadataGenerator(
+        GeneratedTheme(
+            name="The Salty Pirate Captain",
+            description="Salty sea-themed dictionary entries.",
+            style_prompt="Salty instructions.",
+            emoji="🏴‍☠️",
+            tone=["salty", "adventurous"]
+        )
+    )
+    lex = _lexicon(session_factory, theme_meta_gen=gen)
+    theme = await lex.generate_theme("pirate", "speak like a pirate")
+    assert theme.name == "The Salty Pirate Captain"
+    assert theme.key == "pirate"
+    assert theme.description == "Salty sea-themed dictionary entries."
+    assert theme.style_prompt == "Salty instructions."
+    assert theme.emoji == "🏴‍☠️"
+    assert theme.tone == "salty,adventurous"
+    assert gen.calls == 1
+
+
 async def test_generate_theme_end_to_end(session_factory):
+    from lexi_ai.read_models import SearchResult
     word_id, sense_ids = await _make_done_word(session_factory)
     gen = FakeThemedGenerator(
         ThemedResult(
@@ -185,7 +222,8 @@ async def test_generate_theme_end_to_end(session_factory):
     lex = _lexicon(session_factory, gen)
     await lex.create_theme("Bard", "speak like a bard")
 
-    entry = await lex.generate_theme(word_id, "bard")
+    source = SearchResult(display="dragon", entry_type="word", lexi_word_id=word_id)
+    entry = await lex.generate(source, theme="bard")
     assert isinstance(entry, Entry)
     assert gen.calls == 1
     # The generator saw the neutral FACTS, never the neutral examples.
@@ -198,6 +236,7 @@ async def test_generate_theme_end_to_end(session_factory):
 
 
 async def test_generate_theme_requires_done_word(session_factory):
+    from lexi_ai.read_models import SearchResult
     async with session_scope(session_factory) as session:
         word = Word(norm="pending", match_key="pending", status="pending")
         session.add(word)
@@ -206,16 +245,21 @@ async def test_generate_theme_requires_done_word(session_factory):
     gen = FakeThemedGenerator(ThemedResult(senses=[ThemedSenseSchema(definition="x")]))
     lex = _lexicon(session_factory, gen)
     await lex.create_theme("Bard", "voice")
-    with pytest.raises(ValueError):
-        await lex.generate_theme(wid, "bard")
+    
+    source = SearchResult(display="pending", entry_type="word", lexi_word_id=wid)
+    with pytest.raises(ValueError, match="is not done"):
+        await lex.generate(source, theme="bard")
 
 
 async def test_generate_theme_unknown_theme_raises(session_factory):
+    from lexi_ai.read_models import SearchResult
     word_id, _ = await _make_done_word(session_factory)
     gen = FakeThemedGenerator(ThemedResult(senses=[ThemedSenseSchema(definition="x")]))
     lex = _lexicon(session_factory, gen)
-    with pytest.raises(ValueError):
-        await lex.generate_theme(word_id, "nonexistent")
+    
+    source = SearchResult(display="dragon", entry_type="word", lexi_word_id=word_id)
+    with pytest.raises(ValueError, match="unknown theme"):
+        await lex.generate(source, theme="nonexistent")
 
 
 # --- read overlay (Phase 3) -----------------------------------------------
