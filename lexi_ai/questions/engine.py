@@ -11,9 +11,8 @@ plugin concerns the engine cannot see.
 import asyncio
 from collections.abc import Sequence
 
-from langchain_core.runnables import Runnable
-
-from lexi_ai.questions.base import REGISTRY, QuestionContext, QuestionFormat
+from lexi_ai.llm import StructuredLLM
+from lexi_ai.questions.base import REGISTRY, QuestionContext, QuestionFormat, TtsPort
 from lexi_ai.questions.distractors import DistractorProvider
 from lexi_ai.questions.repository import QuestionRepository
 from lexi_ai.read_models import BatchResult, Entry, Question, Score
@@ -26,13 +25,15 @@ class QuestionEngine:
         self,
         repo: QuestionRepository,
         distractors: DistractorProvider,
-        llm: Runnable | None = None,
-        judge_llm: Runnable | None = None,
+        llm: StructuredLLM | None = None,
+        judge_llm: StructuredLLM | None = None,
+        tts: "TtsPort | None" = None,
     ):
         self._repo = repo
         self._distractors = distractors
         self._llm = llm
         self._judge = judge_llm
+        self._tts = tts
         self._plugins: dict[str, QuestionFormat] = {}
 
     # --- generate / grade (dispatch to plugins) ---------------------------
@@ -118,6 +119,7 @@ class QuestionEngine:
             llm=self._llm,
             judge=self._judge,
             store=self._repo,
+            tts=self._tts,
         )
 
     def _plugin(self, fmt: str) -> QuestionFormat:

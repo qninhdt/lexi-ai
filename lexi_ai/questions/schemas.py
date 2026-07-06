@@ -2,8 +2,8 @@
 
 Two kinds live here:
 
-* **LLM structured-output** — ``GeneratedMCQ`` is what the one llm plugin
-  (``contextual_mcq``) binds via ``with_structured_output``, mirroring
+* **LLM structured-output** — ``GeneratedMCQ`` is the response schema the one llm
+  plugin (``contextual_mcq``) passes to ``StructuredLLM.parse``, mirroring
   ``generation/schemas.py`` (bounded fields, injectable, retried). ``Judgment``
   (added with the scorers) is the llm-judge output for rubric grading.
 * **Payload validators** — one model per format validates the ``payload`` dict a
@@ -73,3 +73,70 @@ class UseInSentencePayload(BaseModel):
     prompt: str = Field(min_length=1, max_length=512)
     target_norm: str = Field(min_length=1, max_length=128)
     rubric: str = Field(min_length=1, max_length=512)
+
+
+class MatchingPayload(BaseModel):
+    """Payload for the ``matching`` format: pair each left cue with a right item.
+
+    ``lefts`` are the cues (guidewords) in stable order; ``rights`` are the
+    definitions in a shuffled order; ``correct_map[i]`` is the index into
+    ``rights`` that the i-th left pairs with. An answer is a list of the same
+    length assigning each left a right-index; grading compares it to ``correct_map``.
+    """
+
+    prompt: str = Field(min_length=1, max_length=512)
+    lefts: list[str] = Field(min_length=2)
+    rights: list[str] = Field(min_length=2)
+    correct_map: list[int] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def _shapes_agree(self) -> "MatchingPayload":
+        if not (len(self.lefts) == len(self.rights) == len(self.correct_map)):
+            raise ValueError("lefts, rights, and correct_map must be equal length")
+        if sorted(self.correct_map) != list(range(len(self.rights))):
+            raise ValueError("correct_map must be a permutation of the right indices")
+        return self
+
+
+class AudioRef(BaseModel):
+    """A durable pointer to a TTS clip: the ``(source_kind, source_id, voice, fmt)``
+    reference tuple, NOT an ``assets`` row id. A row id dangles after a purge, but
+    the reference re-resolves the clip cache-first at play time (Phase 1 verifies
+    ``content_hash`` on read, so a regenerated source yields a clean miss — never
+    stale audio). Frozen into the question payload as plain JSON."""
+
+    source_kind: str = Field(min_length=1, max_length=32)
+    source_id: int = Field(ge=0)
+    voice: str = Field(min_length=1, max_length=64)
+    fmt: str = Field(min_length=1, max_length=16)
+
+
+class ListeningPayload(BaseModel):
+    """Payload for the ``listening`` single-choice format: hear a clip, pick the word.
+
+    ``audio_ref`` addresses the clip by reference tuple; grading is index-based
+    (:func:`grade_single_choice`) and never touches the clip, so a dangling ref
+    still grades."""
+
+    prompt: str = Field(min_length=1, max_length=512)
+    audio_ref: AudioRef
+    options: list[str] = Field(min_length=2)
+    correct_index: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _index_in_range(self) -> "ListeningPayload":
+        if self.correct_index >= len(self.options):
+            raise ValueError("correct_index out of range for options")
+        return self
+
+
+class SpellingPayload(BaseModel):
+    """Payload for the ``spelling`` text-span format: hear a clip, type the word.
+
+    ``audio_ref`` addresses the clip by reference tuple; grading is ``match_key``
+    equality (:func:`grade_text_span`) against ``answer_norm`` and never touches
+    the clip, so a dangling ref still grades."""
+
+    prompt: str = Field(min_length=1, max_length=512)
+    audio_ref: AudioRef
+    answer_norm: str = Field(min_length=1, max_length=128)

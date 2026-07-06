@@ -1,41 +1,20 @@
 """LLM generation pipeline (Phase 4).
 
-Wraps an OpenAI-compatible chat model (via LangChain 1.x) bound to the
+Wraps an OpenAI-compatible chat model (via the ``openai`` SDK) bound to the
 :class:`GeneratedResult` structured-output schema. The model is injectable so
-unit tests pass a fake runnable and never touch the network.
+unit tests pass a fake :class:`StructuredLLM` and never touch the network.
 
 Retry: transient errors are retried with exponential backoff up to a small cap;
 low temperature keeps output roughly deterministic.
 """
 
-import asyncio
 from collections.abc import Sequence
-
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.runnables import Runnable
 
 from lexi_ai.config import Settings, get_settings
 from lexi_ai.generation.schemas import GeneratedResult
-from lexi_ai.llm import ainvoke_structured
+from lexi_ai.llm import StructuredLLM, ainvoke_structured, build_structured_llm, sys_msg, user_msg
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.references.loader import ReferenceBundle
-
-
-def build_structured_llm(settings: Settings) -> Runnable:
-    """Build the ChatOpenAI runnable bound to the structured-output schema.
-
-    Uses the LangChain 1.x ``with_structured_output`` API (default json_schema
-    method). Imported lazily so tests that inject a fake model need no creds.
-    """
-    from langchain_openai import ChatOpenAI
-
-    llm = ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-        temperature=settings.llm_temperature,
-    )
-    return llm.with_structured_output(GeneratedResult)
 
 
 class Generator:
@@ -43,7 +22,7 @@ class Generator:
 
     def __init__(
         self,
-        structured_llm: Runnable | None = None,
+        structured_llm: StructuredLLM | None = None,
         settings: Settings | None = None,
         max_retries: int = 3,
         base_delay: float = 0.5,
@@ -54,7 +33,7 @@ class Generator:
         self._base_delay = base_delay
 
     @property
-    def llm(self) -> Runnable:
+    def llm(self) -> StructuredLLM:
         # Lazily build the real model only when first needed.
         if self._llm is None:
             self._llm = build_structured_llm(self._settings)
@@ -79,10 +58,7 @@ class Generator:
             wordnet_synsets=bundle.wordnet_synsets,
             existing_tags=existing_tags,
         )
-        messages = [
-            SystemMessage(content=system_content),
-            HumanMessage(content=user_content),
-        ]
+        messages = [sys_msg(system_content), user_msg(user_content)]
         return await ainvoke_structured(
             self.llm,
             messages,

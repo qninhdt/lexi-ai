@@ -19,6 +19,9 @@ class SenseView:
     tier: str
     pos: str | None
     cefr_level: str | None
+    # IPA pronunciation per sense (POS-grouped). None when unavailable.
+    ipa_uk: str | None = None
+    ipa_us: str | None = None
     examples: list[str] = field(default_factory=list)
     references: list[ReferenceView] = field(default_factory=list)
     # Learner-dictionary enrichments (best-effort — empty/None when unmarked).
@@ -47,6 +50,11 @@ class LinkView:
     display: str
     norm: str
     rel_type: str
+    # DB id + status of the linked word, so a consumer discovering an idiom /
+    # phrasal verb / related word from its host has a generatable handle without a
+    # second lookup. A pending link target is a stub awaiting lazy generation.
+    word_id: int
+    status: str
 
 
 @dataclass
@@ -93,12 +101,17 @@ class Asset:
     results (translation); ``file_path`` points at a binary clip (TTS) relative
     to the asset cache dir. ``ready`` tells a ready asset from a placeholder.
 
-    ``id`` is the DB id when this view was assembled from a persisted row (the
-    handle passed to ``get_asset``/``delete_asset``); ``None`` for a placeholder
-    synthesized without a row (e.g. an empty-text short-circuit)."""
+    Identity is the reference tuple ``(source_kind, source_id, kind, params)``
+    (Phase 1). ``id`` is the DB id when this view was assembled from a persisted
+    row (the handle passed to ``get_asset``/``delete_asset``); ``None`` for a
+    placeholder synthesized without a row (e.g. an empty-text short-circuit).
+    NOTE: a durable consumer (e.g. a frozen question payload) must bind to the
+    reference tuple, NOT ``id`` — a purge/regenerate deletes the row."""
 
     kind: str
     params: str
+    source_kind: str | None = None
+    source_id: int | None = None
     text_value: str | None = None
     file_path: str | None = None
     meta: str | None = None

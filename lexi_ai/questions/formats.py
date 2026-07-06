@@ -13,22 +13,29 @@ registry is populated on package import.
 import random
 import re
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
+from lexi_ai.llm import ainvoke_structured, sys_msg, user_msg
 from lexi_ai.normalize import match_key
 from lexi_ai.questions.base import (
     FormatSpec,
     QuestionContext,
     register,
 )
-from lexi_ai.llm import ainvoke_structured
 from lexi_ai.questions.schemas import (
+    AudioRef,
     ClozePayload,
     GeneratedMCQ,
+    ListeningPayload,
+    MatchingPayload,
     MCQPayload,
+    SpellingPayload,
     UseInSentencePayload,
 )
-from lexi_ai.questions.scoring import grade_rubric, grade_single_choice, grade_text_span
+from lexi_ai.questions.scoring import (
+    grade_matching,
+    grade_rubric,
+    grade_single_choice,
+    grade_text_span,
+)
 from lexi_ai.read_models import Entry, Question, Score, SenseView
 
 # Target option count for MCQs (1 correct + 3 distractors); degrade below this
@@ -153,7 +160,7 @@ class ContextualMCQ:
         )
         mcq = await ainvoke_structured(
             ctx.llm,
-            [SystemMessage(content=_CONTEXTUAL_SYSTEM), HumanMessage(content=human)],
+            [sys_msg(_CONTEXTUAL_SYSTEM), user_msg(human)],
             GeneratedMCQ,
         )
         # We use only the llm's stem + distractors; the correct answer is always the
@@ -267,9 +274,190 @@ def _blank_target(example: str, entry: Entry) -> str | None:
     return None
 
 
+class Matching:
+    """Rule format: pair each sense's guideword (cue) with its definition.
+
+    The first format to declare a new ``answer_kind`` (``matching``), so it proves
+    the plugin abstraction extends along that axis with no engine change. Pairs are
+    built from the entry's OWN senses — a self-contained source needing no
+    cross-word lookup. Requires ≥2 guideworded senses; degrades to ``[]`` otherwise
+    (a single sense has nothing to match, and a sense without a guideword has no
+    cue), mirroring the MCQ min-distractor floor rather than fabricating a pair.
+
+    The definition column is shuffled with a LOCAL ``random.Random(seed)`` (no
+    global RNG) so option order is stable and testable; ``correct_map[i]`` is the
+    index in that shuffled column of the definition belonging to ``lefts[i]``.
+    """
+
+    format = "matching"
+    answer_kind = "matching"
+
+    _MIN_PAIRS = 2
+
+    async def generate(self, ctx: QuestionContext, n: int = 1) -> list[Question]:
+        entry = ctx.entry
+        if entry is None or n <= 0:
+            return []
+        pairs = [(s, s.guideword, s.definition) for s in entry.senses if s.guideword]
+        if len(pairs) < self._MIN_PAIRS:
+            return []  # too few cues to match — best-effort, no fabrication
+        lefts = [g for _s, g, _d in pairs]
+        defs = [d for _s, _g, d in pairs]
+        rights, correct_map = _shuffled_pairs(defs, f"matching:{match_key(entry.norm)}")
+        payload = MatchingPayload(
+            prompt="Match each word sense to its definition.",
+            lefts=lefts,
+            rights=rights,
+            correct_map=correct_map,
+        )
+        return [
+            Question(
+                id=None,
+                word_id=entry.word_id,
+                sense_id=None,  # spans multiple senses — no single-sense provenance
+                format=self.format,
+                answer_kind=self.answer_kind,
+                payload=payload.model_dump(),
+            )
+        ]
+
+    async def grade(self, ctx: QuestionContext, question: Question, answer: object) -> Score:
+        return await grade_matching(question, answer)
+
+
+def _shuffled_pairs(definitions: list[str], seed: str) -> tuple[list[str], list[int]]:
+    """Shuffle ``definitions`` deterministically; return (shuffled, correct_map).
+
+    ``correct_map[i]`` is the position of the i-th original definition within the
+    shuffled column, so left ``i`` maps to ``shuffled[correct_map[i]]``. Uses a
+    LOCAL ``random.Random`` — no global RNG state, seed-stable across runs.
+    """
+    order = list(range(len(definitions)))
+    random.Random(seed).shuffle(order)
+    shuffled = [definitions[j] for j in order]
+    # order[k] = original index now at shuffled position k; invert to map orig->pos.
+    pos_of_original = [0] * len(order)
+    for pos, orig in enumerate(order):
+        pos_of_original[orig] = pos
+    return shuffled, pos_of_original
+
+
+async def _core_audio_ref(ctx: QuestionContext, sense: SenseView) -> AudioRef | None:
+    """Ensure a TTS clip exists for the sense's definition and return its reference
+    tuple, or ``None`` when TTS is unavailable / the clip can't be made.
+
+    The audio source is the sense DEFINITION (``sense_def``) — the learner hears the
+    meaning spoken and supplies the word — so it keys on ``sense.sense_id``. Requires
+    a ``ctx.tts`` port (``None`` → format unavailable, like ``ctx.llm`` for the
+    contextual MCQ) and a persisted sense id to address the clip.
+    """
+    if ctx.tts is None or sense.sense_id is None:
+        return None
+    ref = await ctx.tts.ensure_clip("sense_def", sense.sense_id)
+    if ref is None:
+        return None  # source text gone / clip couldn't be made — no fabricated asset
+    source_kind, source_id, voice, fmt = ref
+    return AudioRef(source_kind=source_kind, source_id=source_id, voice=voice, fmt=fmt)
+
+
+class Listening:
+    """Audio MCQ: hear the sense definition spoken, choose the word — PERSISTS.
+
+    Reuses the ``single_choice`` answer kind and the shared ``grade_single_choice``
+    helper (audio is a presentation layer, not a new grading axis). The payload
+    stores the clip's ``(source_kind, source_id, voice, fmt)`` REFERENCE tuple, not
+    a row id, so a purge/regenerate re-resolves the current clip cache-first at play
+    time instead of dangling. Unavailable (no ``ctx.tts``) or unmakeable clip → ``[]``.
+    """
+
+    format = "listening"
+    answer_kind = "single_choice"
+
+    async def generate(self, ctx: QuestionContext, n: int = 1) -> list[Question]:
+        entry = ctx.entry
+        if entry is None or n <= 0:
+            return []
+        sense = _core_sense(entry)
+        if sense is None:
+            return []
+        audio_ref = await _core_audio_ref(ctx, sense)
+        if audio_ref is None:
+            return []
+        distractors = await ctx.distractors.for_word(entry, k=_MCQ_OPTIONS - 1, pos=sense.pos)
+        if len(distractors) < _MCQ_MIN_DISTRACTORS:
+            return []
+        options, correct_index = _shuffled_options(
+            entry.display, distractors, f"listening:{match_key(entry.norm)}"
+        )
+        payload = ListeningPayload(
+            prompt="Listen to the audio, then choose the matching word.",
+            audio_ref=audio_ref,
+            options=options,
+            correct_index=correct_index,
+        )
+        return [
+            Question(
+                id=None,
+                word_id=entry.word_id,
+                sense_id=sense.sense_id,
+                format=self.format,
+                answer_kind=self.answer_kind,
+                payload=payload.model_dump(),
+            )
+        ]
+
+    async def grade(self, ctx: QuestionContext, question: Question, answer: object) -> Score:
+        return await grade_single_choice(question, answer)
+
+
+class Spelling:
+    """Audio dictation: hear the sense definition spoken, TYPE the word — ephemeral.
+
+    Reuses ``text_span`` + ``grade_text_span`` (``match_key`` equality — the same
+    inflection limitation as cloze: ``runs`` won't fold to ``run``). Payload stores
+    the clip REFERENCE tuple (durability rationale as ``Listening``). Grading is
+    text-only and never touches the clip, so a dangling audio ref still grades.
+    """
+
+    format = "spelling"
+    answer_kind = "text_span"
+
+    async def generate(self, ctx: QuestionContext, n: int = 1) -> list[Question]:
+        entry = ctx.entry
+        if entry is None or n <= 0:
+            return []
+        sense = _core_sense(entry)
+        if sense is None:
+            return []
+        audio_ref = await _core_audio_ref(ctx, sense)
+        if audio_ref is None:
+            return []
+        payload = SpellingPayload(
+            prompt="Listen to the audio, then type the word you hear.",
+            audio_ref=audio_ref,
+            answer_norm=entry.norm,
+        )
+        return [
+            Question(
+                id=None,
+                word_id=entry.word_id,
+                sense_id=sense.sense_id,
+                format=self.format,
+                answer_kind=self.answer_kind,
+                payload=payload.model_dump(),
+            )
+        ]
+
+    async def grade(self, ctx: QuestionContext, question: Question, answer: object) -> Score:
+        return await grade_text_span(question, answer)
+
+
 # --- seed wiring: one line per format (this IS "add a format cheaply") --------
 
 register(FormatSpec("definition_mcq", "single_choice", DefinitionMCQ))
 register(FormatSpec("cloze", "text_span", Cloze))
 register(FormatSpec("contextual_mcq", "single_choice", ContextualMCQ))
 register(FormatSpec("use_in_sentence", "free_text", UseInSentence))
+register(FormatSpec("matching", "matching", Matching))
+register(FormatSpec("listening", "single_choice", Listening))
+register(FormatSpec("spelling", "text_span", Spelling))

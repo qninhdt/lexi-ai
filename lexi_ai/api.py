@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from lexi_ai.assets.repository import AssetRepository, content_hash, normalize_asset_params
+from lexi_ai.assets.repository import AssetRepository, normalize_asset_params
 from lexi_ai.config import Settings, get_settings
 from lexi_ai.constants import TIER_ORDER, canonical_cambridge_ref
 from lexi_ai.db import create_engine, create_session_factory, init_models, session_scope
@@ -47,6 +47,8 @@ from lexi_ai.references.wordnet import WordNetSource
 from lexi_ai.vectors import cosine, pack_vector, unpack_vector
 
 if TYPE_CHECKING:
+    from lexi_ai.llm import StructuredLLM
+    from lexi_ai.questions.base import TtsPort
     from lexi_ai.questions.engine import QuestionEngine
 
 
@@ -81,9 +83,9 @@ class Lexicon:
         session_factory = create_session_factory(engine)
         loader = ReferenceLoader(CambridgeSource(settings.cambridge_db_path), WordNetSource())
         generator = Generator(settings=settings)
-        repository = Repository(session_factory)
         embedder = Embedder(settings=settings)
         assets = AssetRepository(session_factory, settings.asset_cache_dir)
+        repository = Repository(session_factory, assets=assets)
         return cls(
             session_factory,
             loader,
@@ -118,40 +120,47 @@ class Lexicon:
                 DistractorProvider(self._repo, self._embedder),
                 llm=self._build_questions_llm(),
                 judge_llm=self._build_judge_llm(),
+                tts=self._build_tts_port(),
             )
         return self._questions
 
-    def _build_questions_llm(self) -> object | None:
-        """ChatOpenAI bound to ``GeneratedMCQ`` for the contextual-MCQ plugin."""
-        from lexi_ai.questions.schemas import GeneratedMCQ
+    def _build_questions_llm(self) -> StructuredLLM | None:
+        """Structured LLM for the contextual-MCQ plugin (bound to ``GeneratedMCQ``
+        at the call site via :func:`ainvoke_structured`)."""
+        return self._build_structured()
 
-        return self._build_structured(GeneratedMCQ)
+    def _build_judge_llm(self) -> StructuredLLM | None:
+        """Structured LLM for the rubric scorer (bound to ``Judgment`` at the call
+        site via :func:`ainvoke_structured`)."""
+        return self._build_structured()
 
-    def _build_judge_llm(self) -> object | None:
-        """ChatOpenAI bound to ``Judgment`` for the rubric scorer."""
-        from lexi_ai.questions.schemas import Judgment
-
-        return self._build_structured(Judgment)
-
-    def _build_structured(self, schema: type) -> object | None:
-        """Build a structured-output runnable bound to ``schema`` from settings.
+    def _build_structured(self) -> StructuredLLM | None:
+        """Build the openai-backed structured LLM from settings.
 
         Returns ``None`` when no LLM is configured (empty api key), so the
         llm-dependent formats degrade gracefully instead of failing at import.
-        Imported lazily so constructing a Lexicon needs no langchain/creds.
+        The schema is supplied per-call by ``parse``, so one client serves both
+        the MCQ generator and the judge.
         """
         settings = get_settings()
         if not settings.llm_api_key:
             return None
-        from langchain_openai import ChatOpenAI
+        from lexi_ai.llm import build_structured_llm
 
-        llm = ChatOpenAI(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.llm_model,
-            temperature=settings.llm_temperature,
-        )
-        return llm.with_structured_output(schema)
+        return build_structured_llm(settings)
+
+    def _build_tts_port(self) -> TtsPort | None:
+        """Audio-synthesis port for the listening/spelling formats, or ``None`` when
+        no TTS is configured (so those formats degrade to ``[]`` like the llm ones).
+
+        The port ensures a clip cache-first via :meth:`tts_field` and returns its
+        ``(source_kind, source_id, voice, fmt)`` reference tuple — never a row id, so
+        the payload stays durable across a purge/regenerate.
+        """
+        settings = get_settings()
+        if not (settings.tts_api_key or settings.tts_base_url):
+            return None
+        return _LexiconTtsPort(self)
 
     # --- public API -------------------------------------------------------
 
@@ -276,6 +285,8 @@ class Lexicon:
             tier=s.tier,
             pos=s.pos,
             cefr_level=s.cefr_level,
+            ipa_uk=s.ipa_uk,
+            ipa_us=s.ipa_us,
             examples=[e.text for e in sorted(s.examples, key=lambda e: e.example_order)],
             references=[
                 ReferenceView(source=r.source, source_ref=r.source_ref) for r in s.references
@@ -566,40 +577,50 @@ class Lexicon:
 
     # --- cached assets ----------------------------------------------------
 
-    async def translate(self, text: str, lang: str) -> str:
-        """Translate ``text`` into ``lang``, cache-first (content-addressed).
+    async def translate_field(self, source_kind: str, source_id: int, lang: str) -> str:
+        """Translate the source text at ``(source_kind, source_id)`` into ``lang``,
+        cache-first over the reference store (hash-verified).
 
-        A second call for the same ``(text, lang)`` spends ZERO LLM (cache hit).
-        Themed and neutral text hash differently, so each gets its own asset;
-        identical text dedups. Empty/whitespace text returns as-is (no LLM, no
-        row). Raises ``ValueError`` when no LLM is configured.
+        Resolves the CURRENT source text, then reads the cache verified against it:
+        a repeat call with unchanged source spends ZERO LLM; a regenerated/reused
+        source id re-translates (miss), never returns stale text. Empty/whitespace
+        source returns as-is (no LLM, no row). Raises ``ValueError`` on a bad ref
+        (source row absent) or when no LLM is configured.
         """
+        assets = self._require_assets()
+        text = await assets.resolve_source_text(source_kind, source_id)
+        if text is None:
+            raise ValueError(f"no source text for ({source_kind!r}, {source_id})")
         if not text.strip():
             return text
-        assets = self._require_assets()
         params = normalize_asset_params("translate", lang=lang)
-        h = content_hash(text)
-        cached = await assets.get(h, "translate", params)
+        cached = await assets.get(source_kind, source_id, "translate", params, text)
         if cached is not None and cached.text_value is not None:
             return cached.text_value
         translator = self._translator()
         if translator is None:
             raise ValueError("no LLM configured for translation")
         result = await translator.translate(text, lang)
-        stored = await assets.put_text(h, "translate", params, result)
+        stored = await assets.put_text(source_kind, source_id, "translate", params, text, result)
         return stored.text_value or result
 
+    async def translate_sense(self, sense_id: int, lang: str) -> str:
+        """Translate a sense's definition into ``lang`` (the everyday surface).
+
+        Convenience for ``translate_field("sense_def", sense_id, lang)``."""
+        return await self.translate_field("sense_def", sense_id, lang)
+
     async def translate_many(
-        self, texts: list[str], lang: str, *, concurrency: int = 5
+        self, refs: list[tuple[str, int]], lang: str, *, concurrency: int = 5
     ) -> list[BatchResult]:
-        """Batch :meth:`translate` — one :class:`BatchResult` per input text, in
-        order, up to ``concurrency`` in flight. Cache-first per item, so a
-        repeated text within (or across) calls spends zero LLM."""
+        """Batch :meth:`translate_field` — one :class:`BatchResult` per
+        ``(source_kind, source_id)`` ref, in order, up to ``concurrency`` in
+        flight. Cache-first per item, so a repeated source spends zero LLM."""
 
-        async def _one(text: str) -> str:
-            return await self.translate(text, lang)
+        async def _one(ref: tuple[str, int]) -> str:
+            return await self.translate_field(ref[0], ref[1], lang)
 
-        return await self._gather_batch(texts, _one, concurrency=concurrency)
+        return await self._gather_batch(refs, _one, concurrency=concurrency)
 
     def _require_assets(self) -> AssetRepository:
         """The asset cache, constructed lazily from settings if not injected."""
@@ -622,33 +643,60 @@ class Lexicon:
         self._translator_impl = Translator(settings=settings)
         return self._translator_impl
 
-    async def tts(self, text: str, voice: str | None = None, fmt: str | None = None) -> Asset:
-        """Synthesize speech for ``text``, cache-first (content-addressed).
+    async def tts_field(
+        self, source_kind: str, source_id: int, voice: str | None = None, fmt: str | None = None
+    ) -> Asset:
+        """Synthesize speech for the source at ``(source_kind, source_id)``,
+        cache-first over the reference store (hash-verified).
 
-        A cache hit returns the ``Asset`` WITHOUT calling the provider. On a miss
-        the provider is invoked — this round it is a STUB that raises
-        ``NotImplementedError`` (no fake audio is cached, so the miss leaves no
-        row/file). Empty/whitespace text short-circuits. When a real provider is
-        configured, its bytes are stored via ``put_file`` and the ``Asset`` returned.
+        A verified cache hit returns the ``Asset`` WITHOUT calling the provider.
+        On a miss the provider is invoked; when it is the STUB (no ``LEXI_TTS_*``
+        configured) it raises ``NotImplementedError`` and no fake audio is cached.
+        Empty/whitespace source short-circuits. Raises ``ValueError`` on a bad ref.
+        The audio bytes are stored via ``put_file`` keyed by the reference tuple.
         """
         settings = get_settings()
         voice = voice if voice is not None else settings.tts_voice
         fmt = fmt if fmt is not None else settings.tts_format
-        if not text.strip():
-            return Asset(kind="tts", params=normalize_asset_params("tts", voice=voice, fmt=fmt))
-        assets = self._require_assets()
         params = normalize_asset_params("tts", voice=voice, fmt=fmt)
-        h = content_hash(text)
-        cached = await assets.get(h, "tts", params)
+        assets = self._require_assets()
+        text = await assets.resolve_source_text(source_kind, source_id)
+        if text is None:
+            raise ValueError(f"no source text for ({source_kind!r}, {source_id})")
+        if not text.strip():
+            return Asset(source_kind=source_kind, source_id=source_id, kind="tts", params=params)
+        cached = await assets.get(source_kind, source_id, "tts", params, text)
         if cached is not None:
             return cached
         provider = self._tts_provider()
         data = await provider.synthesize(text, voice, fmt)  # stub raises here
-        return await assets.put_file(h, "tts", params, data, ext=fmt)
+        return await assets.put_file(source_kind, source_id, "tts", params, text, data, ext=fmt)
+
+    async def tts_sense(
+        self, sense_id: int, voice: str | None = None, fmt: str | None = None
+    ) -> Asset:
+        """Synthesize speech for a sense's definition (the everyday surface).
+
+        Convenience for ``tts_field("sense_def", sense_id, voice, fmt)``."""
+        return await self.tts_field("sense_def", sense_id, voice, fmt)
 
     def _tts_provider(self):
-        """Lazy TTS provider; defaults to the stub until a real one is injected."""
-        if getattr(self, "_tts_impl", None) is None:
+        """Lazy TTS provider: the real OpenAI-compatible one when ``LEXI_TTS_*`` is
+        configured, else the stub (so an unconfigured install fails loudly rather
+        than caching fake audio). An injected provider is used as-is.
+        """
+        if getattr(self, "_tts_impl", None) is not None:
+            return self._tts_impl
+        settings = get_settings()
+        if settings.tts_api_key or settings.tts_base_url:
+            from lexi_ai.assets.tts import OpenAICompatibleTTSProvider
+
+            self._tts_impl = OpenAICompatibleTTSProvider(
+                base_url=settings.tts_base_url,
+                api_key=settings.tts_api_key,
+                model=settings.tts_model,
+            )
+        else:
             from lexi_ai.assets.tts import StubTTSProvider
 
             self._tts_impl = StubTTSProvider()
@@ -995,6 +1043,8 @@ class Lexicon:
                     tier=s.tier,
                     pos=s.pos,
                     cefr_level=s.cefr_level,
+                    ipa_uk=s.ipa_uk,
+                    ipa_us=s.ipa_us,
                     examples=(
                         overlay[s.id][1]
                         if s.id in overlay
@@ -1034,6 +1084,8 @@ class Lexicon:
                     display=render(link.to_word.norm),
                     norm=link.to_word.norm,
                     rel_type=link.rel_type,
+                    word_id=link.to_word.id,
+                    status=link.to_word.status,
                 )
                 for link in word.links_out
             ],
@@ -1042,3 +1094,31 @@ class Lexicon:
                 for wt in sorted(word.tags, key=lambda wt: wt.tag.name)
             ],
         )
+
+
+class _LexiconTtsPort:
+    """Adapts the :class:`Lexicon` TTS surface to the questions ``TtsPort`` seam.
+
+    ``ensure_clip`` synthesizes (cache-first) via :meth:`Lexicon.tts_field` and
+    returns the clip's ``(source_kind, source_id, voice, fmt)`` reference tuple —
+    never a row id, so a frozen question payload survives a purge/regenerate.
+    Voice/fmt are resolved from settings here so plugins stay decoupled from config.
+    Returns ``None`` when no clip can be made (source text gone, or empty-text
+    short-circuit) so the audio formats degrade rather than fabricating an asset.
+    """
+
+    def __init__(self, lexicon: Lexicon):
+        self._lexicon = lexicon
+
+    async def ensure_clip(
+        self, source_kind: str, source_id: int
+    ) -> tuple[str, int, str, str] | None:
+        settings = get_settings()
+        voice, fmt = settings.tts_voice, settings.tts_format
+        try:
+            asset = await self._lexicon.tts_field(source_kind, source_id, voice, fmt)
+        except ValueError:
+            return None  # no source text for the ref — nothing to synthesize
+        if not asset.ready:
+            return None  # empty/whitespace source short-circuited — no real clip
+        return (source_kind, source_id, voice, fmt)

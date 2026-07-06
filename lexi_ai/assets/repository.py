@@ -1,32 +1,48 @@
-"""Content-addressed asset cache repository (Phase 4).
+"""Reference-addressed asset cache repository (Phase 1, hash-verified).
 
-``content_hash`` + ``normalize_asset_params`` are the addressing contract: ONE
-normalization on every call (read and write), like ``match_key``/``tag_key``. If
-they diverge, the cache misses forever. ``put_file`` writes the file BEFORE the
-row (a row implies a file); a missing file for an existing row is treated as a
-miss and rewritten.
+Identity is ``(source_kind, source_id, kind, params)`` — the source row an asset
+derives from plus its kind and a normalized param token — so a consumer holding a
+``sense_id`` looks its translation/audio up directly. ``content_hash`` is NOT the
+identity; it is the sha256 of the source text at write time, VERIFIED on read: a
+reused/regenerated ``source_id`` whose current text no longer matches yields a
+MISS (regenerate + overwrite), never poisoned content. Cascade-on-delete is
+best-effort GC (reclaim rows + files) — the read-time hash verify is the
+correctness guarantee, not the FK cascade.
+
+``put_*`` writes the file BEFORE the row (a row implies a file); a missing file
+for an existing row is treated as a miss and rewritten. ``normalize_asset_params``
+runs ONCE on every call (read and write), like ``match_key``/``tag_key``.
 """
 
 import hashlib
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from lexi_ai.constants import ASSET_KINDS, TRANSLATION_LANGUAGES
+from lexi_ai.constants import ASSET_KINDS, SOURCE_KINDS, TRANSLATION_LANGUAGES
 from lexi_ai.db import session_scope
 from lexi_ai.models import Asset as AssetRow
+from lexi_ai.models import Collocation, Example, Sense
 from lexi_ai.normalize import _CTRL_RE
 from lexi_ai.read_models import Asset
 
+# source_kind -> (ORM model, text column). Driven by SOURCE_KINDS so a kind can
+# never be half-wired: a test asserts every SOURCE_KINDS member has an entry.
+_SOURCE_TABLES = {
+    "sense_def": (Sense, Sense.definition),
+    "example": (Example, Example.text),
+    "collocation": (Collocation, Collocation.text),
+}
+
 
 def content_hash(text: str) -> str:
-    """sha256 hex of the NORMALIZED source text.
+    """sha256 hex of the NORMALIZED source text (VERIFY function, not identity).
 
     Normalization (strip control chars, collapse whitespace, strip) runs before
     hashing so trailing/interior-whitespace variants of the same text collapse to
-    one asset. This is the addressing contract — the SAME on every call.
+    one hash. The SAME normalization on every call — this is the verify contract.
     """
     s = _CTRL_RE.sub(" ", text)
     s = " ".join(s.split()).strip()
@@ -56,42 +72,88 @@ def _norm_token(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
+def _check_source_kind(source_kind: str) -> None:
+    if source_kind not in SOURCE_KINDS:
+        raise ValueError(f"unknown source kind: {source_kind!r}")
+
+
 class AssetRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession], cache_dir: str):
         self._session_factory = session_factory
         self._cache_dir = Path(cache_dir)
 
-    async def get(self, content_hash: str, kind: str, params: str) -> Asset | None:
-        """FREE lookup by asset identity. Returns ``None`` on a miss OR when the
-        row points at a file that no longer exists (defensive: caller rewrites)."""
+    # --- source resolution -------------------------------------------------
+
+    async def resolve_source_text(self, source_kind: str, source_id: int) -> str | None:
+        """Current source text for ``(source_kind, source_id)``, or ``None`` if the
+        row is gone. Opens its own read session."""
+        _check_source_kind(source_kind)
         async with session_scope(self._session_factory) as session:
-            row = await self._get(session, content_hash, kind, params)
-            if row is None:
+            return await self._resolve(session, source_kind, source_id)
+
+    @staticmethod
+    async def _resolve(session: AsyncSession, source_kind: str, source_id: int) -> str | None:
+        model, column = _SOURCE_TABLES[source_kind]
+        row = await session.execute(select(column).where(model.id == source_id))
+        return row.scalar_one_or_none()
+
+    # --- read (hash-verified) ---------------------------------------------
+
+    async def get(
+        self, source_kind: str, source_id: int, kind: str, params: str, source_text: str
+    ) -> Asset | None:
+        """FREE lookup by reference identity, VERIFIED against ``source_text``.
+
+        Returns ``None`` on: no row, a ``content_hash`` mismatch (source changed /
+        id reused → stale, MUST regenerate), or a row pointing at a vanished file.
+        """
+        _check_source_kind(source_kind)
+        want = content_hash(source_text)
+        async with session_scope(self._session_factory) as session:
+            row = await self._get(session, source_kind, source_id, kind, params)
+            if row is None or row.content_hash != want:
                 return None
             if row.file_path is not None and not (self._cache_dir / row.file_path).exists():
                 return None  # row without its file — treat as a miss
             return self._to_asset(row)
 
+    # --- write (upsert-refresh on the reference identity) ------------------
+
     async def put_text(
         self,
-        content_hash: str,
+        source_kind: str,
+        source_id: int,
         kind: str,
         params: str,
+        source_text: str,
         text_value: str,
         meta: str | None = None,
     ) -> Asset:
-        """Resolve-or-create a text asset under UNIQUE. Rejects embedded NUL (the
-        questions-payload posture — round-trips safely on Postgres)."""
+        """Upsert a text asset on the reference identity, refreshing the hash.
+
+        A stale row (reused/regenerated source) is OVERWRITTEN with the new hash +
+        value — self-heal on next access. Rejects embedded NUL in ``text_value``
+        (round-trips safely on Postgres)."""
+        _check_source_kind(source_kind)
         if "\x00" in text_value:
             raise ValueError("text_value must not contain NUL")
+        h = content_hash(source_text)
         async with session_scope(self._session_factory) as session:
-            existing = await self._get(session, content_hash, kind, params)
-            if existing is not None:
-                return self._to_asset(existing)
+            row = await self._get(session, source_kind, source_id, kind, params)
+            if row is not None:
+                self._unlink(row.file_path)  # drop any prior backing file
+                row.content_hash = h
+                row.text_value = text_value
+                row.file_path = None
+                row.meta = meta
+                await session.flush()
+                return self._to_asset(row)
             row = AssetRow(
-                content_hash=content_hash,
+                source_kind=source_kind,
+                source_id=source_id,
                 kind=kind,
                 params=params,
+                content_hash=h,
                 text_value=text_value,
                 meta=meta,
             )
@@ -100,45 +162,63 @@ class AssetRepository:
                     session.add(row)
                     await session.flush()
             except IntegrityError:
-                existing = await self._get(session, content_hash, kind, params)
-                if existing is None:
+                # Concurrent insert won the UNIQUE race — reload + overwrite.
+                row = await self._get(session, source_kind, source_id, kind, params)
+                if row is None:
                     raise
-                return self._to_asset(existing)
+                self._unlink(row.file_path)  # drop any prior backing file
+                row.content_hash = h
+                row.text_value = text_value
+                row.file_path = None
+                row.meta = meta
+                await session.flush()
             return self._to_asset(row)
 
     async def put_file(
         self,
-        content_hash: str,
+        source_kind: str,
+        source_id: int,
         kind: str,
         params: str,
+        source_text: str,
         data: bytes,
         ext: str,
         meta: str | None = None,
     ) -> Asset:
-        """Write bytes to a sharded path then resolve-or-create the row.
+        """Write bytes to a sharded path then upsert the row on the reference identity.
 
-        Path: ``{cache_dir}/{hash[:2]}/{hash}.{ext}`` (shard by prefix to avoid one
-        huge dir). The RELATIVE path is stored. File is written BEFORE the row so a
-        row always implies a file. Idempotent: existing row → return as-is (the
-        file was just (re)written, healing a prior row-without-file)."""
-        safe_ext = ext.strip().lstrip(".").lower() or "bin"
-        # Fold params into the filename: asset identity is (content_hash, kind,
-        # params), so two assets differing only by params (e.g. same text/fmt,
-        # different TTS voice) MUST map to distinct files — else the second row's
-        # write silently overwrites the first's bytes and both serve one voice.
+        Path: ``{cache_dir}/{hash[:2]}/{hash}.{params}.{ext}`` — sharded by hash
+        prefix, params folded in so two assets differing only by params (e.g. same
+        text/fmt, different TTS voice) map to distinct files. ``params``/``ext`` are
+        sanitized to path-safe tokens (no traversal via env ``voice``/``fmt``). The
+        file is written BEFORE the row so a row always implies a file. A stale row is
+        overwritten (self-heal)."""
+        _check_source_kind(source_kind)
+        h = content_hash(source_text)
+        safe_ext = "".join(c if c.isalnum() else "-" for c in ext.strip().lstrip(".")).lower()
+        safe_ext = safe_ext.strip("-") or "bin"
         safe_params = "".join(c if c.isalnum() else "-" for c in params).strip("-") or "x"
-        rel_path = f"{content_hash[:2]}/{content_hash}.{safe_params}.{safe_ext}"
+        rel_path = f"{h[:2]}/{h}.{safe_params}.{safe_ext}"
         abs_path = self._cache_dir / rel_path
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         abs_path.write_bytes(data)
         async with session_scope(self._session_factory) as session:
-            existing = await self._get(session, content_hash, kind, params)
-            if existing is not None:
-                return self._to_asset(existing)
+            row = await self._get(session, source_kind, source_id, kind, params)
+            if row is not None:
+                if row.file_path is not None and row.file_path != rel_path:
+                    self._unlink(row.file_path)
+                row.content_hash = h
+                row.file_path = rel_path
+                row.text_value = None
+                row.meta = meta
+                await session.flush()
+                return self._to_asset(row)
             row = AssetRow(
-                content_hash=content_hash,
+                source_kind=source_kind,
+                source_id=source_id,
                 kind=kind,
                 params=params,
+                content_hash=h,
                 file_path=rel_path,
                 meta=meta,
             )
@@ -147,23 +227,79 @@ class AssetRepository:
                     session.add(row)
                     await session.flush()
             except IntegrityError:
-                existing = await self._get(session, content_hash, kind, params)
-                if existing is None:
+                row = await self._get(session, source_kind, source_id, kind, params)
+                if row is None:
                     raise
-                return self._to_asset(existing)
+                if row.file_path is not None and row.file_path != rel_path:
+                    self._unlink(row.file_path)
+                row.content_hash = h
+                row.file_path = rel_path
+                row.text_value = None
+                row.meta = meta
+                await session.flush()
             return self._to_asset(row)
 
     async def _get(
-        self, session: AsyncSession, content_hash: str, kind: str, params: str
+        self, session: AsyncSession, source_kind: str, source_id: int, kind: str, params: str
     ) -> AssetRow | None:
         result = await session.execute(
             select(AssetRow).where(
-                AssetRow.content_hash == content_hash,
+                AssetRow.source_kind == source_kind,
+                AssetRow.source_id == source_id,
                 AssetRow.kind == kind,
                 AssetRow.params == params,
             )
         )
         return result.scalar_one_or_none()
+
+    # --- best-effort GC (runs on the CALLER's session) --------------------
+
+    async def delete_by_source(
+        self, session: AsyncSession, source_kind: str, source_id: int
+    ) -> int:
+        """Delete every asset row for ``(source_kind, source_id)`` and unlink its
+        file, using the CALLER's session so the deletes commit/roll back with the
+        caller's transaction (never a self-opened scope — that breaks atomicity).
+
+        Best-effort GC: a missed row is inert (read-time hash verify prevents a
+        mis-serve). Returns the number of rows removed. Enumerates rows first so
+        files can be unlinked (a bulk Core delete never exposes child paths)."""
+        return await self.delete_by_source_ids(session, source_kind, [source_id])
+
+    async def delete_by_source_ids(
+        self, session: AsyncSession, source_kind: str, source_ids: list[int]
+    ) -> int:
+        """Bulk :meth:`delete_by_source` — one SELECT + one Core delete for the
+        whole ``source_ids`` set, on the CALLER's session (atomic with its
+        transaction). Enumerates first to unlink files (a bulk delete never
+        exposes child paths), then issues a single ``delete(...).where(IN)``.
+        Returns the number of rows removed. Empty ``source_ids`` → no-op."""
+        _check_source_kind(source_kind)
+        if not source_ids:
+            return 0
+        rows = (
+            (
+                await session.execute(
+                    select(AssetRow).where(
+                        AssetRow.source_kind == source_kind,
+                        AssetRow.source_id.in_(source_ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not rows:
+            return 0
+        for row in rows:
+            self._unlink(row.file_path)
+        await session.execute(
+            delete(AssetRow).where(
+                AssetRow.source_kind == source_kind,
+                AssetRow.source_id.in_(source_ids),
+            )
+        )
+        return len(rows)
 
     # --- management (inspect / delete) ------------------------------------
 
@@ -190,8 +326,7 @@ class AssetRepository:
     async def delete(self, asset_id: int) -> bool:
         """Delete an asset row by id and unlink its backing file (best-effort).
 
-        Returns whether a row was removed. A missing file is ignored (the row is
-        still deleted) — the file may already be gone (e.g. cache pruned)."""
+        Returns whether a row was removed. A missing file is ignored."""
         async with session_scope(self._session_factory) as session:
             row = await session.get(AssetRow, asset_id)
             if row is None:
@@ -224,6 +359,8 @@ class AssetRepository:
     def _to_asset(row: AssetRow) -> Asset:
         return Asset(
             id=row.id,
+            source_kind=row.source_kind,
+            source_id=row.source_id,
             kind=row.kind,
             params=row.params,
             text_value=row.text_value,

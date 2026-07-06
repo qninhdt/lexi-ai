@@ -48,6 +48,7 @@ from lexi_ai.models import (
 from lexi_ai.normalize import _CTRL_RE, match_key, tag_key, theme_key
 
 if TYPE_CHECKING:
+    from lexi_ai.assets.repository import AssetRepository
     from lexi_ai.theming.schemas import ThemedResult
 
 
@@ -64,8 +65,16 @@ class EmbeddedSenseRow(NamedTuple):
 
 
 class Repository:
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        assets: "AssetRepository | None" = None,
+    ):
         self._session_factory = session_factory
+        # Optional asset cache: when present, delete/regenerate paths enumerate the
+        # affected source ids and GC their cached translations/clips on the SAME
+        # session (best-effort — the read-time hash verify is the correctness net).
+        self._assets = assets
 
     def session(self):
         """Transactional session scope (commit on success, rollback on error)."""
@@ -119,8 +128,11 @@ class Repository:
 
         Children (senses, aliases, links, tags, questions) are removed by the
         DB-level ``ON DELETE CASCADE`` FKs (SQLite pragma enabled in ``db.py``),
-        so a single Core ``delete`` suffices — no relationship walk."""
+        so a single Core ``delete`` suffices — no relationship walk. Cached assets
+        have no FK to the source rows, so GC them explicitly first (best-effort),
+        on the SAME session so it rolls back with the delete."""
         async with session_scope(self._session_factory) as session:
+            await self._gc_word_assets(session, word_id)
             result = await session.execute(delete(Word).where(Word.id == word_id))
             return (cast("CursorResult", result).rowcount or 0) > 0
 
@@ -344,6 +356,47 @@ class Repository:
             )
         await session.flush()
 
+    async def _gc_word_assets(self, session: AsyncSession, word_id: int) -> None:
+        """Best-effort GC of cached assets for every sense/example/collocation of a
+        word, on the CALLER's session (so it rolls back with the transaction).
+
+        Bulk Core deletes never expose child ids, so enumerate them FIRST. A missed
+        row is inert (the read-time hash verify prevents a mis-serve); this is pure
+        housekeeping to reclaim rows + on-disk clips. No-op when no asset cache is
+        wired (``self._assets is None``)."""
+        if self._assets is None:
+            return
+        sense_ids = (
+            (await session.execute(select(Sense.id).where(Sense.word_id == word_id)))
+            .scalars()
+            .all()
+        )
+        if not sense_ids:
+            return
+        example_ids = (
+            (await session.execute(select(Example.id).where(Example.sense_id.in_(sense_ids))))
+            .scalars()
+            .all()
+        )
+        colloc_ids = (
+            (
+                await session.execute(
+                    select(Collocation.id).where(Collocation.sense_id.in_(sense_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # Table-driven over source_kind so adding a kind adds a GC branch for free.
+        # One bulk delete per kind (not per id) — bounds round trips inside the
+        # single persist/delete transaction.
+        for source_kind, ids in (
+            ("sense_def", list(sense_ids)),
+            ("example", list(example_ids)),
+            ("collocation", list(colloc_ids)),
+        ):
+            await self._assets.delete_by_source_ids(session, source_kind, ids)
+
     async def _sync_senses(
         self,
         session: AsyncSession,
@@ -351,6 +404,9 @@ class Repository:
         senses: Iterable[GeneratedSense],
         cefr_map: dict[str, str],
     ) -> None:
+        # GC cached assets for the OLD senses/examples/collocations before they are
+        # bulk-deleted (their ids vanish after the delete). Same session → atomic.
+        await self._gc_word_assets(session, word_id)
         # Deleting senses cascades to references+examples+collocations (ON DELETE CASCADE).
         await session.execute(delete(Sense).where(Sense.word_id == word_id))
         for order, gen_sense in enumerate(senses):
@@ -372,6 +428,15 @@ class Repository:
                 grammar=",".join(gen_sense.grammar) or None,
                 register=gen_sense.register,
                 connotation=gen_sense.connotation,
+                # IPA: copied from Cambridge when present, else LLM-generated for
+                # out-of-Cambridge words. Untrusted free text either way -> route
+                # through _clean (control-strip, incl. NUL that crashes Postgres).
+                ipa_uk=self._clean(gen_sense.ipa_uk, self._MAX_IPA) or None
+                if gen_sense.ipa_uk
+                else None,
+                ipa_us=self._clean(gen_sense.ipa_us, self._MAX_IPA) or None
+                if gen_sense.ipa_us
+                else None,
             )
             session.add(sense)
             await session.flush()
@@ -402,6 +467,7 @@ class Repository:
     _MAX_TITLE = 128
     _MAX_TAG_KEY = 255  # must match Tag.tag_key String(255) — NFKD can expand a key
     _MAX_GUIDEWORD = 64  # must match Sense.guideword String(64)
+    _MAX_IPA = 64  # must match Sense.ipa_uk/ipa_us String(64)
     _MAX_COLLOCATION = 512  # Collocation.text is Text (unbounded) — generous sanity cap only
     _MAX_THEME_NAME = 128  # Theme.name is Text (unbounded) — generous sanity cap only
     _MAX_THEME_KEY = 255  # must match Theme.theme_key String(255)

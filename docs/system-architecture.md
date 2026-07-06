@@ -1,8 +1,10 @@
 # Lexi-AI System Architecture
 
 Lazy-generation English learner's dictionary. Entries are synthesized by an LLM
-**on demand**, anchored to Cambridge + WordNet for hallucination control, and
-cached in a local database so repeat lookups cost zero tokens.
+**on demand**; sense content is anchored to Cambridge + WordNet and IPA is
+hard-anchored from Cambridge for hallucination control (semantic relations are
+LLM-generated, not anchored), and results are cached in a local database so
+repeat lookups cost zero tokens.
 
 ## The one invariant that matters
 
@@ -30,18 +32,19 @@ lexi_ai/
     cambridge.py    Cambridge SQLite (mode=ro), fetch + candidates + phrase_titles
     wordnet.py      nltk WordNet via asyncio.to_thread
     loader.py       ReferenceBundle = Cambridge + WordNet
+  llm.py            StructuredLLM — wraps openai.AsyncOpenAI chat.completions.parse
   generation/       LLM synthesis
     schemas.py      Pydantic GeneratedResult (strict enums from constants)
     prompts.py      system prompt + tier rubric + split-vs-alias rule + formatter
-    generator.py    LangChain 1.x ChatOpenAI.with_structured_output; retry
+    generator.py    openai structured-output synthesis; retry
   theming/          restyle a done entry's senses in a named voice
     schemas.py      Pydantic ThemedResult (definition + fresh in-voice examples)
     prompts.py      voice system prompt + neutral-facts formatter (NO neutral examples)
-    generator.py    ThemedGenerator — ChatOpenAI.with_structured_output; retry
-  assets/           content-addressed derived-asset cache
+    generator.py    ThemedGenerator — openai structured-output; retry
+  assets/           reference-addressed derived-asset cache
     repository.py   AssetRepository + content_hash / normalize_asset_params
     translate.py    Translator (real, LLM-backed) — cache-first
-    tts.py          TTSProvider protocol + StubTTSProvider (raises; real drop-in later)
+    tts.py          TTSProvider protocol + StubTTSProvider + OpenAICompatibleTTSProvider
   persistence/
     repository.py   THE write path: upsert, dedup, stub-link, cefr, themes, error path
   questions/        generate + grade vocabulary questions from a done entry
@@ -49,7 +52,7 @@ lexi_ai/
     distractors.py  best-effort wrong-option ladder (semantic -> topic)
     schemas.py      GeneratedMCQ / Judgment (llm) + per-format payload validators
     scoring.py      shared async grade helpers (single_choice / text_span / rubric)
-    formats.py      the four format plugins + registry wiring
+    formats.py      the seven format plugins + registry wiring
     repository.py   QuestionRepository (the questions write path; JSON at boundary)
     engine.py       QuestionEngine — the dispatcher over plugins
   api.py            Lexicon.get_entry() — the public lazy-lookup surface
@@ -82,13 +85,15 @@ cross-DB FK — decision #14):
 - `word_aliases` — same-entry surface variants; `alias_match_key` indexed;
   UNIQUE(word_id, alias_match_key).
 - `entry_links` — cross-entry relations; `to_word_id` is **always a real FK id**
-  (stub-row pattern #11); UNIQUE(from, to, rel_type). `rel_type` includes the two
-  word-reference relations `word_family` / `confused_with` (normalized like
-  synonyms — see below).
+  (stub-row pattern #11); UNIQUE(from, to, rel_type). `rel_type` includes the
+  word-reference relations `word_family` / `confused_with` and the taxonomic
+  relations `hypernym` / `hyponym` (all normalized like synonyms — see below).
 - `senses` — the core (sense-centric #6); `tier`, `cefr_level`, `sense_order`;
-  learner-dictionary labels `guideword` (short homograph disambiguator), `grammar`
-  (0-3 closed-vocab labels, comma-joined in one column), `register`, `connotation`
-  (both closed-vocab enums); plus a best-effort semantic-search vector
+  per-POS IPA pronunciation (`ipa_uk` / `ipa_us`, hard-anchored from Cambridge,
+  NUL-sanitized on the write path); learner-dictionary labels `guideword` (short
+  homograph disambiguator), `grammar` (0-3 closed-vocab labels, comma-joined in
+  one column), `register`, `connotation` (both closed-vocab enums); plus a
+  best-effort semantic-search vector
   (`embedding` BLOB + `embedding_model` + `embedding_dim`, null until an embedder
   runs — no pgvector, portable).
 - `sense_reference` — N-N provenance to a Cambridge sense / WordNet synset
@@ -111,10 +116,15 @@ cross-DB FK — decision #14):
 - `themed_senses` — a neutral sense restyled in a theme's voice; `definition` +
   UNIQUE(sense_id, theme_id). Cascades from either the neutral sense or the theme.
 - `themed_examples` — fresh in-voice examples per themed sense (mirrors `examples`).
-- `assets` — content-addressed derived-asset cache; identity is
-  UNIQUE(content_hash, kind, params). `text_value` for inline results
+- `assets` — reference-addressed derived-asset cache; identity is
+  UNIQUE(source_kind, source_id, kind, params) — the source row this asset derives
+  from, not its content. A stored `content_hash` (NOT part of the identity) is
+  verified on read, so a reused/regenerated `source_id` yields a cache miss
+  (regenerate), never poisoned content. `text_value` for inline results
   (translation), `file_path` for binary clips (TTS, relative to the cache dir). No
-  FK to senses/words — the source is identified by CONTENT, not location.
+  cross-table FK on `source_id` (the source is a sense, example, or collocation
+  depending on `source_kind`) — the read-time hash verify, not a FK, guards
+  correctness.
 
 **Themes** (user-authored voices, overlay model): a theme restyles an entry's
 definitions + examples in a named voice ("Harry Potter", "humorous"). The neutral
@@ -131,25 +141,31 @@ CRUD alongside `create_theme`/`list_themes` — a theme's key is immutable once
 created (like `tag_key`); only display fields (name/style_prompt/description/
 tone) can be updated.
 
-**Cached assets** (content-addressed): derived text (translation, TTS) is keyed by
-`content_hash(source_text)` + a normalized `params` token, computed by ONE function
-on read and write (the `match_key`/`tag_key` discipline). This is why "each theme
-has its own translation/TTS" falls out for free: themed vs neutral text hash
-differently → distinct assets, identical text dedups. `translate(text, lang)` is
-real (LLM-backed, cache-first — a repeat call spends zero tokens); `tts(...)` is an
-interface + stub this round (the stub raises rather than caching fake audio, so a
-stubbed miss leaves no row/file). Translation results live inline in `text_value`;
-TTS clips write to `LEXI_ASSET_CACHE_DIR` sharded by hash prefix, with the row
-storing a RELATIVE path (file written before row; a row implies a file).
-Management is id-based: `list_assets`/`get_asset`/`delete_asset`/`purge_assets`
-inspect and prune the cache (`delete`/`purge` also unlink the backing file).
+**Cached assets** (reference-addressed, hash-verified): derived content (translation,
+TTS) is keyed by its source reference `(source_kind, source_id)` + `kind` + a
+normalized `params` token — the source ROW, not its text. A `content_hash` of the
+source text is stored alongside and re-verified on read: if the source was
+regenerated (or a `source_id` reused) the hash no longer matches, so the read is a
+clean miss (regenerate) rather than serving stale content. This is why "each theme
+has its own translation/TTS" still falls out for free — a themed source row is a
+distinct `(source_kind, source_id)`. `translate_sense(sense_id, lang)` /
+`translate_field(source_kind, source_id, lang)` are real (LLM-backed, cache-first —
+a repeat call spends zero tokens); `tts_sense(sense_id)` / `tts_field(...)` POST to
+an OpenAI-compatible `/audio/speech` endpoint when `LEXI_TTS_*` is configured, else
+fall back to a stub that raises rather than caching fake audio (a stubbed miss leaves
+no row/file). Translation results live inline in `text_value`; TTS clips write to
+`LEXI_ASSET_CACHE_DIR` sharded by hash prefix, with the row storing a RELATIVE path
+(file written before row; a row implies a file). Management is id-based:
+`list_assets`/`get_asset`/`delete_asset`/`purge_assets` inspect and prune the cache
+(`delete`/`purge` also unlink the backing file).
 
 **Word enrichment** (learner-dictionary content, LLM-authored): each generated
 word gets seven enrichments emitted in the same LLM call as senses — synthesized
-from the Cambridge/WordNet anchors, not copied. Two kinds: **word-references**
-(`word_family`, `confused_with`) NAME a lemma, so they are normalized through the
-existing `related[]` → `entry_links` path (match_key stub-rows + dedup) and appear
-in `Entry.links` by `rel_type`; **sense labels** (`guideword`, `grammar`,
+by the LLM (semantic relations are NOT anchored — Cambridge/WordNet feed sense
+content only). Two kinds: **word-references** (`word_family`, `confused_with`,
+`hypernym`, `hyponym`) NAME a lemma, so they are normalized through the existing
+`related[]` → `entry_links` path (match_key stub-rows + dedup) and appear in
+`Entry.links` as a flat list by `rel_type`; **sense labels** (`guideword`, `grammar`,
 `register`, `connotation`, `collocations`) LABEL a sense and live on `senses` /
 the `collocations` child table. Closed-vocab enums live in `constants.py` (single
 source for ORM + schema); free text is control-char sanitized on the write path.
@@ -190,7 +206,8 @@ answers. It *manages* questions (create / read / delete / grade); it does not
 *use* them — rotation, quiz sessions, SRS, and progress are the application's job.
 
 **Three axes wired through `answer_kind`.** A **format** declares an `answer_kind`
-(what an answer looks like: `single_choice` / `text_span` / `free_text`); a
+(what an answer looks like: `single_choice` / `text_span` / `free_text` /
+`matching`); a
 **generator** turns an entry into a question; a **scorer** turns `(question,
 answer)` into a score. A format is not bound to a backend — a rule and an LLM are
 just two ways to implement the same interface.
@@ -212,7 +229,7 @@ cannot tell the difference. `store` is the CRUD façade of `QuestionRepository`
 (the questions write path), so plugins get a DB door, not a session. Grading needs
 no DB — a freshly generated, never-stored question grades fine.
 
-The seed set proves the abstraction by covering every backend combination:
+The format set proves the abstraction by covering every backend combination:
 
 | Format | answer_kind | Generator | Grader | Persists |
 |--------|-------------|-----------|--------|----------|
@@ -220,9 +237,16 @@ The seed set proves the abstraction by covering every backend combination:
 | `cloze` | `text_span` | rule | rule (`match_key`) | no |
 | `contextual_mcq` | `single_choice` | llm | rule (index) | yes |
 | `use_in_sentence` | `free_text` | rule | llm (rubric) | no |
+| `matching` | `matching` | rule | rule (permutation) | no |
+| `listening` | `single_choice` | rule (TTS) | rule (index) | yes |
+| `spelling` | `text_span` | rule (TTS) | rule (`match_key`) | no |
 
 `contextual_mcq` (llm-generated, rule-graded) and `use_in_sentence` (rule-generated,
-llm-graded) are the cross-axis proofs. Adding a format is one plugin class + one
+llm-graded) are the cross-axis proofs. `listening`/`spelling` synthesize an audio
+clip via the configured TTS provider (addressed by the durable
+`(source_kind, source_id, voice, fmt)` reference tuple, not a row id, so the payload
+survives a purge/regenerate); with no TTS configured they degrade to no questions
+rather than failing. Adding a format is one plugin class + one
 `register(...)` line; the registry validates the format↔answer_kind coupling at
 import time (a mis-wire is an import error). Payload is app-level JSON in a `Text`
 column (the one deviation from native typing), (de)serialized only at the
@@ -259,19 +283,28 @@ Env vars (prefix `LEXI_`): `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`,
 `LLM_TEMPERATURE`, `DB_URL` (generated DB), `CAMBRIDGE_DB_PATH` (read-only source).
 Assets/themes: `ASSET_CACHE_DIR` (TTS clip dir, default `./lexi-assets`),
 `TRANSLATE_MODEL` (optional translation model override, falls back to `LLM_MODEL`),
-and `TTS_BASE_URL`/`TTS_API_KEY`/`TTS_MODEL`/`TTS_VOICE`/`TTS_FORMAT` (reserved for
-the TTS provider — defined but unused this round, since TTS ships as stub only).
+and `TTS_BASE_URL`/`TTS_API_KEY`/`TTS_MODEL`/`TTS_VOICE`/`TTS_FORMAT` for the
+OpenAI-compatible TTS provider. When a `TTS_API_KEY` is set, `TTS_BASE_URL` must be
+`https://` (or a loopback host) or construction raises — the key is never sent in
+cleartext. With none configured, TTS falls back to the stub (raises, never caches
+fake audio).
+
+**Schema versioning:** `init_models` runs a pure additive `create_all` — it never
+drops a table or adds a column to an existing one. New columns reach only a freshly
+created DB, so a schema change today requires an explicit drop + recreate (the DB is
+pre-production and regenerable). A portable migration tool (Alembic) is deferred
+until lexi-ai holds real data that can't be regenerated.
 
 ## Testing
 
-256 tests, `uv run pytest`. No live LLM calls (fake runnables). Reference and
+307 tests, `uv run pytest`. No live LLM calls (fake runnables). Reference and
 phrase-overlap tests run against the real Cambridge `./data` and skip if absent.
 Themes and cached assets add `tests/test_themes.py` (theme_key folding, dedup,
 schema compile), `tests/test_theming.py` (themed generation + read overlay with a
 fake generator, count-mismatch guard, per-sense fallback), and
-`tests/test_assets.py` (content-hash addressing, param normalization,
-resolve-or-create, translation cache hits, TTS stub-raises + real-provider
-round-trip).
+`tests/test_assets.py` (reference addressing with read-time `content_hash` verify,
+param normalization, resolve-or-create, translation cache hits, TTS stub-raises +
+real-provider round-trip).
 The suite includes regression tests for a multi-agent review pass: Postgres
 NUL-safety of `match_key`, concurrent-insert savepoint recovery, the
 Cambridge-first CEFR contract (`sense#42` vs bare `42`), per-key lock eviction,

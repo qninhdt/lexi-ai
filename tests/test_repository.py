@@ -281,6 +281,56 @@ async def test_get_done_keys(repo, session_factory):
     assert match_key("hue") not in keys
 
 
+# --- IPA (Phase 2: selective anchoring) -----------------------------------
+
+
+def _ipa_result(ipa_uk: str | None, ipa_us: str | None) -> GeneratedResult:
+    return GeneratedResult(
+        units=[
+            GeneratedEntry(
+                norm="lead",
+                entry_type="word",
+                pos="noun",
+                senses=[
+                    {
+                        "definition": "a heavy metal",
+                        "tier": "core",
+                        "ipa_uk": ipa_uk,
+                        "ipa_us": ipa_us,
+                    }
+                ],
+            )
+        ]
+    )
+
+
+async def test_ipa_persisted_on_sense(repo, session_factory):
+    await repo.persist_result(_ipa_result("led", "led"))
+    async with session_scope(session_factory) as session:
+        sense = (await session.execute(select(Sense))).scalar_one()
+    assert sense.ipa_uk == "led"
+    assert sense.ipa_us == "led"
+
+
+async def test_ipa_nul_and_control_chars_survive_persist(repo, session_factory):
+    # LLM-generated IPA for out-of-Cambridge words is untrusted: an embedded NUL
+    # crashes the Postgres insert. It MUST route through _clean like every other
+    # free LLM field, so persistence succeeds on both dialects (NUL stripped).
+    await repo.persist_result(_ipa_result("l\x00ed", "l\ted"))
+    async with session_scope(session_factory) as session:
+        sense = (await session.execute(select(Sense))).scalar_one()
+    assert "\x00" not in (sense.ipa_uk or "")
+    assert "\t" not in (sense.ipa_us or "")
+
+
+async def test_ipa_absent_is_none(repo, session_factory):
+    await repo.persist_result(_ipa_result(None, None))
+    async with session_scope(session_factory) as session:
+        sense = (await session.execute(select(Sense))).scalar_one()
+    assert sense.ipa_uk is None
+    assert sense.ipa_us is None
+
+
 async def test_insert_word_recovers_from_concurrent_duplicate(repo, session_factory):
     # Simulate a concurrent inserter: the key already exists as a committed row.
     # _insert_word must trip the UNIQUE constraint inside its savepoint, roll it

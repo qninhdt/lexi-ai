@@ -8,15 +8,11 @@ way, and that sameness is exactly the cross-axis proof — the llm-authored
 :func:`grade_single_choice`, so "who generated it" is irrelevant to grading.
 """
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.runnables import Runnable
-
+from lexi_ai.llm import StructuredLLM, ainvoke_structured, sys_msg, user_msg
 from lexi_ai.normalize import match_key
-from lexi_ai.llm import ainvoke_structured
+from lexi_ai.prompts import PromptLoader
 from lexi_ai.questions.schemas import Judgment
 from lexi_ai.read_models import Question, Score
-
-from lexi_ai.prompts import PromptLoader
 
 _RUBRIC_SYSTEM = PromptLoader.render("rubric_scoring_system")
 
@@ -46,16 +42,16 @@ async def grade_text_span(question: Question, answer: object) -> Score:
     return Score(correct=correct, score=1.0 if correct else 0.0, kind="rule")
 
 
-async def grade_rubric(question: Question, answer: object, *, judge: Runnable) -> Score:
+async def grade_rubric(question: Question, answer: object, *, judge: StructuredLLM | None) -> Score:
     """Grade a free-text answer against the payload rubric via an llm judge.
 
     Best-effort posture is deliberately NOT used here: grading is the caller's
     explicit request (unlike best-effort embeddings), so a persistent judge
     failure raises rather than silently scoring wrong. Requires an injected
-    ``judge`` runnable bound to :class:`Judgment`.
+    ``judge`` :class:`StructuredLLM` producing a :class:`Judgment`.
     """
     if judge is None:
-        raise ValueError("rubric grading requires a judge runnable (ctx.judge is None)")
+        raise ValueError("rubric grading requires a judge (ctx.judge is None)")
     payload = question.payload
     human = PromptLoader.render(
         "rubric_scoring_user",
@@ -66,7 +62,7 @@ async def grade_rubric(question: Question, answer: object, *, judge: Runnable) -
     )
     judgment = await ainvoke_structured(
         judge,
-        [SystemMessage(content=_RUBRIC_SYSTEM), HumanMessage(content=human)],
+        [sys_msg(_RUBRIC_SYSTEM), user_msg(human)],
         Judgment,
     )
     return Score(
@@ -75,6 +71,23 @@ async def grade_rubric(question: Question, answer: object, *, judge: Runnable) -
         kind="llm",
         feedback=judgment.feedback,
     )
+
+
+async def grade_matching(question: Question, answer: object) -> Score:
+    """Grade a matching answer (a list of right-indices) against ``correct_map``.
+
+    ``score`` is the fraction of lefts paired with their correct right; ``correct``
+    is True only when every pair is right. A malformed answer (not a list, or wrong
+    length) scores wrong rather than raising — same lenient posture as the choice
+    grader. Order-independent: the shuffle lives in the payload, so submitting the
+    stored ``correct_map`` back always scores full regardless of display order.
+    """
+    correct_map = question.payload["correct_map"]
+    if not isinstance(answer, (list, tuple)) or len(answer) != len(correct_map):
+        return Score(correct=False, score=0.0, kind="rule")
+    hits = sum(1 for got, want in zip(answer, correct_map, strict=True) if got == want)
+    score = hits / len(correct_map)
+    return Score(correct=hits == len(correct_map), score=score, kind="rule")
 
 
 def _resolve_choice(answer: object, options: list[str]) -> int | None:

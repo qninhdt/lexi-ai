@@ -11,11 +11,15 @@ cost zero tokens.
   entry (senses, examples, CEFR levels, aliases, related words); every lookup
   after is a free cache hit. Surface variants (case, diacritics, US/UK spelling,
   `{sb}`/`{sth}` placeholders) fold to one entry via a single normalization key.
-- **Reference-anchored generation** — entries are synthesized from Cambridge +
-  WordNet anchors, never copied, to keep the LLM honest.
+- **Selective anchoring** — senses (definitions + examples) are synthesized from
+  Cambridge + WordNet anchors, never copied, to keep the LLM honest; IPA
+  pronunciation is hard-anchored from Cambridge (per POS); semantic relations are
+  LLM-generated, not anchored.
+- **Pronunciation** — each sense carries per-POS IPA (`ipa_uk` / `ipa_us`),
+  anchored from Cambridge and surfaced on `SenseView`.
 - **Word enrichment** — each entry carries learner-dictionary labels (guideword,
   grammar, register, connotation, collocations) and word-reference links
-  (word-family, confused-with), all emitted in the same LLM call.
+  (word-family, confused-with, hypernym, hyponym), all emitted in the same LLM call.
 - **Topic tags & semantic search** — browse words by open-vocabulary topic tags,
   or rank senses by meaning with local embeddings (optional extra).
 - **Themes** — restyle an entry's definitions and examples in a named voice
@@ -23,12 +27,13 @@ cost zero tokens.
   overlays the neutral entry (the canonical `match_key` invariant is untouched)
   and is generated once after the neutral content, then cached — the app picks
   one active theme like a light/dark-mode switch.
-- **Cached assets** — content-addressed cache for derived text: **translation**
-  (real, LLM-backed) and **text-to-speech** (interface + stub this round). Keyed
-  by a hash of the exact source text, so themed vs neutral text get distinct
-  assets, identical text dedups, and a repeat call spends zero tokens.
+- **Cached assets** — reference-addressed cache for derived content: **translation**
+  (real, LLM-backed) and **text-to-speech** (real, OpenAI-compatible). Identity is
+  the source reference `(source_kind, source_id, kind, params)`, plus a stored
+  `content_hash` verified on read — so a regenerated or reused source yields a clean
+  miss (never stale content), and a repeat call spends zero tokens.
 - **Question engine** — turn a generated word into vocabulary questions across
-  four formats and grade answers. Each format is a self-contained plugin owning
+  seven formats and grade answers. Each format is a self-contained plugin owning
   its own generation, grading, and persistence; the engine is a pure dispatcher.
   Covers rule-based and LLM-based generation and grading (see below).
 - **Portable storage** — one schema runs on both SQLite and Postgres (portable
@@ -70,9 +75,12 @@ async def main():
     themed = await lex.generate(results[0], theme=theme.key)
     print(themed.senses[0].definition)                   # restyled definition
 
-    # Cached assets: translation is real; a repeat call spends zero tokens.
-    print(await lex.translate(entry.senses[0].definition, "vi"))
-    # TTS is interface-only this round — the stub raises until a provider lands.
+    # Cached assets (reference-addressed by sense id): a repeat call is free.
+    sense_id = entry.senses[0].sense_id
+    print(await lex.translate_sense(sense_id, "vi"))     # real, LLM-backed
+    # TTS is real when LEXI_TTS_* is configured (OpenAI-compatible /audio/speech);
+    # unconfigured, the stub raises rather than caching fake audio.
+    clip = await lex.tts_sense(sense_id)                 # Asset (file_path to the clip)
 
 asyncio.run(main())
 ```
@@ -88,9 +96,11 @@ Asset and theme knobs (all `LEXI_`-prefixed):
   translation results live in the DB.
 - `TRANSLATE_MODEL` — optional per-task model override for translation; falls
   back to `LLM_MODEL` when empty.
-- `TTS_BASE_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `TTS_FORMAT` —
-  reserved for the TTS provider. Defined but **unused this round** (TTS ships as
-  an interface + stub; the stub raises rather than caching fake audio).
+- `TTS_BASE_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `TTS_FORMAT` — the
+  OpenAI-compatible TTS provider. When a key is set, `TTS_BASE_URL` must be
+  `https://` (or a loopback host) so the key is never sent in cleartext. Leave
+  them unset and TTS falls back to a stub that raises rather than caching fake
+  audio.
 
 ### Managing & batch
 
@@ -102,7 +112,7 @@ Every resource has get/list/delete alongside create — `get_theme`/`update_them
 `list[BatchResult]` — one entry per input, in order; a failed item never aborts
 the rest (check `result.ok` / `result.value` / `result.error`).
 
-### Question formats (v1)
+### Question formats
 
 | Format | Answer kind | Generator | Grader | Persists |
 |--------|-------------|-----------|--------|----------|
@@ -110,8 +120,13 @@ the rest (check `result.ok` / `result.value` / `result.error`).
 | `cloze` | text span | rule | rule (`match_key`) | no |
 | `contextual_mcq` | single choice | LLM | rule (index) | yes |
 | `use_in_sentence` | free text | rule | LLM (rubric) | no |
+| `matching` | matching | rule | rule (permutation) | no |
+| `listening` | single choice | rule (TTS) | rule (index) | yes |
+| `spelling` | text span | rule (TTS) | rule (`match_key`) | no |
 
-Adding a format is one plugin class + one registry line — no engine edit.
+`listening` and `spelling` synthesize an audio clip via the configured TTS
+provider; with no TTS configured they degrade to no questions rather than
+failing. Adding a format is one plugin class + one registry line — no engine edit.
 
 ## Examples
 

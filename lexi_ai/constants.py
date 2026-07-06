@@ -43,9 +43,10 @@ ALIAS_TYPES = frozenset(
 # word_aliases.dialect
 DIALECTS = frozenset({"uk", "us"})
 
-# entry_links.rel_type. ``word_family``/``confused_with`` are word-references:
-# they NAME a lemma, so they ride the same normalized related[] → entry_links
-# path as synonyms (match_key stub-rows + dedup), inheriting all of it for free.
+# entry_links.rel_type. ``word_family``/``confused_with``/``hypernym``/``hyponym``
+# are word-references: they NAME a lemma, so they ride the same normalized
+# related[] → entry_links path as synonyms (match_key stub-rows + dedup),
+# inheriting all of it for free.
 REL_TYPES = frozenset(
     {
         "arrow_redirect",
@@ -57,6 +58,8 @@ REL_TYPES = frozenset(
         "part_of_phrasal_family",
         "word_family",
         "confused_with",
+        "hypernym",
+        "hyponym",
     }
 )
 
@@ -100,8 +103,15 @@ CONNOTATIONS = frozenset({"positive", "negative", "neutral"})
 # sense_reference.source
 REFERENCE_SOURCES = frozenset({"cambridge", "wordnet"})
 
-# assets.kind — content-addressed derived-asset cache (translation, TTS).
+# assets.kind — reference-addressed derived-asset cache (translation, TTS).
 ASSET_KINDS = frozenset({"translate", "tts"})
+
+# assets.source_kind — the source row a cached asset derives from. Each kind maps
+# to a (table, text column) in the asset repository's resolver; that mapping is
+# driven by THIS set so a kind can never be half-wired (a test asserts every
+# member has a resolver entry). Ship 3 kinds; themed kinds are added only when a
+# themed-translation consumer lands.
+SOURCE_KINDS = frozenset({"sense_def", "example", "collocation"})
 
 # --- questions subsystem vocabularies -------------------------------------
 #
@@ -111,10 +121,20 @@ ASSET_KINDS = frozenset({"translate", "tts"})
 # one registry row.
 
 # questions.format (v1 seed set).
-QUESTION_FORMATS = frozenset({"definition_mcq", "cloze", "contextual_mcq", "use_in_sentence"})
+QUESTION_FORMATS = frozenset(
+    {
+        "definition_mcq",
+        "cloze",
+        "contextual_mcq",
+        "use_in_sentence",
+        "matching",
+        "listening",
+        "spelling",
+    }
+)
 
 # questions.answer_kind — the coupling contract a scorer dispatches on.
-ANSWER_KINDS = frozenset({"single_choice", "text_span", "free_text"})
+ANSWER_KINDS = frozenset({"single_choice", "text_span", "free_text", "matching"})
 
 # Score.kind — how a verdict was reached (deterministic rule vs llm judge). This
 # is caller-facing OUTPUT the scorer reports about itself; the engine never reads

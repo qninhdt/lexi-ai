@@ -5,10 +5,13 @@ SQLite does not enforce foreign keys (or ``ON DELETE CASCADE``) unless
 for SQLite URLs. Postgres enforces FKs natively and needs no pragma.
 """
 
+import os
+import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from sqlalchemy import event
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -17,7 +20,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from lexi_ai.config import Settings, get_settings
-from lexi_ai.models import Base
+from lexi_ai.models import Asset, Base
 
 
 def _enable_sqlite_fk(engine: AsyncEngine) -> None:
@@ -46,9 +49,53 @@ def create_session_factory(
 
 
 async def init_models(engine: AsyncEngine) -> None:
-    """Create all tables on a fresh generated-dictionary DB."""
+    """Create all tables on a fresh generated-dictionary DB (additive only).
+
+    This is ``create_all``: it NEVER drops a table or adds a column to an
+    existing one. Structural changes to a table that already exists need
+    :func:`reset_assets_table` (or, once real data must survive, a migration
+    tool — deferred, see the roadmap)."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+async def reset_assets_table(
+    engine: AsyncEngine,
+    *,
+    cache_dir: str | None = None,
+    allow_destructive: bool | None = None,
+) -> None:
+    """Drop + recreate the ``assets`` table and clear its on-disk cache shard.
+
+    ``create_all`` cannot reshape an existing table, so a structural change to
+    ``assets`` (the Phase 1 reference-addressing columns) needs an explicit
+    drop+recreate. This is DESTRUCTIVE — it discards every cached translation/TTS
+    row and its backing files — so it refuses to drop a NON-EMPTY table unless
+    destructive migration is explicitly allowed (``allow_destructive`` arg, or the
+    ``LEXI_ALLOW_DESTRUCTIVE_MIGRATION`` env flag). An empty table recreates freely.
+
+    On reset the whole cache dir is ``rmtree``d so orphaned binaries do not leak.
+    """
+    if allow_destructive is None:
+        flag = os.environ.get("LEXI_ALLOW_DESTRUCTIVE_MIGRATION", "").strip().lower()
+        allow_destructive = flag in ("1", "true", "yes")
+    table = Base.metadata.tables[Asset.__tablename__]
+    async with engine.begin() as conn:
+        has_table = await conn.run_sync(
+            lambda sync_conn: engine.dialect.has_table(sync_conn, Asset.__tablename__)
+        )
+        if has_table:
+            count = await conn.scalar(select(func.count()).select_from(Asset))
+            if count and not allow_destructive:
+                raise RuntimeError(
+                    f"refusing to drop non-empty {Asset.__tablename__!r} "
+                    f"({count} rows): set LEXI_ALLOW_DESTRUCTIVE_MIGRATION=1 to allow"
+                )
+            await conn.run_sync(Base.metadata.drop_all, tables=[table], checkfirst=True)
+        await conn.run_sync(Base.metadata.create_all, tables=[table], checkfirst=True)
+    # Reclaim on-disk clips so orphaned binaries don't leak after the row drop.
+    if cache_dir:
+        shutil.rmtree(Path(cache_dir), ignore_errors=True)
 
 
 @asynccontextmanager

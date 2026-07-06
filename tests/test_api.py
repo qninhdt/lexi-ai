@@ -17,7 +17,7 @@ from sqlalchemy.pool import StaticPool
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.embeddings import Embedder
-from lexi_ai.generation.schemas import GeneratedEntry, GeneratedResult
+from lexi_ai.generation.schemas import GeneratedEntry, GeneratedResult, RelatedWord
 from lexi_ai.models import Sense, Word
 from lexi_ai.normalize import match_key
 from lexi_ai.persistence.repository import Repository
@@ -397,6 +397,118 @@ async def test_split_page_units_persist(engine):
             .all()
         )
     assert {r.norm for r in rows} == {"idiom one", "idiom two"}
+
+
+async def test_idiom_is_first_class_learnable_content(engine):
+    # Characterization: what happens today when an idiom is generated and how it
+    # is reached from a host word. Documents the pre-change contract so a later
+    # change to the discovery surface is a deliberate, visible edit.
+    #
+    # A host word ("kick") declares a related idiom ("kick the bucket"); the
+    # generator returns it as an idiom-typed related link. Generation persists a
+    # `part_of_phrasal_family`-style pointer to a pending stub for the idiom.
+    host = GeneratedEntry(
+        norm="kick",
+        entry_type="word",
+        pos="verb",
+        senses=[{"definition": "strike with the foot", "tier": "core", "cefr_level": "A1"}],
+        related=[RelatedWord(norm="kick the bucket", rel_type="part_of_phrasal_family")],
+    )
+    lex, gen, session_factory = _make_lexicon(
+        engine,
+        cam_words={30: ("kick", "word", ["kick"])},
+        norm_by_id={30: "kick"},
+        results_by_word={
+            match_key("kick"): GeneratedResult(units=[host]),
+            # The idiom, generated on its own, carries its idiom entry_type and
+            # a full core sense — it is NOT a second-class link target.
+            match_key("kick the bucket"): GeneratedResult(
+                units=[
+                    GeneratedEntry(
+                        norm="kick the bucket",
+                        entry_type="idiom",
+                        pos=None,
+                        senses=[{"definition": "to die", "tier": "core", "cefr_level": "B2"}],
+                    )
+                ]
+            ),
+        },
+    )
+
+    host_entry = await lex.generate((await lex.search("kick"))[0])
+
+    # The idiom surfaces on the host as a relation link carrying a generatable
+    # handle: display, rel_type, plus the linked word's id + status.
+    idiom_links = [link for link in host_entry.links if link.norm == "kick the bucket"]
+    assert len(idiom_links) == 1
+    assert idiom_links[0].rel_type == "part_of_phrasal_family"
+    assert idiom_links[0].status == "pending"
+
+    # The idiom already exists as a pending, browsable stub (lazy-generation
+    # queue): it shows up in the whole-dictionary browse filtered to pending.
+    pending = await lex.list_entries(status="pending")
+    stub_hits = [r for r in pending if r.display == "kick the bucket"]
+    assert len(stub_hits) == 1
+    assert stub_hits[0].lexi_word_id is not None
+
+    # TODAY: a related-seeded stub carries NO Cambridge provenance, so search()
+    # (which resolves through Cambridge) does not surface it. The stub is reached
+    # by generating its norm as a custom string — which converges on the existing
+    # stub row by match_key and yields FULL sense content, keeping entry_type.
+    # It is a first-class entry, not merely a pointer.
+    assert await lex.search("kick the bucket") == []
+    idiom_entry = await lex.generate("kick the bucket")
+    assert idiom_entry.entry_type == "idiom"
+    assert idiom_entry.norm == "kick the bucket"
+    assert [s.definition for s in idiom_entry.senses] == ["to die"]
+    assert idiom_entry.senses[0].tier == "core"
+
+
+async def test_entry_link_carries_generatable_handle(engine):
+    # A host link must expose the target's word_id + status, so a consumer can go
+    # straight to get_entry (done) or generate (pending) without a search round-trip
+    # (a related-seeded stub has no Cambridge provenance, so search never finds it).
+    host = GeneratedEntry(
+        norm="kick",
+        entry_type="word",
+        pos="verb",
+        senses=[{"definition": "strike with the foot", "tier": "core", "cefr_level": "A1"}],
+        related=[RelatedWord(norm="kick the bucket", rel_type="part_of_phrasal_family")],
+    )
+    lex, _gen, _sf = _make_lexicon(
+        engine,
+        cam_words={30: ("kick", "word", ["kick"])},
+        norm_by_id={30: "kick"},
+        results_by_word={
+            match_key("kick"): GeneratedResult(units=[host]),
+            match_key("kick the bucket"): GeneratedResult(
+                units=[
+                    GeneratedEntry(
+                        norm="kick the bucket",
+                        entry_type="idiom",
+                        pos=None,
+                        senses=[{"definition": "to die", "tier": "core", "cefr_level": "B2"}],
+                    )
+                ]
+            ),
+        },
+    )
+
+    host_entry = await lex.generate((await lex.search("kick"))[0])
+    (link,) = [ln for ln in host_entry.links if ln.norm == "kick the bucket"]
+    # The pending idiom is reachable by its handle, not by search.
+    assert link.status == "pending"
+    idiom_entry = await lex.generate("kick the bucket")
+
+    # After generation the same link reports done, and its word_id addresses the
+    # generated entry directly (get_entry, no LLM, no search).
+    host_again = await lex.get_entry(host_entry.word_id)
+    (link2,) = [ln for ln in host_again.links if ln.norm == "kick the bucket"]
+    assert link2.status == "done"
+    assert link2.word_id == idiom_entry.word_id
+    fetched = await lex.get_entry(link2.word_id)
+    assert fetched.entry_type == "idiom"
+    assert [s.definition for s in fetched.senses] == ["to die"]
 
 
 # --- embeddings + semantic search ----------------------------------------

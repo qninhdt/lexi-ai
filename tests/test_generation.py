@@ -1,23 +1,28 @@
 """Tests for the LLM generation pipeline (Phase 4).
 
-No live network. The structured LLM is a fake ``Runnable`` returning canned
-``GeneratedResult`` objects, so we exercise schema validation, prompt assembly,
-the split-vs-alias contract, and the retry wrapper deterministically.
+No live network. The structured LLM is a fake implementing the ``StructuredLLM``
+seam (``parse(messages, schema)``) returning canned ``GeneratedResult`` objects,
+so we exercise schema validation, prompt assembly, the split-vs-alias contract,
+and the retry wrapper deterministically.
 """
 
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
+
 import pytest
-from langchain_core.runnables import RunnableLambda
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from lexi_ai.generation.generator import Generator
-from lexi_ai.prompts import PromptLoader
 from lexi_ai.generation.schemas import (
     GeneratedEntry,
     GeneratedResult,
 )
+from lexi_ai.prompts import PromptLoader
 from lexi_ai.references.cambridge import CamSense
 from lexi_ai.references.loader import ReferenceBundle
 from lexi_ai.references.wordnet import WnSense
+
+_T = TypeVar("_T", bound=BaseModel)
 
 
 def _bundle_book() -> ReferenceBundle:
@@ -35,10 +40,10 @@ def _bundle_book() -> ReferenceBundle:
                 domain=None,
                 cambridge_sense_id=1,
                 examples=["a good book"],
-                synonyms=["volume"],
+                ipa_uk="/bʊk/",
+                ipa_us="/bʊk/",
             )
         ],
-        cambridge_synonyms=["volume"],
         wordnet_synsets=[
             WnSense(
                 name="book.n.01",
@@ -71,11 +76,22 @@ def _bundle_expression() -> ReferenceBundle:
     )
 
 
-def _fake_llm(result: GeneratedResult) -> RunnableLambda:
+class _FakeLLM:
+    """Minimal ``StructuredLLM``: runs a callback per ``parse`` (canned result or
+    raise), ignoring the schema — the callback already returns the right type."""
+
+    def __init__(self, fn: Callable[[list], Awaitable[BaseModel]]):
+        self._fn = fn
+
+    async def parse(self, messages: list, schema: type[_T]) -> _T:
+        return await self._fn(messages)  # type: ignore[return-value]
+
+
+def _fake_llm(result: GeneratedResult) -> _FakeLLM:
     async def _call(_messages):
         return result
 
-    return RunnableLambda(_call)
+    return _FakeLLM(_call)
 
 
 # --- prompt assembly ------------------------------------------------------
@@ -112,6 +128,24 @@ def test_prompt_includes_rubric_and_both_sources():
 def test_prompt_marks_empty_wordnet():
     body = _format_bundle(_bundle_expression())
     assert "no synsets" in body.lower()
+
+
+def test_prompt_omits_semantic_relations():
+    # Selective anchoring: synonyms/antonyms/lemmas are NO LONGER fed to the prompt
+    # (the LLM generates relations itself). The load-bearing edit is the jinja
+    # template — assert the rendered prompt carries no syn:/ant:/lemmas: lines.
+    body = _format_bundle(_bundle_book())
+    assert "syn:" not in body
+    assert "ant:" not in body
+    assert "lemmas:" not in body
+
+
+def test_prompt_anchors_ipa():
+    # IPA IS hard-anchored: Cambridge pronunciation is rendered per sense so the
+    # LLM copies it rather than hallucinating.
+    body = _format_bundle(_bundle_book())
+    assert "/bʊk/" in body
+    assert "ipa:" in body.lower()
 
 
 # --- schema validation ----------------------------------------------------
@@ -251,7 +285,7 @@ async def test_generate_retries_then_succeeds():
             raise RuntimeError("transient")
         return good
 
-    gen = Generator(structured_llm=RunnableLambda(_flaky), base_delay=0.0)
+    gen = Generator(structured_llm=_FakeLLM(_flaky), base_delay=0.0)
     out = await gen.generate(_bundle_book())
     assert calls["n"] == 2
     assert out.units[0].norm == "book"
@@ -261,6 +295,6 @@ async def test_generate_raises_after_exhausting_retries():
     async def _always_fail(_messages):
         raise RuntimeError("permanent")
 
-    gen = Generator(structured_llm=RunnableLambda(_always_fail), max_retries=2, base_delay=0.0)
+    gen = Generator(structured_llm=_FakeLLM(_always_fail), max_retries=2, base_delay=0.0)
     with pytest.raises(RuntimeError, match="permanent"):
         await gen.generate(_bundle_book())

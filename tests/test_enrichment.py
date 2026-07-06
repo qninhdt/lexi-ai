@@ -56,6 +56,8 @@ def _result(
     register: str | None = None,
     connotation: str | None = None,
     collocations: list[str] | None = None,
+    ipa_uk: str | None = None,
+    ipa_us: str | None = None,
 ) -> GeneratedResult:
     """One-unit result whose single sense carries the given enrichments.
 
@@ -75,6 +77,8 @@ def _result(
                         register=register,
                         connotation=connotation,
                         collocations=collocations or [],
+                        ipa_uk=ipa_uk,
+                        ipa_us=ipa_us,
                     )
                 ],
                 related=[RelatedWord(norm=n, rel_type=rt) for n, rt in (related or [])],
@@ -130,6 +134,39 @@ async def test_confused_with_links(engine):
     assert confused[0].display == "effect"
 
 
+async def test_hypernym_hyponym_links(engine):
+    # Two taxonomic relations the LLM generates itself; they ride the same
+    # related[] -> entry_links id-based path as synonym/word_family, resolving to
+    # real stub words rows, and surface unfiltered in the flat Entry.links list.
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    words = await repo.persist_result(
+        _result("dog", related=[("animal", "hypernym"), ("poodle", "hyponym")])
+    )
+
+    # Persisted as id-based EntryLink rows with real to_word_id stubs.
+    async with sf() as s:
+        links = list(
+            (
+                await s.execute(
+                    select(EntryLink).where(EntryLink.from_word_id == words[0].id)
+                )
+            ).scalars()
+        )
+        by_type = {ln.rel_type: ln for ln in links}
+        assert set(by_type) == {"hypernym", "hyponym"}
+        assert by_type["hypernym"].to_word_id is not None
+        assert by_type["hyponym"].to_word_id is not None
+
+    # Surface unfiltered in the flat read model by their rel_type (grouping is a
+    # consumer concern — no read-model change needed for the new types).
+    lex = await _reading_lexicon(engine, repo)
+    entry = await lex.get_entry(words[0].id)
+    surfaced = {ln.rel_type: ln.display for ln in entry.links}
+    assert surfaced.get("hypernym") == "animal"
+    assert surfaced.get("hyponym") == "poodle"
+
+
 # --- sense labels: round-trip + lossless grammar join/split ----------------
 
 
@@ -154,6 +191,18 @@ async def test_sense_labels_round_trip(engine):
     assert sense.connotation == "neutral"
     # Multi-token grammar joins on the write path and splits back losslessly.
     assert sense.grammar == ["transitive", "verb + to-infinitive"]
+
+
+async def test_ipa_surfaces_on_sense_view(engine):
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    words = await repo.persist_result(_result("lead", ipa_uk="liːd", ipa_us="liːd"))
+    lex = await _reading_lexicon(engine, repo)
+    entry = await lex.get_entry(words[0].id)
+    sense = entry.senses[0]
+
+    assert sense.ipa_uk == "liːd"
+    assert sense.ipa_us == "liːd"
 
 
 # --- enum rejection at schema validation (closed vocab) --------------------

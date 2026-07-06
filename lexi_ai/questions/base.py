@@ -21,8 +21,7 @@ from lexi_ai.constants import ANSWER_KINDS, QUESTION_FORMATS
 from lexi_ai.read_models import Entry, Question, Score
 
 if TYPE_CHECKING:
-    from langchain_core.runnables import Runnable
-
+    from lexi_ai.llm import StructuredLLM
     from lexi_ai.questions.distractors import DistractorProvider
 
 
@@ -39,21 +38,39 @@ class QuestionStore(Protocol):
     async def delete(self, question_id: int) -> bool: ...
 
 
+class TtsPort(Protocol):
+    """The narrow audio-synthesis surface an audio plugin receives via ``ctx.tts``.
+
+    ``ensure_clip`` guarantees a clip exists for a source (cache-first over the
+    Phase 1 reference store) and returns its ``(source_kind, source_id, voice, fmt)``
+    reference tuple — NOT a row id, which would dangle after a purge. Returns
+    ``None`` when no clip can be made (e.g. the source text is gone), so the plugin
+    degrades rather than fabricating an asset. Kept to this one method so the plugin
+    contract stays decoupled from the Lexicon and Phase 1's read-model naming.
+    """
+
+    async def ensure_clip(
+        self, source_kind: str, source_id: int
+    ) -> tuple[str, int, str, str] | None: ...
+
+
 @dataclass
 class QuestionContext:
     """Capabilities the engine hands a plugin. A plugin uses only what it needs.
 
     ``entry`` is the done word being questioned (``None`` when grading, which needs
-    no entry). ``llm``/``judge`` are bound structured runnables for plugins that
-    generate or grade via an LLM; ``store`` is the persistence door for plugins
-    that choose to save their output.
+    no entry). ``llm``/``judge`` are structured LLM seams for plugins that generate
+    or grade via an LLM; ``store`` is the persistence door for plugins that choose
+    to save their output; ``tts`` is the audio-synthesis port for the audio formats
+    (``None`` → those formats are unavailable → ``[]``).
     """
 
     entry: Entry | None
     distractors: "DistractorProvider"
-    llm: "Runnable | None" = None
-    judge: "Runnable | None" = None
+    llm: "StructuredLLM | None" = None
+    judge: "StructuredLLM | None" = None
     store: "QuestionStore | None" = None
+    tts: "TtsPort | None" = None
 
 
 class QuestionFormat(Protocol):

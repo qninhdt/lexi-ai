@@ -78,8 +78,12 @@ class CamSense:
     domain: str | None
     cambridge_sense_id: int
     examples: list[str] = field(default_factory=list)
-    synonyms: list[str] = field(default_factory=list)
-    antonyms: list[str] = field(default_factory=list)
+    # Cambridge IPA, per POS (entries are POS-grouped), hard-anchored into the
+    # generation prompt so the LLM copies it (LLMs hallucinate IPA badly). None
+    # when Cambridge lacks it. Semantic relations (synonyms/antonyms) are NO
+    # LONGER anchored — the LLM generates relations itself (selective anchoring).
+    ipa_uk: str | None = None
+    ipa_us: str | None = None
 
 
 @dataclass
@@ -292,7 +296,7 @@ class CambridgeSource:
         senses: list[CamSense] = []
         sense_rows = conn.execute(
             "SELECT s.id, s.definition, s.guideword, s.cefr_level, s.domain, "
-            "       s.phrase_title, e.pos "
+            "       s.phrase_title, e.pos, e.pronunciation_uk, e.pronunciation_us "
             "FROM entries e JOIN senses s ON s.entry_id = e.id "
             "WHERE e.word_id = ? "
             "ORDER BY e.entry_order, s.sense_order",
@@ -306,12 +310,9 @@ class CambridgeSource:
                     (s["id"],),
                 ).fetchall()
             ]
-            syn_rows = conn.execute(
-                "SELECT synonym, is_antonym FROM sense_synonyms WHERE sense_id = ?",
-                (s["id"],),
-            ).fetchall()
-            synonyms = [r["synonym"] for r in syn_rows if not r["is_antonym"]]
-            antonyms = [r["synonym"] for r in syn_rows if r["is_antonym"]]
+            # Semantic relations (sense_synonyms) are deliberately NOT loaded — the
+            # LLM generates relations itself now (selective anchoring). Only IPA is
+            # hard-anchored, threaded through the SAME entries join (per POS).
             senses.append(
                 CamSense(
                     definition=s["definition"],
@@ -322,8 +323,8 @@ class CambridgeSource:
                     domain=s["domain"],
                     cambridge_sense_id=s["id"],
                     examples=examples,
-                    synonyms=synonyms,
-                    antonyms=antonyms,
+                    ipa_uk=s["pronunciation_uk"],
+                    ipa_us=s["pronunciation_us"],
                 )
             )
         return senses

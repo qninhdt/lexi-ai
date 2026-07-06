@@ -16,7 +16,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # LLM (OpenAI-compatible via LangChain, decision #10).
+    # LLM (OpenAI-compatible endpoint, decision #10).
     llm_base_url: str = "https://api.openai.com/v1"
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"

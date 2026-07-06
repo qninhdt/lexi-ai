@@ -1,8 +1,8 @@
 """Tests for the questions subsystem — the acceptance surface for the plan.
 
 No live LLM, no network: the contextual-MCQ generator and the rubric judge are
-fake ``Runnable``s returning canned schema objects, matching the existing suite's
-posture (see ``tests/test_generation.py``). In-memory SQLite with a shared
+fake ``StructuredLLM``s returning canned schema objects, matching the existing
+suite's posture (see ``tests/test_generation.py``). In-memory SQLite with a shared
 connection (StaticPool) backs persistence, like ``tests/test_repository.py``.
 
 Covers the six groups from the plan: plugin generation, grade helpers, the
@@ -11,7 +11,6 @@ and one-line extensibility, plus payload round-trip edges.
 """
 
 import pytest
-from langchain_core.runnables import RunnableLambda
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -21,10 +20,18 @@ from lexi_ai.models import Question as QuestionRow
 from lexi_ai.models import Sense, Word
 from lexi_ai.questions.base import REGISTRY, FormatSpec, QuestionContext, register
 from lexi_ai.questions.engine import QuestionEngine
-from lexi_ai.questions.formats import Cloze, ContextualMCQ, DefinitionMCQ, UseInSentence
+from lexi_ai.questions.formats import (
+    Cloze,
+    ContextualMCQ,
+    DefinitionMCQ,
+    Listening,
+    Matching,
+    Spelling,
+    UseInSentence,
+)
 from lexi_ai.questions.repository import QuestionRepository
 from lexi_ai.questions.schemas import GeneratedMCQ, Judgment
-from lexi_ai.questions.scoring import grade_single_choice, grade_text_span
+from lexi_ai.questions.scoring import grade_matching, grade_single_choice, grade_text_span
 from lexi_ai.read_models import Entry, Question, SenseView
 
 # --- fixtures + helpers ---------------------------------------------------
@@ -94,15 +101,44 @@ class FakeDistractors:
         return self._pool[:k]
 
 
+class _FakeLLM:
+    """Minimal ``StructuredLLM``: returns a canned object (or raises) per ``parse``,
+    ignoring the schema — the callback already returns the right type."""
+
+    def __init__(self, fn):
+        self._fn = fn
+
+    async def parse(self, messages, schema):
+        return await self._fn(messages)
+
+
 def _fake_llm(obj):
     async def _call(_messages):
         return obj
 
-    return RunnableLambda(_call)
+    return _FakeLLM(_call)
 
 
 def _mcq_ctx(entry, **kw):
     return QuestionContext(entry=entry, distractors=FakeDistractors(), **kw)
+
+
+class FakeTtsPort:
+    """A TtsPort stand-in: records the clips it was asked to ensure and returns a
+    reference tuple, no synthesis/network. ``missing`` returns ``None`` (the source
+    text was gone) so the plugin's no-clip degrade path is exercised."""
+
+    def __init__(self, *, voice="alloy", fmt="mp3", missing=False):
+        self._voice = voice
+        self._fmt = fmt
+        self._missing = missing
+        self.calls: list[tuple[str, int]] = []
+
+    async def ensure_clip(self, source_kind, source_id):
+        self.calls.append((source_kind, source_id))
+        if self._missing:
+            return None
+        return (source_kind, source_id, self._voice, self._fmt)
 
 
 async def _count(session_factory) -> int:
@@ -300,7 +336,7 @@ async def test_grade_rubric_raises_on_persistent_failure(session_factory):
     async def _boom(_messages):
         raise RuntimeError("judge down")
 
-    ctx = QuestionContext(entry=None, distractors=FakeDistractors(), judge=RunnableLambda(_boom))
+    ctx = QuestionContext(entry=None, distractors=FakeDistractors(), judge=_FakeLLM(_boom))
     with pytest.raises(RuntimeError, match="judge down"):
         await UseInSentence().grade(ctx, q, "some answer")
 
@@ -448,11 +484,22 @@ async def test_engine_is_blind_to_persistence(session_factory):
 # --- 5. registry / extensibility ------------------------------------------
 
 
-def test_registry_has_four_seed_formats():
-    assert set(REGISTRY) == {"definition_mcq", "cloze", "contextual_mcq", "use_in_sentence"}
+def test_registry_has_seed_formats():
+    assert set(REGISTRY) == {
+        "definition_mcq",
+        "cloze",
+        "contextual_mcq",
+        "use_in_sentence",
+        "matching",
+        "listening",
+        "spelling",
+    }
     assert REGISTRY["definition_mcq"].answer_kind == "single_choice"
     assert REGISTRY["cloze"].answer_kind == "text_span"
     assert REGISTRY["use_in_sentence"].answer_kind == "free_text"
+    assert REGISTRY["matching"].answer_kind == "matching"
+    assert REGISTRY["listening"].answer_kind == "single_choice"
+    assert REGISTRY["spelling"].answer_kind == "text_span"
 
 
 def test_register_rejects_out_of_vocab_format():
@@ -520,6 +567,235 @@ async def test_one_line_extensibility_new_plugin(session_factory):
         REGISTRY.pop("dummy_reverse", None)
         constants.QUESTION_FORMATS = original_formats
         base.QUESTION_FORMATS = original_formats
+
+
+# --- 5b. matching format (rule, new answer_kind) --------------------------
+
+
+def _multi_sense_entry(word_id, *, norm="set", guides_defs=None) -> Entry:
+    """A done entry with N guideworded senses — the matching format's input."""
+    guides_defs = guides_defs or [
+        ("PUT", "to place something in a position"),
+        ("READY", "to prepare or arrange for use"),
+        ("GROUP", "a collection of similar things"),
+    ]
+    return Entry(
+        display=norm,
+        norm=norm,
+        entry_type="word",
+        pos="verb",
+        status="done",
+        word_id=word_id,
+        senses=[
+            SenseView(
+                definition=d,
+                tier="core",
+                pos="verb",
+                cefr_level=None,
+                guideword=g,
+                sense_id=i,
+            )
+            for i, (g, d) in enumerate(guides_defs, start=1)
+        ],
+    )
+
+
+def test_matching_registered_with_own_answer_kind():
+    assert REGISTRY["matching"].answer_kind == "matching"
+    plugin = Matching()
+    assert plugin.format == "matching" and plugin.answer_kind == "matching"
+
+
+async def test_matching_pairs_guidewords_to_definitions(session_factory):
+    wid, _sid = await _seed_word(session_factory)
+    guides_defs = [
+        ("PUT", "to place something in a position"),
+        ("READY", "to prepare or arrange for use"),
+        ("GROUP", "a collection of similar things"),
+    ]
+    entry = _multi_sense_entry(wid, guides_defs=guides_defs)
+    qs = await Matching().generate(_mcq_ctx(entry), n=1)
+    assert len(qs) == 1
+    p = qs[0].payload
+    assert qs[0].answer_kind == "matching"
+    # Cue column is the guidewords in stable sense order.
+    assert p["lefts"] == ["PUT", "READY", "GROUP"]
+    # Definition column holds exactly the definitions (shuffled — a permutation).
+    defs = [d for _g, d in guides_defs]
+    assert sorted(p["rights"]) == sorted(defs)
+    # correct_map is a permutation aligning each left to its OWN definition.
+    assert sorted(p["correct_map"]) == [0, 1, 2]
+    defs_by_guide = dict(guides_defs)
+    for i, g in enumerate(p["lefts"]):
+        assert p["rights"][p["correct_map"][i]] == defs_by_guide[g]
+
+
+async def test_matching_single_sense_returns_empty(session_factory):
+    wid, sid = await _seed_word(session_factory)
+    # The default single-sense entry has nothing to match against -> [].
+    qs = await Matching().generate(_mcq_ctx(_entry(wid, sid)), n=1)
+    assert qs == []
+
+
+async def test_matching_requires_guidewords(session_factory):
+    wid, _sid = await _seed_word(session_factory)
+    # Two senses but no guidewords -> no cue column -> [] (no fabricated cues).
+    entry = _multi_sense_entry(wid, guides_defs=[("PUT", "def one"), ("READY", "def two")])
+    for s in entry.senses:
+        s.guideword = None
+    qs = await Matching().generate(_mcq_ctx(entry), n=1)
+    assert qs == []
+
+
+async def test_matching_option_order_is_deterministic(session_factory):
+    wid, _sid = await _seed_word(session_factory)
+    entry = _multi_sense_entry(wid)
+    a = await Matching().generate(_mcq_ctx(entry), n=1)
+    b = await Matching().generate(_mcq_ctx(entry), n=1)
+    assert a[0].payload["rights"] == b[0].payload["rights"]  # seeded shuffle, stable
+
+
+def _matching_question(lefts, rights, correct_map) -> Question:
+    return Question(
+        id=None,
+        word_id=1,
+        sense_id=None,
+        format="matching",
+        answer_kind="matching",
+        payload={"prompt": "Match each.", "lefts": lefts, "rights": rights,
+                 "correct_map": correct_map},
+    )
+
+
+async def test_grade_matching_all_correct():
+    q = _matching_question(["a", "b", "c"], ["A", "B", "C"], [0, 1, 2])
+    score = await grade_matching(q, [0, 1, 2])
+    assert score.correct is True and score.score == 1.0 and score.kind == "rule"
+
+
+async def test_grade_matching_partial_credit():
+    q = _matching_question(["a", "b", "c", "d"], ["A", "B", "C", "D"], [0, 1, 2, 3])
+    # two of four right -> 0.5, not fully correct
+    score = await grade_matching(q, [0, 1, 3, 2])
+    assert score.correct is False and score.score == 0.5
+
+
+async def test_grade_matching_order_independent_via_correct_map():
+    # A shuffled right column is encoded in correct_map; submitting correct_map
+    # back scores full regardless of display order (grading compares indices).
+    q = _matching_question(["a", "b", "c"], ["C", "A", "B"], [1, 2, 0])
+    score = await grade_matching(q, [1, 2, 0])
+    assert score.correct is True and score.score == 1.0
+
+
+async def test_grade_matching_wrong_length_is_wrong_not_error():
+    q = _matching_question(["a", "b"], ["A", "B"], [0, 1])
+    score = await grade_matching(q, [0])  # too short — scored, not raised
+    assert score.correct is False and score.kind == "rule"
+
+
+# --- 5b. audio formats: listening + spelling ------------------------------
+
+
+def test_listening_and_spelling_registered():
+    assert REGISTRY["listening"].answer_kind == "single_choice"
+    assert REGISTRY["spelling"].answer_kind == "text_span"
+    assert Listening().answer_kind == "single_choice"
+    assert Spelling().answer_kind == "text_span"
+
+
+async def test_listening_carries_audio_ref_tuple_not_row_id(session_factory):
+    wid, sid = await _seed_word(session_factory)
+    tts = FakeTtsPort()
+    qs = await Listening().generate(_mcq_ctx(_entry(wid, sid), tts=tts), n=1)
+    assert len(qs) == 1
+    p = qs[0].payload
+    assert qs[0].answer_kind == "single_choice"
+    # The clip was requested for the core sense's definition audio.
+    assert tts.calls == [("sense_def", sid)]
+    # The payload stores the (source_kind, source_id, voice, fmt) REFERENCE tuple,
+    # never a raw assets-row id (a row id dangles after a purge).
+    ref = p["audio_ref"]
+    assert ref == {"source_kind": "sense_def", "source_id": sid, "voice": "alloy", "fmt": "mp3"}
+    # It is a single_choice MCQ: the answer word is among the options.
+    assert p["options"][p["correct_index"]] == "eloquent"
+    assert len(p["options"]) == 4
+
+
+async def test_spelling_carries_audio_ref_and_answer_norm(session_factory):
+    wid, sid = await _seed_word(session_factory)
+    tts = FakeTtsPort()
+    qs = await Spelling().generate(_mcq_ctx(_entry(wid, sid), tts=tts), n=1)
+    assert len(qs) == 1
+    p = qs[0].payload
+    assert qs[0].answer_kind == "text_span"
+    assert tts.calls == [("sense_def", sid)]
+    assert p["audio_ref"] == {
+        "source_kind": "sense_def",
+        "source_id": sid,
+        "voice": "alloy",
+        "fmt": "mp3",
+    }
+    assert p["answer_norm"] == "eloquent"
+
+
+async def test_listening_without_tts_is_unavailable(session_factory):
+    wid, sid = await _seed_word(session_factory)
+    # ctx.tts is None -> format unavailable -> [] (best-effort, no raise).
+    qs = await Listening().generate(_mcq_ctx(_entry(wid, sid)), n=1)
+    assert qs == []
+
+
+async def test_spelling_without_tts_is_unavailable(session_factory):
+    wid, sid = await _seed_word(session_factory)
+    qs = await Spelling().generate(_mcq_ctx(_entry(wid, sid)), n=1)
+    assert qs == []
+
+
+async def test_audio_formats_degrade_when_clip_cannot_be_made(session_factory):
+    wid, sid = await _seed_word(session_factory)
+    # The port cannot make a clip (source text gone) -> no fabricated asset -> [].
+    tts = FakeTtsPort(missing=True)
+    assert await Listening().generate(_mcq_ctx(_entry(wid, sid), tts=tts), n=1) == []
+    assert await Spelling().generate(_mcq_ctx(_entry(wid, sid), tts=tts), n=1) == []
+
+
+async def test_listening_degrades_when_no_distractors(session_factory):
+    wid, sid = await _seed_word(session_factory)
+    ctx = QuestionContext(
+        entry=_entry(wid, sid), distractors=FakeDistractors(pool=[]), tts=FakeTtsPort()
+    )
+    assert await Listening().generate(ctx, n=1) == []  # no options -> no question
+
+
+async def test_listening_grades_by_index_shared_helper(session_factory):
+    wid, sid = await _seed_word(session_factory)
+    tts = FakeTtsPort()
+    q = (await Listening().generate(_mcq_ctx(_entry(wid, sid), tts=tts), n=1))[0]
+    ctx = QuestionContext(entry=None, distractors=FakeDistractors())
+    score = await Listening().grade(ctx, q, q.payload["correct_index"])
+    assert score.correct is True and score.kind == "rule"  # same rule helper as MCQ
+
+
+async def test_spelling_grades_by_matchkey_shared_helper(session_factory):
+    wid, sid = await _seed_word(session_factory)
+    tts = FakeTtsPort()
+    q = (await Spelling().generate(_mcq_ctx(_entry(wid, sid), tts=tts), n=1))[0]
+    ctx = QuestionContext(entry=None, distractors=FakeDistractors())
+    assert (await Spelling().grade(ctx, q, "ELOQUENT")).correct is True  # case folds
+    assert (await Spelling().grade(ctx, q, "wrong")).correct is False
+
+
+async def test_audio_grading_independent_of_ref_resolvability(session_factory):
+    # A stored audio_ref that no longer resolves (clip purged / source regenerated)
+    # must NOT block grading: grading is index/text based and never touches the clip.
+    wid, sid = await _seed_word(session_factory)
+    tts = FakeTtsPort()
+    lq = (await Listening().generate(_mcq_ctx(_entry(wid, sid), tts=tts), n=1))[0]
+    sq = (await Spelling().generate(_mcq_ctx(_entry(wid, sid), tts=tts), n=1))[0]
+    ctx = QuestionContext(entry=None, distractors=FakeDistractors())  # no tts at grade time
+    assert (await Listening().grade(ctx, lq, lq.payload["correct_index"])).correct is True
+    assert (await Spelling().grade(ctx, sq, "eloquent")).correct is True
 
 
 # --- 6. payload round-trip edges ------------------------------------------

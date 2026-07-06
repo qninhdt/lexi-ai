@@ -21,6 +21,8 @@ Do NOT over-split same-meaning variants. Do NOT merge unrelated meanings.
 WORD REFERENCES (emit as `related` items — they are NORMALIZED to real entries, so give a clean canonical `norm`: US spelling, {sb}/{sth}/{one's}/{oneself} placeholders, never junk):
 - word_family: derivational/inflectional relatives of the headword (happy -> happiness, happily, unhappy). Use rel_type="word_family".
 - confused_with: commonly-confused near-forms learners mix up (affect <-> effect, advice <-> advise). Use rel_type="confused_with".
+- hypernym: a broader category the headword belongs to (dog -> animal, rose -> flower). Use rel_type="hypernym".
+- hyponym: a more specific kind of the headword (dog -> poodle, flower -> rose). Use rel_type="hyponym".
 
 TIER RUBRIC:
 Assign each sense exactly one tier:

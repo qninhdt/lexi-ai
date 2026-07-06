@@ -124,6 +124,25 @@ class GeneratedSense(BaseModel):
             "(make a decision, heavy rain) — each an illustrative phrase, not a headword."
         ),
     )
+    # IPA is hard-anchored from Cambridge in the prompt (per POS). COPY the anchored
+    # value verbatim when shown; generate it ONLY for out-of-Cambridge words
+    # (neologisms, proper nouns) where no anchor exists — LLMs hallucinate IPA badly.
+    ipa_uk: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "UK IPA pronunciation (e.g. /ˈbʊk/). COPY the anchored 'ipa: UK ...' value "
+            "when the prompt shows one; only synthesize when Cambridge lacks it."
+        ),
+    )
+    ipa_us: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "US IPA pronunciation. COPY the anchored 'ipa: ... US ...' value when the "
+            "prompt shows one; only synthesize when Cambridge lacks it."
+        ),
+    )
 
 
 class GeneratedAlias(BaseModel):

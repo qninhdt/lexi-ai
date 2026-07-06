@@ -139,6 +139,11 @@ class Sense(Base):
     pos: Mapped[str | None] = mapped_column(String(32))
     # Cambridge-first, LLM fallback (decision #13).
     cefr_level: Mapped[str | None] = mapped_column(String(8))
+    # IPA pronunciation per POS (senses carry pos; Cambridge entries are POS-grouped,
+    # so per-sense IPA folds heteronyms in naturally). Cambridge-anchored, LLM
+    # fallback for out-of-Cambridge words. Sanitized through _clean on write.
+    ipa_uk: Mapped[str | None] = mapped_column(String(64))
+    ipa_us: Mapped[str | None] = mapped_column(String(64))
 
     # Learner-dictionary enrichments (best-effort, null when unmarked). ``grammar``
     # holds a comma-joined set of schema-validated GRAMMAR_LABELS tokens (never
@@ -330,23 +335,34 @@ class ThemedExample(Base):
 
 
 class Asset(Base):
-    """A content-addressed derived asset (translation text, TTS clip).
+    """A reference-addressed derived asset (translation text, TTS clip).
 
-    Identity is ``(content_hash, kind, params)`` — the hash of the EXACT source
-    text plus a normalized param token. No FK to senses/words: the source is
-    identified by its CONTENT, not its location, so themed vs neutral text hash
-    differently (distinct rows) and identical text dedups for free. ``text_value``
-    holds inline results (translation); ``file_path`` points at a binary clip
-    (TTS) relative to ``LEXI_ASSET_CACHE_DIR``.
+    Identity is ``(source_kind, source_id, kind, params)`` — the source row this
+    asset derives from (e.g. ``sense_def``/``42``) plus the asset kind and a
+    normalized param token. A consumer holding a ``sense_id`` can look its
+    translation/audio up directly. ``content_hash`` is NOT part of the identity;
+    it stores the sha256 of the source text AT WRITE TIME and is VERIFIED on read
+    so a reused/regenerated ``source_id`` yields a miss (regenerate), never
+    poisoned content. ``text_value`` holds inline results (translation);
+    ``file_path`` points at a binary clip (TTS) relative to ``LEXI_ASSET_CACHE_DIR``.
+
+    No cross-table FK on ``source_id`` (the source may be a sense, example, or
+    collocation depending on ``source_kind``); the read-time hash verify — not a
+    FK cascade — is the correctness guarantee. Cascade-on-delete is best-effort GC.
     """
 
     __tablename__ = "assets"
-    __table_args__ = (UniqueConstraint("content_hash", "kind", "params", name="uq_asset_identity"),)
+    __table_args__ = (
+        UniqueConstraint("source_kind", "source_id", "kind", "params", name="uq_asset_identity"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)  # ∈ SOURCE_KINDS
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)  # ∈ ASSET_KINDS
     params: Mapped[str] = mapped_column(String(64), nullable=False)
+    # sha256 of the source text at write time — VERIFIED on read, never identity.
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     text_value: Mapped[str | None] = mapped_column(Text)
     file_path: Mapped[str | None] = mapped_column(Text)
     meta: Mapped[str | None] = mapped_column(Text)  # optional app-JSON

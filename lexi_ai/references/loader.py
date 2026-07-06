@@ -18,7 +18,6 @@ class ReferenceBundle:
     cambridge_word_id: int | None
     cambridge_senses: list[CamSense] = field(default_factory=list)
     cambridge_alternatives: list[tuple[str, str]] = field(default_factory=list)
-    cambridge_synonyms: list[str] = field(default_factory=list)
     wordnet_synsets: list[WnSense] = field(default_factory=list)
 
     @property
@@ -91,14 +90,11 @@ class ReferenceLoader:
         else:
             synsets = await self._wordnet.lookup(cam.display_form)
 
-        synonyms = sorted({syn for s in cam.senses for syn in s.synonyms})
-
         return ReferenceBundle(
             word_raw=cam.display_form,
             entry_type=cam.entry_type,
             cambridge_word_id=cam.word_id,
             cambridge_senses=cam.senses,
             cambridge_alternatives=cam.alternatives,
-            cambridge_synonyms=synonyms,
             wordnet_synsets=synsets,
         )

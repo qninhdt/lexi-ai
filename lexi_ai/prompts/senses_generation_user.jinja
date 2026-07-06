@@ -4,15 +4,12 @@ CAMBRIDGE entry: {{ cambridge_word_raw }}{% if cambridge_entry_type %}  [entry_t
 {% for s in cambridge_senses %}
   sense#{{ s.cambridge_sense_id }} (pos={{ s.pos }}, cefr={{ s.cefr_level }}{% if s.guideword %}, guideword={{ s.guideword }}{% endif %})
     def: {{ s.definition }}
+    {% if s.ipa_uk or s.ipa_us %}
+    ipa:{% if s.ipa_uk %} UK /{{ s.ipa_uk }}/{% endif %}{% if s.ipa_us %} US /{{ s.ipa_us }}/{% endif %}
+    {% endif %}
     {% for ex in s.examples[:3] %}
     ex: {{ ex }}
     {% endfor %}
-    {% if s.synonyms %}
-    syn: {{ s.synonyms[:8] | join(', ') }}
-    {% endif %}
-    {% if s.antonyms %}
-    ant: {{ s.antonyms[:8] | join(', ') }}
-    {% endif %}
 {% else %}
   (no entry found)
 {% endfor %}
@@ -23,9 +20,6 @@ CAMBRIDGE entry: {{ cambridge_word_raw }}{% if cambridge_entry_type %}  [entry_t
 WORDNET synsets:
 {% for s in wordnet_synsets %}
   {{ s.name }} (pos={{ s.pos }}): {{ s.definition }}
-    {% if s.lemmas %}
-    lemmas: {{ s.lemmas[:8] | join(', ') }}
-    {% endif %}
     {% for ex in s.examples[:2] %}
     ex: {{ ex }}
     {% endfor %}
