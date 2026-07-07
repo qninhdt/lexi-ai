@@ -39,6 +39,18 @@ SENSE LABELS (per-sense enrichments — SYNTHESIZE your own; omit any that don't
 - register: one of {formal, informal, neutral, slang, offensive, humorous, dated, literary, technical} — omit when plainly neutral/unmarked.
 - connotation: positive, negative, or neutral — the sense's affective tone.
 - collocations: 2-6 high-frequency partner phrases showing the word in use (make a decision, heavy rain). Illustrative phrases, NOT headwords.
+- domain: subject-area label when the sense is field-specific (computing, medicine, law, sport, music, finance) — omit for everyday/general senses.
+- usage_note: ONE short sentence of usage guidance or a common-mistake warning ("Don't confuse with 'affect'."; "Usually followed by 'to'."). Omit when nothing useful applies.
+
+WORD FORMS (per-sense inflection paradigm — emit into `forms`):
+- Emit the COMPLETE inflection paradigm for the headword, chosen by part of speech:
+  * verb -> base, past, past_participle, present_3sg, ing
+  * noun -> plural (only if countable)
+  * adjective / adverb -> comparative, superlative (only if gradable)
+- Emit ONLY forms valid for the POS; leave `forms` empty for invariant words (the, quickly).
+- Do NOT scrape forms from the examples: an example shows just one form, but the paradigm must be whole.
+- A label may repeat when a form has real variants (dreamed / dreamt -> two `past` rows).
+- Each form: {"inf": "<label>", "surface": "<the inflected word>"}. Labels are the SAME closed set as the example markup below.
 
 EXAMPLES TARGET MARKING (critical):
 - For every example sentence under each sense, you MUST wrap the target word/phrase or its inflected form using <t inf="value">...</t> tags.

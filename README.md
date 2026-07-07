@@ -18,8 +18,14 @@ cost zero tokens.
 - **Pronunciation** — each sense carries per-POS IPA (`ipa_uk` / `ipa_us`),
   anchored from Cambridge and surfaced on `SenseView`.
 - **Word enrichment** — each entry carries learner-dictionary labels (guideword,
-  grammar, register, connotation, collocations) and word-reference links
-  (word-family, confused-with, hypernym, hyponym), all emitted in the same LLM call.
+  grammar, register, connotation, collocations, domain, usage note) and
+  word-reference links (word-family, confused-with, hypernym, hyponym), all emitted
+  in the same LLM call.
+- **Inflection forms** — each sense carries its complete grammatical paradigm
+  (`run` → ran/running/runs; `good` → better/best), emitted per POS by the LLM and
+  surfaced on `SenseView.forms`. Example sentences tag the target word with its
+  inflection (`<t inf="past">glistened</t>`) for display highlighting and cloze
+  blanking; `parse_marked_example`/`strip_markup` read the tags.
 - **Topic tags & semantic search** — browse words by open-vocabulary topic tags,
   or rank senses by meaning with local embeddings (optional extra).
 - **Themes** — restyle an entry's definitions and examples in a named voice
@@ -33,9 +39,12 @@ cost zero tokens.
   `content_hash` verified on read — so a regenerated or reused source yields a clean
   miss (never stale content), and a repeat call spends zero tokens.
 - **Question engine** — turn a generated word into vocabulary questions across
-  seven formats and grade answers. Each format is a self-contained plugin owning
-  its own generation, grading, and persistence; the engine is a pure dispatcher.
-  Covers rule-based and LLM-based generation and grading (see below).
+  nine formats and grade answers. Each format is a self-contained plugin (one
+  module under `questions/formats/`) owning its own generation, grading, and
+  persistence; the engine is a pure dispatcher. Covers rule-based and LLM-based
+  generation and grading (see below). Text-span grading (cloze, spelling,
+  collocation-fill) accepts a sense's inflected forms, so a learner typing `ran`
+  for `run` scores correct.
 - **Portable storage** — one schema runs on both SQLite and Postgres (portable
   column types only, no JSONB/ARRAY/native enum).
 

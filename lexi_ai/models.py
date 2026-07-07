@@ -153,6 +153,11 @@ class Sense(Base):
     grammar: Mapped[str | None] = mapped_column(String(128))
     register: Mapped[str | None] = mapped_column(String(32))
     connotation: Mapped[str | None] = mapped_column(String(16))
+    # ``domain`` = open-ended subject-area label (computing, medicine, law) — free
+    # text, not an enum (the field set is unbounded). ``usage_note`` = one-line
+    # usage / confusable hint ("don't confuse with affect"). Both sanitized on write.
+    domain: Mapped[str | None] = mapped_column(String(64))
+    usage_note: Mapped[str | None] = mapped_column(String(255))
 
     # Semantic-search vector: float32 little-endian BLOB (portable — SQLite BLOB /
     # Postgres BYTEA, no pgvector). Best-effort: null until an embedder runs.
@@ -174,6 +179,11 @@ class Sense(Base):
         passive_deletes=True,
     )
     collocations: Mapped[list["Collocation"]] = relationship(
+        back_populates="sense",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    forms: Mapped[list["SenseForm"]] = relationship(
         back_populates="sense",
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -224,6 +234,29 @@ class Collocation(Base):
     collocation_order: Mapped[int] = mapped_column(Integer, default=0)
 
     sense: Mapped["Sense"] = relationship(back_populates="collocations")
+
+
+class SenseForm(Base):
+    """An inflected form of a sense's headword (run -> ran/running/runs).
+
+    The model emits the FULL paradigm per POS directly (verb: base/past/
+    past_participle/present_3sg/ing; noun: plural; adjective: comparative/
+    superlative), so this is not scraped from examples — an example uses only one
+    form, but the paradigm must be complete. One row per (inf, surface); a label
+    may repeat when a form has variants (dreamed / dreamt). Mirrors ``examples``/
+    ``collocations`` as an ordered child table rather than a column."""
+
+    __tablename__ = "sense_forms"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sense_id: Mapped[int] = mapped_column(
+        ForeignKey("senses.id", ondelete="CASCADE"), nullable=False
+    )
+    inf: Mapped[str] = mapped_column(String(24), nullable=False)  # ∈ INFLECTION_LABELS
+    surface: Mapped[str] = mapped_column(Text, nullable=False)
+    form_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    sense: Mapped["Sense"] = relationship(back_populates="forms")
 
 
 class Tag(Base):

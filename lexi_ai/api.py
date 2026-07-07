@@ -32,6 +32,7 @@ from lexi_ai.read_models import (
     Asset,
     BatchResult,
     Entry,
+    FormView,
     LinkView,
     ReferenceView,
     SearchResult,
@@ -271,6 +272,7 @@ class Lexicon:
                         selectinload(Sense.references),
                         selectinload(Sense.examples),
                         selectinload(Sense.collocations),
+                        selectinload(Sense.forms),
                     )
                     .where(Sense.id.in_(sense_ids))
                 )
@@ -291,6 +293,10 @@ class Lexicon:
             references=[
                 ReferenceView(source=r.source, source_ref=r.source_ref) for r in s.references
             ],
+            forms=[
+                FormView(inf=f.inf, surface=f.surface)
+                for f in sorted(s.forms, key=lambda f: f.form_order)
+            ],
             guideword=s.guideword,
             grammar=s.grammar.split(",") if s.grammar else [],
             register=s.register,
@@ -298,6 +304,8 @@ class Lexicon:
             collocations=[
                 c.text for c in sorted(s.collocations, key=lambda c: c.collocation_order)
             ],
+            domain=s.domain,
+            usage_note=s.usage_note,
             sense_id=s.id,
         )
 
@@ -1012,6 +1020,7 @@ class Lexicon:
                         selectinload(Word.senses).selectinload(Sense.references),
                         selectinload(Word.senses).selectinload(Sense.examples),
                         selectinload(Word.senses).selectinload(Sense.collocations),
+                        selectinload(Word.senses).selectinload(Sense.forms),
                         selectinload(Word.aliases),
                         selectinload(Word.links_out).selectinload(EntryLink.to_word),
                         selectinload(Word.tags).selectinload(WordTag.tag),
@@ -1054,6 +1063,10 @@ class Lexicon:
                         ReferenceView(source=r.source, source_ref=r.source_ref)
                         for r in s.references
                     ],
+                    forms=[
+                        FormView(inf=f.inf, surface=f.surface)
+                        for f in sorted(s.forms, key=lambda f: f.form_order)
+                    ],
                     guideword=s.guideword,
                     # Stored comma-joined (a join of validated tokens or None);
                     # split back to a list, None -> [].
@@ -1063,6 +1076,8 @@ class Lexicon:
                     collocations=[
                         c.text for c in sorted(s.collocations, key=lambda c: c.collocation_order)
                     ],
+                    domain=s.domain,
+                    usage_note=s.usage_note,
                     sense_id=s.id,
                 )
                 for s in senses

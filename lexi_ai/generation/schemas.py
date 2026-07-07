@@ -32,6 +32,7 @@ from lexi_ai.constants import (
     DIALECTS,
     ENTRY_TYPES,
     GRAMMAR_LABELS,
+    INFLECTION_LABELS,
     REFERENCE_SOURCES,
     REGISTERS,
     REL_TYPES,
@@ -48,6 +49,7 @@ _SourceLit = Literal[tuple(sorted(REFERENCE_SOURCES))]
 _GrammarLit = Literal[tuple(sorted(GRAMMAR_LABELS))]
 _RegisterLit = Literal[tuple(sorted(REGISTERS))]
 _ConnotationLit = Literal[tuple(sorted(CONNOTATIONS))]
+_InfLit = Literal[tuple(sorted(INFLECTION_LABELS))]
 
 # ``GeneratedSense.register`` mirrors the ``senses.register`` column and
 # ``SenseView.register`` — renaming it to dodge the shadow would drift those
@@ -70,6 +72,14 @@ class GeneratedReference(BaseModel):
             "use the synset key (e.g. 'book.n.01')."
         )
     )
+
+
+class GeneratedForm(BaseModel):
+    """One inflected surface + its label. ``inf`` is a closed-vocab enum
+    (INFLECTION_LABELS); ``surface`` is bounded free text sanitized on write."""
+
+    inf: _InfLit = Field(description="Inflection label; must match the POS paradigm.")
+    surface: str = Field(max_length=64, description="The inflected surface form.")
 
 
 class GeneratedSense(BaseModel):
@@ -116,6 +126,23 @@ class GeneratedSense(BaseModel):
     connotation: _ConnotationLit | None = Field(
         default=None, description="Affective polarity: positive | negative | neutral."
     )
+    domain: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Subject-area / field label when the sense is domain-specific "
+            "(computing, medicine, law, sport, music). Omit for everyday senses."
+        ),
+    )
+    usage_note: str | None = Field(
+        default=None,
+        max_length=255,
+        description=(
+            "One short usage or confusable hint when helpful "
+            "(e.g. \"often confused with 'affect'\"; \"usually in the passive\"). "
+            "Omit when nothing notable."
+        ),
+    )
     collocations: list[str] = Field(
         default_factory=list,
         max_length=12,
@@ -141,6 +168,18 @@ class GeneratedSense(BaseModel):
         description=(
             "US IPA pronunciation. COPY the anchored 'ipa: ... US ...' value when the "
             "prompt shows one; only synthesize when Cambridge lacks it."
+        ),
+    )
+    forms: list[GeneratedForm] = Field(
+        default_factory=list,
+        max_length=16,
+        description=(
+            "The COMPLETE inflection paradigm for this sense's headword, chosen by POS: "
+            "verb -> base, past, past_participle, present_3sg, ing; "
+            "noun -> plural; adjective/adverb -> comparative, superlative. "
+            "Emit ONLY the forms valid for the POS; do NOT scrape from the examples "
+            "(an example uses one form, but the paradigm must be whole). A label may "
+            "repeat when a form has variants (dreamed / dreamt). Omit for invariant words."
         ),
     )
 

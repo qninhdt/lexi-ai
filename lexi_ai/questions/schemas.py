@@ -61,10 +61,15 @@ class MCQPayload(BaseModel):
 
 
 class ClozePayload(BaseModel):
-    """Payload for the ``cloze`` text-span format."""
+    """Payload for the ``cloze`` text-span format.
+
+    ``accepted_forms`` are extra surfaces the grader folds equal to the answer
+    (the sense's inflected forms), so a learner typing ``ran`` for ``run`` scores
+    right without touching ``match_key``. Empty when the sense has no forms."""
 
     stem_with_blank: str = Field(min_length=1, max_length=512)
     answer_norm: str = Field(min_length=1, max_length=128)
+    accepted_forms: list[str] = Field(default_factory=list)
 
 
 class UseInSentencePayload(BaseModel):
@@ -140,3 +145,4 @@ class SpellingPayload(BaseModel):
     prompt: str = Field(min_length=1, max_length=512)
     audio_ref: AudioRef
     answer_norm: str = Field(min_length=1, max_length=128)
+    accepted_forms: list[str] = Field(default_factory=list)

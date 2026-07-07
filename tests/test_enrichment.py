@@ -17,11 +17,12 @@ from lexi_ai.constants import GRAMMAR_LABELS
 from lexi_ai.db import create_session_factory, init_models
 from lexi_ai.generation.schemas import (
     GeneratedEntry,
+    GeneratedForm,
     GeneratedResult,
     GeneratedSense,
     RelatedWord,
 )
-from lexi_ai.models import Collocation, EntryLink, Word
+from lexi_ai.models import Collocation, EntryLink, SenseForm, Word
 from lexi_ai.normalize import match_key
 from lexi_ai.persistence.repository import Repository
 
@@ -58,10 +59,14 @@ def _result(
     collocations: list[str] | None = None,
     ipa_uk: str | None = None,
     ipa_us: str | None = None,
+    forms: list[tuple[str, str]] | None = None,
+    domain: str | None = None,
+    usage_note: str | None = None,
 ) -> GeneratedResult:
     """One-unit result whose single sense carries the given enrichments.
 
     ``related`` is a list of ``(norm, rel_type)`` pairs -> word-references.
+    ``forms`` is a list of ``(inf, surface)`` pairs -> inflection paradigm.
     """
     return GeneratedResult(
         units=[
@@ -79,6 +84,9 @@ def _result(
                         collocations=collocations or [],
                         ipa_uk=ipa_uk,
                         ipa_us=ipa_us,
+                        forms=[GeneratedForm(inf=i, surface=s) for i, s in (forms or [])],
+                        domain=domain,
+                        usage_note=usage_note,
                     )
                 ],
                 related=[RelatedWord(norm=n, rel_type=rt) for n, rt in (related or [])],
@@ -275,6 +283,9 @@ async def test_empty_enrichment_persists_done(engine):
     assert sense.register is None
     assert sense.connotation is None
     assert sense.collocations == []
+    assert sense.forms == []
+    assert sense.domain is None
+    assert sense.usage_note is None
 
 
 # --- eager-load: collocations survive session close ------------------------
@@ -323,3 +334,97 @@ async def test_word_family_count_and_no_self_link(engine):
             )
         ).scalar()
     assert n == 0  # self-reference skipped
+
+
+# --- inflection forms: paradigm round-trip + ordering + sanitization --------
+
+
+async def test_forms_round_trip_ordered(engine):
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    words = await repo.persist_result(
+        _result(
+            "run",
+            forms=[
+                ("base", "run"),
+                ("past", "ran"),
+                ("past_participle", "run"),
+                ("present_3sg", "runs"),
+                ("ing", "running"),
+            ],
+        )
+    )
+    lex = await _reading_lexicon(engine, repo)
+    entry = await lex.get_entry(words[0].id)
+    forms = entry.senses[0].forms
+
+    # Full paradigm surfaces in emit order, each (inf, surface) preserved.
+    assert [(f.inf, f.surface) for f in forms] == [
+        ("base", "run"),
+        ("past", "ran"),
+        ("past_participle", "run"),
+        ("present_3sg", "runs"),
+        ("ing", "running"),
+    ]
+
+
+async def test_forms_sanitized_and_empty_skipped(engine):
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    words = await repo.persist_result(
+        _result(
+            "dream",
+            forms=[("past", "dreamed"), ("past", "dream\x00t"), ("ing", "   ")],
+        )
+    )
+    async with create_session_factory(engine)() as s:
+        rows = list(
+            (await s.execute(select(SenseForm).order_by(SenseForm.form_order))).scalars()
+        )
+    # NUL collapsed to space; whitespace-only surface dropped; a repeated label
+    # (dreamed/dreamt) is allowed — forms is a flat list, not a dict.
+    assert [(r.inf, r.surface) for r in rows] == [("past", "dreamed"), ("past", "dream t")]
+    assert all("\x00" not in r.surface for r in rows)
+    assert words[0].status == "done"
+
+
+def test_forms_inf_rejects_out_of_vocab():
+    with pytest.raises(ValueError):
+        GeneratedForm(inf="gerundive", surface="x")
+
+
+# --- domain + usage_note: free-text round-trip + sanitization --------------
+
+
+async def test_domain_and_usage_note_round_trip(engine):
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    words = await repo.persist_result(
+        _result(
+            "cache",
+            domain="computing",
+            usage_note="In tech, distinct from 'cash' (money).",
+        )
+    )
+    lex = await _reading_lexicon(engine, repo)
+    sense = (await lex.get_entry(words[0].id)).senses[0]
+
+    assert sense.domain == "computing"
+    assert sense.usage_note == "In tech, distinct from 'cash' (money)."
+
+
+async def test_domain_usage_note_sanitized_and_empty_is_none(engine):
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    words = await repo.persist_result(
+        _result("mixed", domain="med\x00icine", usage_note="line\none")
+    )
+    plain = await repo.persist_result(_result("bare"))  # neither field
+    lex = await _reading_lexicon(engine, repo)
+
+    marked = (await lex.get_entry(words[0].id)).senses[0]
+    assert marked.domain == "med icine"  # NUL collapsed to space
+    assert marked.usage_note == "line one"  # newline collapsed
+
+    bare = (await lex.get_entry(plain[0].id)).senses[0]
+    assert bare.domain is None and bare.usage_note is None

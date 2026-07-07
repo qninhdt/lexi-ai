@@ -36,6 +36,7 @@ from lexi_ai.models import (
     EntryLink,
     Example,
     Sense,
+    SenseForm,
     SenseReference,
     Tag,
     Theme,
@@ -437,6 +438,14 @@ class Repository:
                 ipa_us=self._clean(gen_sense.ipa_us, self._MAX_IPA) or None
                 if gen_sense.ipa_us
                 else None,
+                # domain (subject-area) + usage_note (one-line hint): free LLM text
+                # -> sanitize; empty -> None so the read side yields None.
+                domain=self._clean(gen_sense.domain, self._MAX_DOMAIN) or None
+                if gen_sense.domain
+                else None,
+                usage_note=self._clean(gen_sense.usage_note, self._MAX_USAGE_NOTE) or None
+                if gen_sense.usage_note
+                else None,
             )
             session.add(sense)
             await session.flush()
@@ -459,6 +468,17 @@ class Repository:
                 if not text:
                     continue
                 session.add(Collocation(sense_id=sense.id, text=text, collocation_order=c_order))
+            # Inflection forms mirror collocations: ordered child rows. ``surface``
+            # is untrusted LLM text -> _clean (control-strip, incl NUL that crashes
+            # Postgres); empty/whitespace-only is skipped. ``inf`` is a schema-validated
+            # enum token, so it is stored verbatim.
+            for f_order, form in enumerate(gen_sense.forms):
+                surface = self._clean(form.surface, self._MAX_SURFACE)
+                if not surface:
+                    continue
+                session.add(
+                    SenseForm(sense_id=sense.id, inf=form.inf, surface=surface, form_order=f_order)
+                )
         await session.flush()
 
     # --- topic tags (resolve-or-create, deterministic dedup) --------------
@@ -469,6 +489,9 @@ class Repository:
     _MAX_GUIDEWORD = 64  # must match Sense.guideword String(64)
     _MAX_IPA = 64  # must match Sense.ipa_uk/ipa_us String(64)
     _MAX_COLLOCATION = 512  # Collocation.text is Text (unbounded) — generous sanity cap only
+    _MAX_SURFACE = 64  # SenseForm.surface is Text (unbounded) — generous sanity cap only
+    _MAX_DOMAIN = 64  # must match Sense.domain String(64)
+    _MAX_USAGE_NOTE = 255  # must match Sense.usage_note String(255)
     _MAX_THEME_NAME = 128  # Theme.name is Text (unbounded) — generous sanity cap only
     _MAX_THEME_KEY = 255  # must match Theme.theme_key String(255)
     _MAX_STYLE_PROMPT = 4000  # Theme.style_prompt is Text (unbounded) — generous sanity cap

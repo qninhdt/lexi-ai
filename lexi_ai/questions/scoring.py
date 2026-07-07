@@ -37,8 +37,17 @@ async def grade_text_span(question: Question, answer: object) -> Score:
     Rides the ONE normalizer, so cloze grading can never drift from how the
     dictionary keys words — ``"colour"`` folds equal to a stored ``"color"`` only
     if ``match_key`` says so.
+
+    ``accepted_forms`` (optional) widens the accepted set with the sense's
+    inflected surfaces, so a learner typing ``ran`` for ``run`` scores right. This
+    does NOT alter ``match_key`` — each accepted surface is normalized the same
+    way and added to the target set, closing the documented inflection gap without
+    touching the invariant.
     """
-    correct = match_key(str(answer)) == match_key(question.payload["answer_norm"])
+    payload = question.payload
+    want = {match_key(payload["answer_norm"])}
+    want.update(match_key(s) for s in payload.get("accepted_forms", []))
+    correct = match_key(str(answer)) in want
     return Score(correct=correct, score=1.0 if correct else 0.0, kind="rule")
 
 

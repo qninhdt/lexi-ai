@@ -28,6 +28,7 @@ lexi_ai/
   db.py             async engine + session_scope; SQLite FK pragma
   models.py         SQLAlchemy 2.0 async ORM (portable types only)
   read_models.py    dataclass views returned to callers
+  markup.py         parse/strip the <t inf> example target tags (one reader)
   references/       read-only anchors
     cambridge.py    Cambridge SQLite (mode=ro), fetch + candidates + phrase_titles
     wordnet.py      nltk WordNet via asyncio.to_thread
@@ -52,7 +53,9 @@ lexi_ai/
     distractors.py  best-effort wrong-option ladder (semantic -> topic)
     schemas.py      GeneratedMCQ / Judgment (llm) + per-format payload validators
     scoring.py      shared async grade helpers (single_choice / text_span / rubric)
-    formats.py      the seven format plugins + registry wiring
+    formats/        one module per format, each self-registering on import
+      _shared.py    cross-format helpers (MCQ build, blank-target, audio-ref)
+      *.py          one plugin per format (definition_mcq, cloze, listening, ...)
     repository.py   QuestionRepository (the questions write path; JSON at boundary)
     engine.py       QuestionEngine — the dispatcher over plugins
   api.py            Lexicon.get_entry() — the public lazy-lookup surface
@@ -77,7 +80,7 @@ is the durable backstop.
 
 ## Data model
 
-Fourteen tables in the *generated* DB (separate from read-only Cambridge, no
+Fifteen tables in the *generated* DB (separate from read-only Cambridge, no
 cross-DB FK — decision #14):
 
 - `words` — `norm`, `match_key` (UNIQUE), `entry_type`, `status`
@@ -92,8 +95,9 @@ cross-DB FK — decision #14):
   per-POS IPA pronunciation (`ipa_uk` / `ipa_us`, hard-anchored from Cambridge,
   NUL-sanitized on the write path); learner-dictionary labels `guideword` (short
   homograph disambiguator), `grammar` (0-3 closed-vocab labels, comma-joined in
-  one column), `register`, `connotation` (both closed-vocab enums); plus a
-  best-effort semantic-search vector
+  one column), `register`, `connotation` (both closed-vocab enums), `domain`
+  (subject-area label) and `usage_note` (one-line usage/confusable hint — both
+  free text, NUL-sanitized); plus a best-effort semantic-search vector
   (`embedding` BLOB + `embedding_model` + `embedding_dim`, null until an embedder
   runs — no pgvector, portable).
 - `sense_reference` — N-N provenance to a Cambridge sense / WordNet synset
@@ -101,6 +105,11 @@ cross-DB FK — decision #14):
 - `examples` — per sense.
 - `collocations` — per sense; high-frequency partner phrases (make a decision,
   heavy rain), ordered free text, structurally identical to `examples`.
+- `sense_forms` — per sense; the inflection paradigm (`inf` label ∈
+  INFLECTION_LABELS + `surface`), LLM-emitted per POS (verb → base/past/
+  past_participle/present_3sg/ing; noun → plural; adjective → comparative/
+  superlative), ordered free text like `examples`. NOT scraped from examples —
+  a full paradigm, so grading folds an inflected answer (`ran` for `run`).
 - `tags` — open-vocabulary topic tags; `name` slug + `title` display + `tag_key`
   (UNIQUE, the topic analogue of `match_key`, computed only by the repository).
 - `word_tags` — word↔tag join; UNIQUE(word_id, tag_id).
@@ -160,16 +169,33 @@ no row/file). Translation results live inline in `text_value`; TTS clips write t
 (`delete`/`purge` also unlink the backing file).
 
 **Word enrichment** (learner-dictionary content, LLM-authored): each generated
-word gets seven enrichments emitted in the same LLM call as senses — synthesized
-by the LLM (semantic relations are NOT anchored — Cambridge/WordNet feed sense
-content only). Two kinds: **word-references** (`word_family`, `confused_with`,
-`hypernym`, `hyponym`) NAME a lemma, so they are normalized through the existing
-`related[]` → `entry_links` path (match_key stub-rows + dedup) and appear in
-`Entry.links` as a flat list by `rel_type`; **sense labels** (`guideword`, `grammar`,
-`register`, `connotation`, `collocations`) LABEL a sense and live on `senses` /
-the `collocations` child table. Closed-vocab enums live in `constants.py` (single
-source for ORM + schema); free text is control-char sanitized on the write path.
-All best-effort — a sense with no enrichment still persists `done`.
+word gets a set of enrichments emitted in the same LLM call as senses —
+synthesized by the LLM (semantic relations are NOT anchored — Cambridge/WordNet
+feed sense content only). Two kinds: **word-references** (`word_family`,
+`confused_with`, `hypernym`, `hyponym`) NAME a lemma, so they are normalized
+through the existing `related[]` → `entry_links` path (match_key stub-rows +
+dedup) and appear in `Entry.links` as a flat list by `rel_type`; **sense labels**
+(`guideword`, `grammar`, `register`, `connotation`, `domain`, `usage_note`,
+`collocations`, `forms`) LABEL a sense and live on `senses` / the `collocations`
+and `sense_forms` child tables. `domain` (subject-area label) and `usage_note`
+(one-line usage/confusable hint) are bounded free text like `guideword`; `forms`
+is the full inflection paradigm (see below). Closed-vocab enums live in
+`constants.py` (single source for ORM + schema); free text is control-char
+sanitized on the write path. All best-effort — a sense with no enrichment still
+persists `done`.
+
+**Inflection forms & example markup**: the LLM emits each sense's COMPLETE
+inflection paradigm per POS directly into `forms` (verb → base/past/
+past_participle/present_3sg/ing; noun → plural; adjective → comparative/
+superlative) — it is NOT scraped from examples, since one example uses only one
+form but the paradigm must be whole. Independently, every example sentence wraps
+its target in `<t inf="label">surface</t>` markup: this is a deliberate contract,
+not noise — examples are stored WITH the tags intact, and `lexi_ai.markup`
+(`parse_marked_example` / `strip_markup`) is the ONE reader (like `match_key` is
+the one key function). The cloze plugin blanks the tagged span directly; display
+consumers call `strip_markup`. The `forms` surfaces also feed `accepted_forms` in
+cloze/spelling/collocation payloads so a learner typing `ran` for `run` grades
+correct — a form-set widening at grade time, NOT a `match_key` change.
 
 **Topic tags** (open-vocabulary, LLM-authored): each generated word gets 1-3 tags
 emitted in the same LLM call as senses. Consistency without embeddings: the full
@@ -234,20 +260,34 @@ The format set proves the abstraction by covering every backend combination:
 | Format | answer_kind | Generator | Grader | Persists |
 |--------|-------------|-----------|--------|----------|
 | `definition_mcq` | `single_choice` | rule | rule (index) | no |
+| `pronunciation_mcq` | `single_choice` | rule (IPA) | rule (index) | no |
 | `cloze` | `text_span` | rule | rule (`match_key`) | no |
+| `collocation_fill` | `text_span` | rule | rule (`match_key`) | no |
 | `contextual_mcq` | `single_choice` | llm | rule (index) | yes |
 | `use_in_sentence` | `free_text` | rule | llm (rubric) | no |
 | `matching` | `matching` | rule | rule (permutation) | no |
 | `listening` | `single_choice` | rule (TTS) | rule (index) | yes |
 | `spelling` | `text_span` | rule (TTS) | rule (`match_key`) | no |
 
-`contextual_mcq` (llm-generated, rule-graded) and `use_in_sentence` (rule-generated,
+`pronunciation_mcq` and `collocation_fill` reuse already-stored content (per-POS
+IPA, and the `collocations` child table) — no new generation cost. `contextual_mcq`
+(llm-generated, rule-graded) and `use_in_sentence` (rule-generated,
 llm-graded) are the cross-axis proofs. `listening`/`spelling` synthesize an audio
 clip via the configured TTS provider (addressed by the durable
 `(source_kind, source_id, voice, fmt)` reference tuple, not a row id, so the payload
 survives a purge/regenerate); with no TTS configured they degrade to no questions
-rather than failing. Adding a format is one plugin class + one
-`register(...)` line; the registry validates the format↔answer_kind coupling at
+rather than failing. `cloze`/`collocation_fill`/`spelling` grade `text_span` by
+`match_key` equality against the answer PLUS the sense's `accepted_forms` (its
+inflected surfaces), so a learner typing `ran` for `run` scores right without
+touching the `match_key` invariant; `cloze` also blanks the exact target span from
+the example's `<t inf>` markup (via `lexi_ai.markup`), falling back to a
+word-boundary match when a span is absent. `pronunciation_mcq` reuses the MCQ
+machinery with the sense's IPA as the stem; `collocation_fill` blanks the target in
+a stored collocation. Adding a format is one plugin **module** + one
+`register(...)` line: each format lives in its own file under
+`lexi_ai/questions/formats/` (cross-format helpers in `_shared.py`) and
+self-registers on import, so the package `__init__` importing it populates the
+registry. The registry validates the format↔answer_kind coupling at
 import time (a mis-wire is an import error). Payload is app-level JSON in a `Text`
 column (the one deviation from native typing), (de)serialized only at the
 repository boundary, which rejects an embedded NUL so it round-trips safely on
@@ -290,14 +330,15 @@ cleartext. With none configured, TTS falls back to the stub (raises, never cache
 fake audio).
 
 **Schema versioning:** `init_models` runs a pure additive `create_all` — it never
-drops a table or adds a column to an existing one. New columns reach only a freshly
-created DB, so a schema change today requires an explicit drop + recreate (the DB is
-pre-production and regenerable). A portable migration tool (Alembic) is deferred
-until lexi-ai holds real data that can't be regenerated.
+drops a table or adds a column to an existing one. A NEW table (`sense_forms`)
+reaches a fresh DB automatically; NEW columns on an existing table (`senses.domain`,
+`senses.usage_note`) do NOT, so a schema change today requires an explicit drop +
+recreate (the DB is pre-production and regenerable). A portable migration tool
+(Alembic) is deferred until lexi-ai holds real data that can't be regenerated.
 
 ## Testing
 
-307 tests, `uv run pytest`. No live LLM calls (fake runnables). Reference and
+326 tests, `uv run pytest`. No live LLM calls (fake runnables). Reference and
 phrase-overlap tests run against the real Cambridge `./data` and skip if absent.
 Themes and cached assets add `tests/test_themes.py` (theme_key folding, dedup,
 schema compile), `tests/test_theming.py` (themed generation + read overlay with a

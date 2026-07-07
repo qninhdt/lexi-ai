@@ -14,6 +14,16 @@ class ReferenceView:
 
 
 @dataclass
+class FormView:
+    """One inflected form of a sense's headword: ``surface`` (ran) tagged with its
+    ``inf`` label (past). A label may repeat across rows when a form has variants
+    (dreamed / dreamt), so this is a flat list, not a dict."""
+
+    inf: str
+    surface: str
+
+
+@dataclass
 class SenseView:
     definition: str
     tier: str
@@ -24,6 +34,9 @@ class SenseView:
     ipa_us: str | None = None
     examples: list[str] = field(default_factory=list)
     references: list[ReferenceView] = field(default_factory=list)
+    # Inflection paradigm (best-effort — empty for invariant words). LLM-emitted
+    # per POS, not scraped from examples, so it is complete.
+    forms: list[FormView] = field(default_factory=list)
     # Learner-dictionary enrichments (best-effort — empty/None when unmarked).
     # ``grammar``/``collocations`` are lists; the others are single labels.
     guideword: str | None = None
@@ -31,6 +44,10 @@ class SenseView:
     register: str | None = None
     connotation: str | None = None
     collocations: list[str] = field(default_factory=list)
+    # ``domain`` = subject-area label (computing, medicine, law); ``usage_note`` =
+    # one-line usage/confusable hint. Both free-text, best-effort.
+    domain: str | None = None
+    usage_note: str | None = None
     # DB id of the sense, when this view was assembled from a persisted sense
     # (None for views synthesized without a row). Lets the questions engine record
     # which sense a generated question targets, for provenance.

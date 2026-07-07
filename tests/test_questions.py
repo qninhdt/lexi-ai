@@ -22,17 +22,19 @@ from lexi_ai.questions.base import REGISTRY, FormatSpec, QuestionContext, regist
 from lexi_ai.questions.engine import QuestionEngine
 from lexi_ai.questions.formats import (
     Cloze,
+    CollocationFill,
     ContextualMCQ,
     DefinitionMCQ,
     Listening,
     Matching,
+    PronunciationMCQ,
     Spelling,
     UseInSentence,
 )
 from lexi_ai.questions.repository import QuestionRepository
 from lexi_ai.questions.schemas import GeneratedMCQ, Judgment
 from lexi_ai.questions.scoring import grade_matching, grade_single_choice, grade_text_span
-from lexi_ai.read_models import Entry, Question, SenseView
+from lexi_ai.read_models import Entry, FormView, Question, SenseView
 
 # --- fixtures + helpers ---------------------------------------------------
 
@@ -70,7 +72,18 @@ async def _seed_word(
         return word.id, sense.id
 
 
-def _entry(word_id, sense_id, *, norm="eloquent", examples=None, status="done") -> Entry:
+def _entry(
+    word_id,
+    sense_id,
+    *,
+    norm="eloquent",
+    examples=None,
+    status="done",
+    forms=None,
+    ipa_uk=None,
+    ipa_us=None,
+    collocations=None,
+) -> Entry:
     return Entry(
         display=norm,
         norm=norm,
@@ -84,7 +97,11 @@ def _entry(word_id, sense_id, *, norm="eloquent", examples=None, status="done") 
                 tier="core",
                 pos="adj",
                 cefr_level="C1",
+                ipa_uk=ipa_uk,
+                ipa_us=ipa_us,
                 examples=examples if examples is not None else ["She gave an eloquent speech."],
+                forms=forms if forms is not None else [],
+                collocations=collocations if collocations is not None else [],
                 sense_id=sense_id,
             )
         ],
@@ -319,6 +336,36 @@ async def test_grade_text_span_rides_the_one_normalizer():
     assert (await grade_text_span(q2, "colour")).correct is False  # spelling is NOT folded
 
 
+async def test_grade_text_span_accepts_inflected_forms():
+    # accepted_forms lets a learner type an inflected surface (ran for run) and
+    # score right, WITHOUT changing match_key — the surfaces come from the sense's
+    # independent forms field, not from folding. This closes the documented
+    # cloze/spelling limitation (runs != run).
+    q = Question(
+        id=None,
+        word_id=1,
+        sense_id=None,
+        format="spelling",
+        answer_kind="text_span",
+        payload={"answer_norm": "run", "accepted_forms": ["ran", "running", "runs"]},
+    )
+    assert (await grade_text_span(q, "run")).correct is True  # the lemma
+    assert (await grade_text_span(q, "ran")).correct is True  # past form
+    assert (await grade_text_span(q, "RUNNING ")).correct is True  # form + case/ws fold
+    assert (await grade_text_span(q, "swam")).correct is False  # unrelated word
+
+
+async def test_cloze_carries_accepted_forms_from_sense(session_factory):
+    wid, sid = await _seed_word(session_factory)
+    forms = [FormView(inf="present_3sg", surface="runs"), FormView(inf="past", surface="ran")]
+    entry = _entry(wid, sid, norm="run", examples=["They run daily."], forms=forms)
+    qs = await Cloze().generate(_mcq_ctx(entry), n=1)
+    assert len(qs) == 1
+    assert qs[0].payload["accepted_forms"] == ["runs", "ran"]
+    # and the plugin's own grade folds an inflected answer through that payload
+    assert (await Cloze().grade(_mcq_ctx(None), qs[0], "ran")).correct is True
+
+
 async def test_grade_rubric_maps_judgment_to_llm_score(session_factory):
     wid, sid = await _seed_word(session_factory)
     q = (await UseInSentence().generate(_mcq_ctx(_entry(wid, sid)), n=1))[0]
@@ -493,6 +540,8 @@ def test_registry_has_seed_formats():
         "matching",
         "listening",
         "spelling",
+        "pronunciation_mcq",
+        "collocation_fill",
     }
     assert REGISTRY["definition_mcq"].answer_kind == "single_choice"
     assert REGISTRY["cloze"].answer_kind == "text_span"
@@ -500,6 +549,8 @@ def test_registry_has_seed_formats():
     assert REGISTRY["matching"].answer_kind == "matching"
     assert REGISTRY["listening"].answer_kind == "single_choice"
     assert REGISTRY["spelling"].answer_kind == "text_span"
+    assert REGISTRY["pronunciation_mcq"].answer_kind == "single_choice"
+    assert REGISTRY["collocation_fill"].answer_kind == "text_span"
 
 
 def test_register_rejects_out_of_vocab_format():
@@ -833,3 +884,70 @@ async def test_payload_nul_is_rejected(session_factory):
                 payload={"stem_with_blank": "a\x00b", "answer_norm": "x"},
             )
         )
+
+
+# --- pronunciation_mcq + collocation_fill (reuse stored IPA / collocations) ---
+
+
+async def test_pronunciation_mcq_builds_from_ipa(session_factory):
+    from lexi_ai.questions.formats import PronunciationMCQ
+
+    wid, sid = await _seed_word(session_factory)
+    entry = _entry(wid, sid, ipa_uk="ˈɛl.ə.kwənt")
+    qs = await PronunciationMCQ().generate(_mcq_ctx(entry), n=1)
+    assert len(qs) == 1
+    payload = qs[0].payload
+    assert "ɛl" in payload["stem"]  # IPA appears in the stem
+    assert payload["options"][payload["correct_index"]] == "eloquent"
+    assert payload["options"].count("eloquent") == 1  # answer not duplicated
+
+
+async def test_pronunciation_mcq_without_ipa_is_unavailable(session_factory):
+    wid, sid = await _seed_word(session_factory)
+    qs = await PronunciationMCQ().generate(_mcq_ctx(_entry(wid, sid)), n=1)  # no IPA
+    assert qs == []
+
+
+async def test_pronunciation_mcq_falls_back_to_us_ipa(session_factory):
+    from lexi_ai.questions.formats import PronunciationMCQ
+
+    wid, sid = await _seed_word(session_factory)
+    entry = _entry(wid, sid, ipa_us="ˈɛl.ə.kwənt")  # only US IPA present
+    qs = await PronunciationMCQ().generate(_mcq_ctx(entry), n=1)
+    assert len(qs) == 1
+
+
+async def test_collocation_fill_blanks_target(session_factory):
+
+    wid, sid = await _seed_word(session_factory, norm="rain", definition="water from clouds")
+    entry = _entry(wid, sid, norm="rain", collocations=["heavy rain", "acid rain"])
+    qs = await CollocationFill().generate(_mcq_ctx(entry), n=1)
+    assert len(qs) == 1
+    stem = qs[0].payload["stem_with_blank"]
+    assert "_____" in stem and "rain" not in stem.lower()
+    assert qs[0].payload["answer_norm"] == "rain"
+
+
+async def test_collocation_fill_folds_inflected_surface(session_factory):
+    # "heavy rains" blanks against the lemma "rain" via the accepted-forms set.
+
+    wid, sid = await _seed_word(session_factory, norm="rain", definition="water from clouds")
+    entry = _entry(
+        wid, sid, norm="rain", collocations=["heavy rains"], forms=[FormView("plural", "rains")]
+    )
+    qs = await CollocationFill().generate(_mcq_ctx(entry), n=1)
+    assert len(qs) == 1
+    assert "_____" in qs[0].payload["stem_with_blank"]
+    assert "rains" in qs[0].payload["accepted_forms"]
+
+
+async def test_collocation_fill_without_collocations_is_unavailable(session_factory):
+
+    wid, sid = await _seed_word(session_factory)
+    qs = await CollocationFill().generate(_mcq_ctx(_entry(wid, sid)), n=1)  # no collocations
+    assert qs == []
+
+
+def test_new_formats_registered():
+    assert "pronunciation_mcq" in REGISTRY
+    assert "collocation_fill" in REGISTRY

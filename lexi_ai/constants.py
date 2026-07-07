@@ -130,11 +130,29 @@ QUESTION_FORMATS = frozenset(
         "matching",
         "listening",
         "spelling",
+        "pronunciation_mcq",
+        "collocation_fill",
     }
 )
 
 # questions.answer_kind — the coupling contract a scorer dispatches on.
 ANSWER_KINDS = frozenset({"single_choice", "text_span", "free_text", "matching"})
+
+# senses.forms inflection labels. The generation prompt marks example targets and
+# emits a per-sense form table using EXACTLY these labels; the write path and the
+# schema import this one set so the two can never drift (like GRAMMAR_LABELS).
+INFLECTION_LABELS = frozenset(
+    {
+        "base",
+        "past",
+        "past_participle",
+        "present_3sg",
+        "ing",
+        "plural",
+        "comparative",
+        "superlative",
+    }
+)
 
 # Score.kind — how a verdict was reached (deterministic rule vs llm judge). This
 # is caller-facing OUTPUT the scorer reports about itself; the engine never reads

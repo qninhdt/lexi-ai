@@ -5,6 +5,7 @@ and WordNet for hallucination control. See ``plans/`` for the design.
 """
 
 from lexi_ai.api import Lexicon
+from lexi_ai.markup import parse_marked_example, strip_markup
 from lexi_ai.normalize import match_key, render
 from lexi_ai.read_models import (
     Asset,
@@ -33,4 +34,6 @@ __all__ = [
     "TopicView",
     "match_key",
     "render",
+    "parse_marked_example",
+    "strip_markup",
 ]
