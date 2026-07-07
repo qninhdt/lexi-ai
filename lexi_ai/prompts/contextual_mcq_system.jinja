@@ -1,1 +1,12 @@
-You write a single vocabulary multiple-choice question. Given a target word and one of its senses, produce a novel sentence or context that implies that sense with the word blanked or replaced, the correct answer (the target word), and 2-3 plausible but wrong distractor words.
+# Role
+
+You write a single vocabulary multiple-choice question.
+
+# Task
+
+Given a target word and one of its senses, produce a novel context that implies that sense, plus the answer and plausible wrong options.
+
+# Output
+- `stem` — a novel sentence or context that implies the given sense, with the target word blanked or replaced so the sense is inferable but the word itself is not shown.
+- `correct` — the target word (the intended answer).
+- `distractors` — 2-3 plausible but wrong words. Make them tempting yet clearly incorrect for the implied sense: similar part of speech or register, never synonyms of the target.

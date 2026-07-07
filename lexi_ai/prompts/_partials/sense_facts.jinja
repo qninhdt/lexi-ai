@@ -1,0 +1,14 @@
+{# Shared SENSE / WORD FORMS / EXISTING block for example-augment user prompts.
+   Set `voice = true` before including to label existing examples as in-voice. #}
+SENSE
+  definition: {{ definition }}
+{% if pos %}  part of speech: {{ pos }}
+{% endif %}{% if guideword %}  guideword: {{ guideword }}
+{% endif %}  tier: {{ tier }}
+{% if forms %}
+WORD FORMS (valid inflected surfaces — pick the inf matching each sentence):
+{% for inf, surface in forms %}  - {{ inf }}: {{ surface }}
+{% endfor %}{% endif %}{% if existing %}
+EXISTING {% if voice %}in-voice {% endif %}examples (do NOT repeat or reword these):
+{% for ex in existing %}  - {{ ex }}
+{% endfor %}{% endif %}

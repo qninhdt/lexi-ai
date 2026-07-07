@@ -1,23 +1,5 @@
 Write up to {{ n }} NEW English example sentence(s) for the sense below.
 
-SENSE:
-  definition: {{ definition }}
-  {% if pos %}part of speech: {{ pos }}{% endif %}
-  {% if guideword %}guideword: {{ guideword }}{% endif %}
-  tier: {{ tier }}
+{% include "_partials/sense_facts.jinja" %}
 
-{% if forms %}
-WORD FORMS (valid inflected surfaces for the target — pick the inf that matches each sentence):
-{% for inf, surface in forms %}
-  - {{ inf }}: {{ surface }}
-{% endfor %}
-{% endif %}
-
-{% if existing %}
-EXISTING examples (do NOT repeat or reword these):
-{% for ex in existing %}
-  - {{ ex }}
-{% endfor %}
-{% endif %}
-
-Return up to {{ n }} fresh sentence(s), each with the target wrapped in <t inf="...">...</t> tags. Fewer than {{ n }} is fine; never pad with filler or repeat an existing example.
+Return up to {{ n }} fresh sentence(s), each with the target wrapped in `<t inf="...">...</t>` tags. Fewer than {{ n }} is fine; never pad with filler or repeat an existing example.

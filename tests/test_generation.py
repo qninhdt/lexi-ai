@@ -122,7 +122,7 @@ def test_prompt_includes_rubric_and_both_sources():
     assert "book" in body
     # System prompt carries the tier rubric + split rule.
     system_prompt = PromptLoader.render("senses_generation_system")
-    assert "core" in system_prompt and "SPLIT" in system_prompt
+    assert "core" in system_prompt and "Split vs. alias" in system_prompt
 
 
 def test_prompt_marks_empty_wordnet():
