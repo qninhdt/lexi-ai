@@ -610,6 +610,60 @@ def test_tts_base_url_ipv6_loopback_http_allowed():
     )
 
 
+# --- API surface: tts_many (batch mirror of translate_many) ----------------
+
+
+async def test_tts_many_order_aligned(session_factory, tmp_path):
+    s1 = await _make_sense(session_factory, "the first definition")
+    s2 = await _make_sense(session_factory, "the second definition")
+    provider = FakeRealTTS()
+    lex = _lexicon(session_factory, tmp_path, tts=provider)
+    refs = [("sense_def", s1), ("sense_def", s2)]
+    results = await lex.tts_many(refs, voice="alloy", fmt="mp3")
+    # One order-aligned BatchResult per ref, all ok, key echoes the input.
+    assert [r.key for r in results] == refs
+    assert all(r.ok for r in results)
+    assert all(r.value.file_path is not None for r in results)
+    assert provider.calls == 2
+
+
+async def test_tts_many_cache_first_per_ref(session_factory, tmp_path):
+    # A ref already synthesized (cached) is not re-synthesized on a later batch —
+    # the same cache-first guarantee tts_field carries, per item.
+    sid = await _make_sense(session_factory, "a cached definition")
+    provider = FakeRealTTS()
+    lex = _lexicon(session_factory, tmp_path, tts=provider)
+    await lex.tts_field("sense_def", sid, voice="alloy", fmt="mp3")
+    assert provider.calls == 1
+    results = await lex.tts_many([("sense_def", sid)], voice="alloy", fmt="mp3")
+    assert results[0].ok and results[0].value.file_path is not None
+    assert provider.calls == 1  # served from cache, no new synth
+
+
+async def test_tts_many_empty_is_empty(session_factory, tmp_path):
+    lex = _lexicon(session_factory, tmp_path, tts=FakeRealTTS())
+    assert await lex.tts_many([]) == []
+
+
+async def test_tts_many_one_failure_does_not_abort(session_factory, tmp_path):
+    sid = await _make_sense(session_factory, "a real definition")
+    provider = FakeRealTTS()
+    lex = _lexicon(session_factory, tmp_path, tts=provider)
+    # A bad ref (no source row) fails that item only; the good one still resolves.
+    results = await lex.tts_many([("sense_def", 999999), ("sense_def", sid)])
+    assert not results[0].ok and results[0].error
+    assert results[1].ok and results[1].value.file_path is not None
+
+
+async def test_tts_many_stub_reports_per_item_error(session_factory, tmp_path):
+    # Unconfigured TTS (stub) raises per item; the batch reports it, never aborts.
+    sid = await _make_sense(session_factory, "a definition")
+    lex = _lexicon(session_factory, tmp_path)  # default StubTTSProvider
+    results = await lex.tts_many([("sense_def", sid)])
+    assert len(results) == 1
+    assert not results[0].ok and results[0].error
+
+
 # --- GC via the persistence delete/regenerate paths ------------------------
 
 

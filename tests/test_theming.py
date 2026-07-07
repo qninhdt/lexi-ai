@@ -13,9 +13,11 @@ from sqlalchemy.pool import StaticPool
 
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models, session_scope
+from lexi_ai.generation.schemas import ExampleBatch
+from lexi_ai.markup import parse_marked_example
 from lexi_ai.models import Example, Sense, ThemedExample, ThemedSense, Word
 from lexi_ai.persistence.repository import Repository
-from lexi_ai.read_models import Entry
+from lexi_ai.read_models import Entry, SenseView
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.theming.schemas import ThemedResult, GeneratedTheme
 from lexi_ai.theming.schemas import ThemedSense as ThemedSenseSchema
@@ -167,17 +169,30 @@ async def test_persist_themed_count_mismatch_raises(session_factory, repo):
 class FakeThemedGenerator:
     """Returns a canned ThemedResult; records the style prompt + facts it saw."""
 
-    def __init__(self, result: ThemedResult):
+    def __init__(self, result: ThemedResult, example_batch: ExampleBatch | None = None):
         self._result = result
         self.calls = 0
         self.last_style = None
         self.last_facts = None
+        # Canned targeted-example output + recorders for the add_examples path.
+        self._example_batch = example_batch
+        self.example_calls = 0
+        self.last_ex_style = None
+        self.last_existing = None
+        self.last_n = None
 
     async def generate(self, style_prompt, neutral_senses):
         self.calls += 1
         self.last_style = style_prompt
         self.last_facts = list(neutral_senses)
         return self._result
+
+    async def generate_examples(self, style_prompt, sense, existing, n):
+        self.example_calls += 1
+        self.last_ex_style = style_prompt
+        self.last_existing = list(existing)
+        self.last_n = n
+        return self._example_batch or ExampleBatch(examples=[])
 
 
 class FakeThemeMetadataGenerator:
@@ -327,3 +342,136 @@ async def test_get_and_generate_by_theme_id(session_factory, repo):
     # Resolve by string ID
     entry2 = await lex.get_entry(word_id, theme=str(theme.id))
     assert entry2.senses[0].definition == "neutral def 0"
+
+
+# --- themed add_examples (Phase 2) ----------------------------------------
+
+
+async def _seed_themed_overlay(session_factory, repo, existing_themed: list[str]):
+    """Seed a done word + a theme + a themed overlay on sense[0] carrying
+    ``existing_themed`` example texts. Returns ``(word_id, sense_id, theme)``."""
+    word_id, sense_ids = await _make_done_word(session_factory)
+    theme = await repo.create_theme("Bard", "speak like a bard")
+    result = ThemedResult(
+        senses=[
+            ThemedSenseSchema(definition="a mighty wyrm", examples=existing_themed),
+            ThemedSenseSchema(definition="to amass treasure", examples=[]),
+        ]
+    )
+    await repo.persist_themed(theme.id, result, sense_ids)
+    return word_id, sense_ids[0], theme
+
+
+async def test_themed_add_examples_appends_in_voice(session_factory, repo):
+    word_id, sense_id, theme = await _seed_themed_overlay(
+        session_factory, repo, ["Lo, a wyrm of old!"]
+    )
+    gen = FakeThemedGenerator(
+        ThemedResult(senses=[ThemedSenseSchema(definition="x")]),
+        example_batch=ExampleBatch(
+            examples=[
+                'The hoard <t inf="past">gleamed</t> in the dragon\'s lair.',
+                'Bards <t inf="present_3sg">sings</t> of the wyrm\'s gold.',
+            ]
+        ),
+    )
+    lex = _lexicon(session_factory, gen)
+    view = await lex.add_examples(sense_id, n=2, theme="bard")
+    # Returned view carries the THEMED definition + themed examples (old + new).
+    assert view.definition == "a mighty wyrm"
+    assert view.examples[0] == "Lo, a wyrm of old!"
+    assert len(view.examples) == 3
+    # The theme's style_prompt + existing themed examples reached the generator.
+    assert gen.last_ex_style == "speak like a bard"
+    assert gen.last_existing == ["Lo, a wyrm of old!"]
+    assert gen.last_n == 2
+    # Order contiguous in the DB.
+    async with session_scope(session_factory) as session:
+        ts_id = (
+            await session.execute(
+                select(ThemedSense.id).where(
+                    ThemedSense.sense_id == sense_id, ThemedSense.theme_id == theme.id
+                )
+            )
+        ).scalar_one()
+        orders = (
+            (
+                await session.execute(
+                    select(ThemedExample.example_order).where(
+                        ThemedExample.themed_sense_id == ts_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert sorted(orders) == [0, 1, 2]
+
+
+async def test_themed_add_examples_carry_parseable_tags(session_factory, repo):
+    _wid, sense_id, _theme = await _seed_themed_overlay(session_factory, repo, [])
+    gen = FakeThemedGenerator(
+        ThemedResult(senses=[ThemedSenseSchema(definition="x")]),
+        example_batch=ExampleBatch(
+            examples=['The wyrm <t inf="past">slumbered</t> upon its gold.']
+        ),
+    )
+    lex = _lexicon(session_factory, gen)
+    view = await lex.add_examples(sense_id, n=1, theme="bard")
+    tagged = [e for e in view.examples if "<t inf=" in e]
+    assert tagged
+    clean, spans = parse_marked_example(tagged[0])
+    assert spans and spans[0].surface
+    assert "<t" not in clean
+
+
+async def test_themed_add_examples_returns_themed_sense_view(session_factory, repo):
+    _wid, sense_id, _theme = await _seed_themed_overlay(session_factory, repo, ["Old."])
+    gen = FakeThemedGenerator(
+        ThemedResult(senses=[ThemedSenseSchema(definition="x")]),
+        example_batch=ExampleBatch(examples=['A <t inf="base">wyrm</t> stirs.']),
+    )
+    lex = _lexicon(session_factory, gen)
+    view = await lex.add_examples(sense_id, n=1, theme="bard")
+    assert isinstance(view, SenseView)
+    assert view.sense_id == sense_id
+    assert view.definition == "a mighty wyrm"  # themed, not neutral
+
+
+async def test_themed_add_examples_unknown_theme_raises(session_factory, repo):
+    _wid, sense_id, _theme = await _seed_themed_overlay(session_factory, repo, [])
+    gen = FakeThemedGenerator(ThemedResult(senses=[ThemedSenseSchema(definition="x")]))
+    lex = _lexicon(session_factory, gen)
+    with pytest.raises(ValueError, match="unknown theme"):
+        await lex.add_examples(sense_id, n=2, theme="ghost")
+
+
+async def test_themed_add_examples_missing_overlay_raises(session_factory, repo):
+    # A theme exists but the sense was never themed → ValueError telling the
+    # caller to theme the word first (never silently themes the whole word).
+    _word_id, sense_ids = await _make_done_word(session_factory)
+    await repo.create_theme("Bard", "speak like a bard")
+    gen = FakeThemedGenerator(ThemedResult(senses=[ThemedSenseSchema(definition="x")]))
+    lex = _lexicon(session_factory, gen)
+    with pytest.raises(ValueError, match="no themed overlay"):
+        await lex.add_examples(sense_ids[0], n=2, theme="bard")
+    assert gen.example_calls == 0
+
+
+async def test_themed_add_examples_zero_is_noop(session_factory, repo):
+    _wid, sense_id, _theme = await _seed_themed_overlay(session_factory, repo, ["Only one."])
+    gen = FakeThemedGenerator(
+        ThemedResult(senses=[ThemedSenseSchema(definition="x")]),
+        example_batch=ExampleBatch(examples=["should not appear"]),
+    )
+    lex = _lexicon(session_factory, gen)
+    view = await lex.add_examples(sense_id, n=0, theme="bard")
+    assert view.examples == ["Only one."]
+    assert gen.example_calls == 0
+
+
+def test_themed_restyling_schema_requires_tags():
+    # The themed_restyling ThemedSense.examples description now requires the tag
+    # contract (synced with neutral) so whole-word theming emits tagged examples.
+    desc = ThemedSenseSchema.model_fields["examples"].description or ""
+    assert "<t inf=" in desc

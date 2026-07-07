@@ -14,6 +14,7 @@ from lexi_ai.prompts import PromptLoader
 from lexi_ai.theming.schemas import ThemedResult
 
 if TYPE_CHECKING:
+    from lexi_ai.generation.schemas import ExampleBatch, ExampleGenContext
     from lexi_ai.theming.schemas import GeneratedTheme
 
 
@@ -66,6 +67,43 @@ class ThemedGenerator:
             self.llm,
             messages,
             ThemedResult,
+            max_retries=self._max_retries,
+            base_delay=self._base_delay,
+        )
+
+    async def generate_examples(
+        self,
+        style_prompt: str,
+        sense: "ExampleGenContext",
+        existing: Sequence[str],
+        n: int,
+    ) -> "ExampleBatch":
+        """Author up to ``n`` fresh in-voice tagged examples for ONE themed sense.
+
+        Themed counterpart to :meth:`Generator.generate_examples`: same
+        :class:`ExampleBatch` schema and ``<t inf>`` tag contract, plus the voice
+        from ``style_prompt``. ``n`` is a best-effort max; the existing themed
+        examples are fed back for soft de-duplication.
+        """
+        from lexi_ai.generation.schemas import ExampleBatch
+
+        system_content = PromptLoader.render("themed_example_augment_system")
+        user_content = PromptLoader.render(
+            "themed_example_augment_user",
+            style_prompt=style_prompt,
+            definition=sense.definition,
+            pos=sense.pos,
+            guideword=sense.guideword,
+            tier=sense.tier,
+            forms=sense.forms,
+            existing=list(existing),
+            n=n,
+        )
+        messages = [sys_msg(system_content), user_msg(user_content)]
+        return await ainvoke_structured(
+            self.llm,
+            messages,
+            ExampleBatch,
             max_retries=self._max_retries,
             base_delay=self._base_delay,
         )

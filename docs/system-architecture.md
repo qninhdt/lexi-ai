@@ -166,7 +166,9 @@ no row/file). Translation results live inline in `text_value`; TTS clips write t
 `LEXI_ASSET_CACHE_DIR` sharded by hash prefix, with the row storing a RELATIVE path
 (file written before row; a row implies a file). Management is id-based:
 `list_assets`/`get_asset`/`delete_asset`/`purge_assets` inspect and prune the cache
-(`delete`/`purge` also unlink the backing file).
+(`delete`/`purge` also unlink the backing file). `tts_many(refs, ...)` is the batch
+mirror of `translate_many` — order-aligned `BatchResult`s over `(source_kind,
+source_id)` refs, cache-first per item, one failure never aborts the rest.
 
 **Word enrichment** (learner-dictionary content, LLM-authored): each generated
 word gets a set of enrichments emitted in the same LLM call as senses —
@@ -197,6 +199,18 @@ consumers call `strip_markup`. The `forms` surfaces also feed `accepted_forms` i
 cloze/spelling/collocation payloads so a learner typing `ran` for `run` grades
 correct — a form-set widening at grade time, NOT a `match_key` change.
 
+**Targeted example augmentation**: `add_examples(sense_id, n=3, theme=None)` is the
+ONE additive-generation surface — an example is an open-ended illustration of a
+sense, so authoring more never fabricates a linguistic fact (unlike senses or
+collocations, which are finite/attested and NOT augmentable). It APPENDS up to `n`
+fresh tagged examples to one sense (best-effort max, never overwrites; `n` clamped
+to the schema ceiling), feeding existing examples to the prompt for soft dedup, and
+returns the updated `SenseView`. Embeddings are untouched (they cover the definition
+only). `theme=` augments the sense's themed overlay instead — the overlay must
+already exist (word themed via `generate(theme=)`), else `ValueError`; it never
+silently themes the whole word. Both neutral and themed examples carry the same
+`<t inf>` markup contract, so the whole-word `themed_restyling` path emits tags too.
+
 **Topic tags** (open-vocabulary, LLM-authored): each generated word gets 1-3 tags
 emitted in the same LLM call as senses. Consistency without embeddings: the full
 existing tag vocab is injected into every generation prompt for reuse, a
@@ -223,7 +237,9 @@ a `concurrency` semaphore where an LLM may be involved) over the SAME single-ite
 method, so existing guarantees (per-`match_key` lock, cache-first) apply
 unchanged. Every batch call returns `list[BatchResult]`, order-aligned with the
 input: one item's failure is captured in that slot's `error` and never aborts the
-rest.
+rest. `stats()` is a read-only counter (no LLM, one round of grouped COUNTs in a
+single session): words-by-status, senses, examples, tags, themes, themed-words
+(distinct words with ≥1 overlay), assets-by-kind, and questions.
 
 ## Question engine
 

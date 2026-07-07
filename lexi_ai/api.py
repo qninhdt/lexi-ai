@@ -23,6 +23,7 @@ from lexi_ai.constants import TIER_ORDER, canonical_cambridge_ref
 from lexi_ai.db import create_engine, create_session_factory, init_models, session_scope
 from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
+from lexi_ai.generation.schemas import ExampleBatch
 from lexi_ai.models import EntryLink, Sense, Word, WordAlias, WordTag
 from lexi_ai.normalize import match_key, render, tag_key
 from lexi_ai.normalize import theme_key as _norm_theme_key
@@ -38,6 +39,7 @@ from lexi_ai.read_models import (
     SearchResult,
     SemanticHit,
     SenseView,
+    Stats,
     TagCount,
     Theme,
     TopicView,
@@ -51,6 +53,11 @@ if TYPE_CHECKING:
     from lexi_ai.llm import StructuredLLM
     from lexi_ai.questions.base import TtsPort
     from lexi_ai.questions.engine import QuestionEngine
+
+# Upper bound for a single add_examples call, taken from ExampleBatch's own
+# max_length so the two never drift: prompting for more than the schema accepts
+# would guarantee a validation failure and burn the structured-output retries.
+_MAX_EXAMPLES_PER_CALL = ExampleBatch.model_fields["examples"].metadata[0].max_length
 
 
 class Lexicon:
@@ -308,6 +315,94 @@ class Lexicon:
             usage_note=s.usage_note,
             sense_id=s.id,
         )
+
+    async def add_examples(
+        self, sense_id: int, n: int = 3, theme: str | int | None = None
+    ) -> SenseView:
+        """Append up to ``n`` fresh example sentences to ONE sense, returning the
+        updated :class:`SenseView`.
+
+        Targeted augmentation — the ONE clean generation gap: an example is an
+        open-ended illustration of a sense, so generating more never fabricates a
+        linguistic fact. Never deletes or overwrites existing examples;
+        ``example_order`` continues from the current max. ``n`` is a best-effort
+        MAX (the model may return fewer and never fabricates); ``n <= 0`` is a
+        no-op. Existing examples are fed to the generator for soft de-duplication.
+        Embeddings are untouched (they are computed on the definition only).
+
+        ``theme`` (key or id) augments the sense's themed overlay instead of its
+        neutral examples; that overlay must already exist (see :meth:`generate`
+        with ``theme=``) — a missing theme or overlay raises ``ValueError``.
+        Unknown ``sense_id`` raises ``ValueError``; no LLM configured raises
+        ``ValueError``.
+        """
+        if theme is not None:
+            return await self._add_themed_examples(sense_id, n, theme)
+        ctx = await self._repo.sense_context_for_examples(sense_id)
+        if ctx is None:
+            raise ValueError(f"unknown sense_id: {sense_id}")
+        context, existing = ctx
+        # Clamp to ExampleBatch's schema ceiling: a larger n would prompt for more
+        # than the model can validly return, wasting the structured-output retries.
+        n = min(n, _MAX_EXAMPLES_PER_CALL)
+        if n > 0:
+            batch = await self._example_generator().generate_examples(context, existing, n)
+            await self._repo.append_examples(sense_id, batch.examples)
+        return (await self.get_senses([sense_id]))[0]
+
+    def _example_generator(self) -> Generator:
+        """The neutral generator, used for targeted example augmentation. Reuses
+        the injected :class:`Generator`; raises ``ValueError`` when none is wired
+        (mirrors ``translate_field``'s no-LLM posture)."""
+        if self._generator is None:
+            raise ValueError("no LLM configured for example generation")
+        return self._generator
+
+    async def _add_themed_examples(
+        self, sense_id: int, n: int, theme: str | int
+    ) -> SenseView:
+        """Append up to ``n`` in-voice examples to a sense's themed overlay.
+
+        The overlay must already exist (word themed via :meth:`generate` with
+        ``theme=``): a missing theme or a sense without a themed row for that
+        theme raises ``ValueError`` — never silently themes the whole word.
+        """
+        resolved = await self._repo.resolve_theme(theme)
+        if resolved is None and isinstance(theme, str):
+            resolved = await self._repo.resolve_theme(_norm_theme_key(theme))
+        if resolved is None:
+            raise ValueError(f"unknown theme: {theme!r}")
+        theme_id, style_prompt = resolved
+        ctx = await self._repo.sense_context_for_examples(sense_id)
+        if ctx is None:
+            raise ValueError(f"unknown sense_id: {sense_id}")
+        overlay = await self._repo.themed_overlay_for_sense(sense_id, theme_id)
+        if overlay is None:
+            raise ValueError(
+                f"sense {sense_id} has no themed overlay for theme {theme!r}; "
+                "theme the word first via generate(theme=)"
+            )
+        themed_sense_id, existing_themed = overlay
+        context, _neutral_examples = ctx
+        n = min(n, _MAX_EXAMPLES_PER_CALL)
+        if n > 0:
+            batch = await self._themed_generator().generate_examples(
+                style_prompt, context, existing_themed, n
+            )
+            await self._repo.append_themed_examples(themed_sense_id, batch.examples)
+        return await self._themed_sense_view(sense_id, theme_id)
+
+    async def _themed_sense_view(self, sense_id: int, theme_id: int) -> SenseView:
+        """A :class:`SenseView` overlaying the themed definition + examples on the
+        neutral sense (all other fields neutral, matching :meth:`_build_entry`)."""
+        base = (await self.get_senses([sense_id]))[0]
+        word_id = await self._repo.word_id_for_sense(sense_id)
+        overlay = await self._repo.themed_for_word(word_id, theme_id)
+        if sense_id in overlay:
+            themed_def, themed_examples = overlay[sense_id]
+            base.definition = themed_def
+            base.examples = themed_examples
+        return base
 
     async def get_many(
         self, word_ids: list[int], theme: str | int | None = None
@@ -629,6 +724,34 @@ class Lexicon:
             return await self.translate_field(ref[0], ref[1], lang)
 
         return await self._gather_batch(refs, _one, concurrency=concurrency)
+
+    async def tts_many(
+        self,
+        refs: list[tuple[str, int]],
+        voice: str | None = None,
+        fmt: str | None = None,
+        *,
+        concurrency: int = 5,
+    ) -> list[BatchResult]:
+        """Batch :meth:`tts_field` — one :class:`BatchResult` per
+        ``(source_kind, source_id)`` ref, in order, up to ``concurrency`` in
+        flight. Cache-first per item, so a source already synthesized by an
+        EARLIER call spends zero provider call (two identical refs in the SAME
+        batch may both miss and synthesize — the content-addressed put path
+        dedups the row, worst case one wasted call). Mirror of
+        :meth:`translate_many`; one item's failure (e.g. the unconfigured-TTS
+        stub raising) is reported without aborting the rest."""
+
+        async def _one(ref: tuple[str, int]) -> Asset:
+            return await self.tts_field(ref[0], ref[1], voice, fmt)
+
+        return await self._gather_batch(refs, _one, concurrency=concurrency)
+
+    async def stats(self) -> Stats:
+        """Read-only dictionary counts (never generates, no LLM). One round of
+        grouped COUNT queries — words by status, senses, examples, tags, themes,
+        words with any themed overlay, assets by kind, and questions."""
+        return await self._repo.stats()
 
     def _require_assets(self) -> AssetRepository:
         """The asset cache, constructed lazily from settings if not injected."""

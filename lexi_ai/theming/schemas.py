@@ -15,7 +15,14 @@ class ThemedSense(BaseModel):
     examples: list[str] = Field(
         default_factory=list,
         max_length=12,
-        description="Fresh in-voice example sentences illustrating this sense.",
+        description=(
+            "Fresh in-voice example sentences illustrating this sense. For every "
+            "sentence you MUST wrap the target word/phrase (or its inflected form) "
+            'using <t inf="value">...</t> tags (base | past | past_participle | '
+            "present_3sg | ing | plural | comparative | superlative) so cloze/"
+            "highlight work on themed content too — same tag contract as neutral "
+            "examples."
+        ),
     )
 
 

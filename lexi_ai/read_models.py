@@ -222,6 +222,25 @@ class Score:
 
 
 @dataclass
+class Stats:
+    """A point-in-time snapshot of dictionary counts (from :meth:`Lexicon.stats`).
+
+    Counts are read in one session but are NOT transaction-isolated against
+    concurrent writes across calls — acceptable for a stats surface.
+    ``themed_words`` counts distinct words with at least one themed overlay.
+    """
+
+    words_by_status: dict[str, int]  # {"done": n, "pending": m, "error": k, ...}
+    senses: int
+    examples: int
+    tags: int
+    themes: int
+    themed_words: int  # words with >=1 themed overlay
+    assets_by_kind: dict[str, int]  # {"translate": n, "tts": m}
+    questions: int
+
+
+@dataclass
 class BatchResult:
     """One item's outcome in a batch call (``*_many``).
 

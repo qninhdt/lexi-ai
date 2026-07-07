@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from lexi_ai.constants import canonical_cambridge_ref
 from lexi_ai.db import session_scope
 from lexi_ai.generation.schemas import (
+    ExampleGenContext,
     GeneratedAlias,
     GeneratedEntry,
     GeneratedResult,
@@ -32,9 +33,11 @@ from lexi_ai.generation.schemas import (
     RelatedWord,
 )
 from lexi_ai.models import (
+    Asset,
     Collocation,
     EntryLink,
     Example,
+    Question,
     Sense,
     SenseForm,
     SenseReference,
@@ -46,6 +49,7 @@ from lexi_ai.models import (
     WordAlias,
     WordTag,
 )
+from lexi_ai.read_models import Stats
 from lexi_ai.normalize import _CTRL_RE, match_key, tag_key, theme_key
 
 if TYPE_CHECKING:
@@ -496,6 +500,10 @@ class Repository:
     _MAX_THEME_KEY = 255  # must match Theme.theme_key String(255)
     _MAX_STYLE_PROMPT = 4000  # Theme.style_prompt is Text (unbounded) — generous sanity cap
     _MAX_THEMED_TEXT = 4000  # ThemedSense.definition / ThemedExample.text (Text) — generous cap
+    # Example.text is Text (unbounded). Appended examples MUST carry <t inf> tags, so
+    # the cap is generous (4000, matching themed) — a tight cap could sever a sentence
+    # mid-tag and hand parse_marked_example unbalanced markup.
+    _MAX_EXAMPLE = 4000
 
     @staticmethod
     def _clean(s: str, cap: int) -> str:
@@ -844,6 +852,195 @@ class Repository:
                 .order_by(Sense.sense_order, Sense.id)
             )
             return [(sid, d, pos, gw, tier) for sid, d, pos, gw, tier in rows]
+
+    # --- targeted example augmentation ------------------------------------
+
+    async def sense_context_for_examples(
+        self, sense_id: int
+    ) -> tuple[ExampleGenContext, list[str]] | None:
+        """The ``(context, existing_examples)`` a targeted example generator needs
+        for ONE sense, or ``None`` if the sense id is unknown.
+
+        The context carries the sense's definition/pos/guideword/tier plus its
+        ``(inf, surface)`` inflection paradigm; the existing example texts are
+        returned alongside (fed back to the model for soft de-duplication, kept
+        out of the context so it stays a pure fact carrier). Two ordered companion
+        queries (forms, existing examples); no N+1."""
+        async with session_scope(self._session_factory) as session:
+            row = (
+                await session.execute(
+                    select(Sense.definition, Sense.pos, Sense.guideword, Sense.tier).where(
+                        Sense.id == sense_id
+                    )
+                )
+            ).first()
+            if row is None:
+                return None
+            forms = (
+                await session.execute(
+                    select(SenseForm.inf, SenseForm.surface)
+                    .where(SenseForm.sense_id == sense_id)
+                    .order_by(SenseForm.form_order)
+                )
+            ).all()
+            examples = (
+                (
+                    await session.execute(
+                        select(Example.text)
+                        .where(Example.sense_id == sense_id)
+                        .order_by(Example.example_order)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return ExampleGenContext(
+                definition=row[0],
+                pos=row[1],
+                guideword=row[2],
+                tier=row[3],
+                forms=[(inf, surface) for inf, surface in forms],
+            ), list(examples)
+
+    async def append_examples(self, sense_id: int, texts: Sequence[str]) -> int:
+        """Append cleaned, non-empty ``texts`` to a sense's examples at
+        ``max(example_order) + 1``. Returns the count inserted.
+
+        Never deletes or overwrites existing examples (contrast the whole-word
+        overwrite path). Each text is ``_clean``-ed (control-strip incl. the NUL
+        that crashes Postgres) with the same generous cap as neutral example text;
+        empty/whitespace-only texts are skipped (mirrors collocation handling)."""
+        async with session_scope(self._session_factory) as session:
+            current_max = (
+                await session.execute(
+                    select(func.max(Example.example_order)).where(Example.sense_id == sense_id)
+                )
+            ).scalar_one_or_none()
+            order = (current_max + 1) if current_max is not None else 0
+            inserted = 0
+            for text in texts:
+                clean = self._clean(text, self._MAX_EXAMPLE)
+                if not clean:
+                    continue
+                session.add(Example(sense_id=sense_id, text=clean, example_order=order))
+                order += 1
+                inserted += 1
+            await session.flush()
+            return inserted
+
+    async def themed_overlay_for_sense(
+        self, sense_id: int, theme_id: int
+    ) -> tuple[int, list[str]] | None:
+        """The ``(themed_sense_id, ordered_themed_example_texts)`` for one
+        ``(sense, theme)`` overlay, or ``None`` when no themed row exists.
+
+        ``None`` is the "theme the word first" signal — the api layer raises a
+        ``ValueError`` telling the caller to run ``generate(theme=)`` before
+        augmenting themed examples (never silently themes the whole word)."""
+        async with session_scope(self._session_factory) as session:
+            row = (
+                await session.execute(
+                    select(ThemedSense.id).where(
+                        ThemedSense.sense_id == sense_id,
+                        ThemedSense.theme_id == theme_id,
+                    )
+                )
+            ).first()
+            if row is None:
+                return None
+            themed_sense_id = row[0]
+            texts = (
+                (
+                    await session.execute(
+                        select(ThemedExample.text)
+                        .where(ThemedExample.themed_sense_id == themed_sense_id)
+                        .order_by(ThemedExample.example_order)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return themed_sense_id, list(texts)
+
+    async def word_id_for_sense(self, sense_id: int) -> int:
+        """The owning ``word_id`` for a sense (used to overlay a themed read via
+        :meth:`themed_for_word`). Assumes the sense exists (the caller validated
+        it via :meth:`sense_context_for_examples`)."""
+        async with session_scope(self._session_factory) as session:
+            return (
+                await session.execute(select(Sense.word_id).where(Sense.id == sense_id))
+            ).scalar_one()
+
+    async def stats(self) -> Stats:
+        """Point-in-time dictionary counts in one session (no LLM, no N+1).
+
+        Words grouped by status and assets grouped by kind come back as dicts;
+        everything else is a scalar COUNT. ``themed_words`` counts distinct words
+        with at least one themed overlay (distinct ``Sense.word_id`` over
+        ``ThemedSense``). Counts are a snapshot, not cross-query txn-isolated —
+        acceptable for a stats surface."""
+        async with session_scope(self._session_factory) as session:
+            status_rows = await session.execute(
+                select(Word.status, func.count(Word.id)).group_by(Word.status)
+            )
+            words_by_status = {status: count for status, count in status_rows}
+            asset_rows = await session.execute(
+                select(Asset.kind, func.count(Asset.id)).group_by(Asset.kind)
+            )
+            assets_by_kind = {kind: count for kind, count in asset_rows}
+            senses = (await session.execute(select(func.count(Sense.id)))).scalar_one()
+            examples = (await session.execute(select(func.count(Example.id)))).scalar_one()
+            tags = (await session.execute(select(func.count(Tag.id)))).scalar_one()
+            themes = (await session.execute(select(func.count(Theme.id)))).scalar_one()
+            themed_words = (
+                await session.execute(
+                    select(func.count(func.distinct(Sense.word_id))).select_from(ThemedSense).join(
+                        Sense, Sense.id == ThemedSense.sense_id
+                    )
+                )
+            ).scalar_one()
+            questions = (await session.execute(select(func.count(Question.id)))).scalar_one()
+        return Stats(
+            words_by_status=words_by_status,
+            senses=senses,
+            examples=examples,
+            tags=tags,
+            themes=themes,
+            themed_words=themed_words,
+            assets_by_kind=assets_by_kind,
+            questions=questions,
+        )
+
+    async def append_themed_examples(self, themed_sense_id: int, texts: Sequence[str]) -> int:
+        """Append cleaned, non-empty ``texts`` to a themed sense's examples at
+        ``max(example_order) + 1``. Returns the count inserted.
+
+        Themed mirror of :meth:`append_examples`; never overwrites existing
+        themed examples. Each text is ``_clean``-ed with the same generous cap as
+        the whole-word themed path; empty/whitespace-only texts are skipped."""
+        async with session_scope(self._session_factory) as session:
+            current_max = (
+                await session.execute(
+                    select(func.max(ThemedExample.example_order)).where(
+                        ThemedExample.themed_sense_id == themed_sense_id
+                    )
+                )
+            ).scalar_one_or_none()
+            order = (current_max + 1) if current_max is not None else 0
+            inserted = 0
+            for text in texts:
+                clean = self._clean(text, self._MAX_THEMED_TEXT)
+                if not clean:
+                    continue
+                session.add(
+                    ThemedExample(
+                        themed_sense_id=themed_sense_id, text=clean, example_order=order
+                    )
+                )
+                order += 1
+                inserted += 1
+            await session.flush()
+            return inserted
 
     @staticmethod
     def _resolve_cefr(sense: GeneratedSense, cefr_map: dict[str, str]) -> str | None:

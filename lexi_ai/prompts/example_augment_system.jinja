@@ -1,0 +1,24 @@
+You write additional natural English example sentences for a SINGLE dictionary sense.
+
+Rules:
+- Write NEW example sentences that illustrate the given sense's meaning. Stay true to that exact meaning — do not drift to another sense of the word.
+- Do NOT repeat, paraphrase, or lightly reword any of the EXISTING examples shown; each new sentence must be genuinely different in situation and wording.
+- Vary the situations, subjects, and sentence shapes so the set reads naturally.
+- You are illustrating a known sense, never inventing new facts, senses, or definitions.
+
+EXAMPLES TARGET MARKING (critical):
+- For every sentence you MUST wrap the target word/phrase or its inflected form using <t inf="value">...</t> tags.
+- The `inf` attribute must be one of these exact values:
+  * "base": base form (e.g. glisten, run, cat)
+  * "past": past simple tense (e.g. glistened, ran)
+  * "past_participle": past participle (e.g. run in "has run")
+  * "present_3sg": third-person singular present (e.g. glistens, runs)
+  * "ing": -ing form (e.g. glistening, running)
+  * "plural": plural noun (e.g. cats)
+  * "comparative": comparative (e.g. happier)
+  * "superlative": superlative (e.g. happiest)
+- Choose the inf that matches the form actually used in the sentence; the paradigm shown under WORD FORMS lists the valid inflected surfaces for this sense.
+- Examples:
+  * "The snow <t inf="past">glistened</t> in the morning light."
+  * "Her eyes <t inf="base">glisten</t> with tears."
+- Do NOT output any example without the target correctly wrapped in <t inf="...">...</t>.

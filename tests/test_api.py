@@ -17,11 +17,17 @@ from sqlalchemy.pool import StaticPool
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.embeddings import Embedder
-from lexi_ai.generation.schemas import GeneratedEntry, GeneratedResult, RelatedWord
-from lexi_ai.models import Sense, Word
+from lexi_ai.generation.schemas import (
+    ExampleBatch,
+    GeneratedEntry,
+    GeneratedResult,
+    RelatedWord,
+)
+from lexi_ai.markup import parse_marked_example
+from lexi_ai.models import Example, Sense, Word
 from lexi_ai.normalize import match_key
 from lexi_ai.persistence.repository import Repository
-from lexi_ai.read_models import Entry
+from lexi_ai.read_models import Entry, SenseView
 from lexi_ai.references.cambridge import CamRef
 from lexi_ai.references.loader import ReferenceBundle
 
@@ -98,16 +104,31 @@ class FakeLoader:
 class FakeGenerator:
     """Returns a canned GeneratedResult keyed by the bundle word_raw; counts calls."""
 
-    def __init__(self, results_by_word: dict[str, GeneratedResult]):
+    def __init__(
+        self,
+        results_by_word: dict[str, GeneratedResult],
+        example_batch: ExampleBatch | None = None,
+    ):
         self._results = results_by_word
         self.calls = 0
         self.last_existing_tags: tuple[tuple[str, str], ...] = ()
+        # Canned targeted-example output + recorders for the add_examples path.
+        self._example_batch = example_batch
+        self.example_calls = 0
+        self.last_existing: list[str] | None = None
+        self.last_n: int | None = None
 
     async def generate(self, bundle: ReferenceBundle, existing_tags=()) -> GeneratedResult:
         self.calls += 1
         self.last_existing_tags = tuple(existing_tags)
         await asyncio.sleep(0.01)  # let concurrent tasks overlap
         return self._results[match_key(bundle.word_raw)]
+
+    async def generate_examples(self, sense, existing, n: int) -> ExampleBatch:
+        self.example_calls += 1
+        self.last_existing = list(existing)
+        self.last_n = n
+        return self._example_batch or ExampleBatch(examples=[])
 
 
 def _entry(norm, aliases=None, related=None) -> GeneratedEntry:
@@ -121,11 +142,13 @@ def _entry(norm, aliases=None, related=None) -> GeneratedEntry:
     )
 
 
-def _make_lexicon(engine, cam_words, norm_by_id, results_by_word, embedder=None):
+def _make_lexicon(
+    engine, cam_words, norm_by_id, results_by_word, embedder=None, example_batch=None
+):
     session_factory = create_session_factory(engine)
     cambridge = FakeCambridge(cam_words)
     loader = FakeLoader(cambridge, norm_by_id)
-    generator = FakeGenerator(results_by_word)
+    generator = FakeGenerator(results_by_word, example_batch=example_batch)
     repo = Repository(session_factory)
     lex = Lexicon(session_factory, loader, generator, repo, engine=engine, embedder=embedder)
     return lex, generator, session_factory
@@ -738,3 +761,240 @@ async def test_get_senses_empty_and_missing(engine):
     assert await lex.get_senses([]) == []
     # Unknown ids are skipped, not errored.
     assert await lex.get_senses([999999]) == []
+
+
+# --- add_examples (targeted neutral augmentation) -------------------------
+
+
+async def _seed_sense_with_examples(engine, existing: list[str], embedder=None):
+    """Seed a done word with one sense carrying ``existing`` example texts.
+
+    Returns ``(lex, gen, session_factory, sense_id)``. The lexicon's fake
+    generator carries a canned two-example ExampleBatch for the augment path."""
+    lex, gen, session_factory = _make_lexicon(
+        engine,
+        cam_words={1: ("color", "word", ["color"])},
+        norm_by_id={1: "color"},
+        results_by_word={match_key("color"): GeneratedResult(units=[_entry("color")])},
+        embedder=embedder,
+        example_batch=ExampleBatch(
+            examples=[
+                'She <t inf="past">painted</t> the fence a bright color.',
+                'The <t inf="plural">colors</t> of autumn are stunning.',
+            ]
+        ),
+    )
+    entry = await lex.generate((await lex.search("color"))[0])
+    sense_id = entry.senses[0].sense_id
+    async with session_scope(session_factory) as session:
+        for order, text in enumerate(existing):
+            session.add(Example(sense_id=sense_id, text=text, example_order=order))
+        await session.flush()
+    return lex, gen, session_factory, sense_id
+
+
+async def test_add_examples_appends_without_touching_existing(engine):
+    lex, gen, session_factory, sense_id = await _seed_sense_with_examples(
+        engine, ["An existing example.", "A second one."]
+    )
+    view = await lex.add_examples(sense_id, n=2)
+    # Old two kept, two new appended, order contiguous.
+    assert view.examples[:2] == ["An existing example.", "A second one."]
+    assert len(view.examples) == 4
+    async with session_scope(session_factory) as session:
+        rows = (
+            (
+                await session.execute(
+                    select(Example.example_order).where(Example.sense_id == sense_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert sorted(rows) == [0, 1, 2, 3]
+
+
+async def test_add_examples_returns_sense_view_with_all_examples(engine):
+    lex, _gen, _sf, sense_id = await _seed_sense_with_examples(engine, ["Old."])
+    view = await lex.add_examples(sense_id, n=2)
+    assert isinstance(view, SenseView)
+    assert view.sense_id == sense_id
+    assert len(view.examples) == 3
+
+
+async def test_add_examples_feeds_existing_to_generator(engine):
+    lex, gen, _sf, sense_id = await _seed_sense_with_examples(
+        engine, ["First existing.", "Second existing."]
+    )
+    await lex.add_examples(sense_id, n=2)
+    # Soft dedup: the generator saw the existing examples + the requested n.
+    assert gen.last_existing == ["First existing.", "Second existing."]
+    assert gen.last_n == 2
+
+
+async def test_add_examples_new_examples_carry_parseable_tags(engine):
+    lex, _gen, _sf, sense_id = await _seed_sense_with_examples(engine, [])
+    view = await lex.add_examples(sense_id, n=2)
+    # The appended examples carry <t inf> tags the markup reader can parse.
+    tagged = [e for e in view.examples if "<t inf=" in e]
+    assert len(tagged) == 2
+    for text in tagged:
+        clean, spans = parse_marked_example(text)
+        assert spans and spans[0].surface  # a target span was extracted
+        assert "<t" not in clean  # the clean form has tags unwrapped
+
+
+async def test_add_examples_zero_is_noop(engine):
+    lex, gen, _sf, sense_id = await _seed_sense_with_examples(engine, ["Only one."])
+    view = await lex.add_examples(sense_id, n=0)
+    assert view.examples == ["Only one."]
+    assert gen.example_calls == 0  # no LLM call for n<=0
+
+
+async def test_add_examples_clamps_n_to_schema_ceiling(engine):
+    # n above ExampleBatch's 12-item ceiling is clamped so the model is never
+    # prompted for more than it can validly return (avoids a schema-reject retry).
+    lex, gen, _sf, sense_id = await _seed_sense_with_examples(engine, [])
+    await lex.add_examples(sense_id, n=100)
+    assert gen.last_n == 12
+
+
+async def test_add_examples_unknown_sense_raises(engine):
+    lex, _gen, _sf = _make_lexicon(
+        engine,
+        cam_words={1: ("color", "word", ["color"])},
+        norm_by_id={1: "color"},
+        results_by_word={match_key("color"): GeneratedResult(units=[_entry("color")])},
+    )
+    with pytest.raises(ValueError):
+        await lex.add_examples(999999, n=2)
+
+
+async def test_add_examples_does_not_reembed(engine):
+    # A word generated with a real fake embedder is embedded once at generation;
+    # add_examples must not trigger a re-embed (embeddings are on the def only).
+    embedder = _fake_embedder()
+    lex, _gen, session_factory, sense_id = await _seed_sense_with_examples(
+        engine, ["Old."], embedder=embedder
+    )
+    async with session_scope(session_factory) as session:
+        before = (
+            await session.execute(
+                select(Sense.embedding, Sense.embedding_model).where(Sense.id == sense_id)
+            )
+        ).one()
+    await lex.add_examples(sense_id, n=2)
+    async with session_scope(session_factory) as session:
+        after = (
+            await session.execute(
+                select(Sense.embedding, Sense.embedding_model).where(Sense.id == sense_id)
+            )
+        ).one()
+    assert before == after  # vector + model untouched by add_examples
+
+
+# --- stats (read-only counts) ---------------------------------------------
+
+
+async def test_stats_matches_seeded_fixture(engine):
+    from lexi_ai.models import (
+        Asset,
+        Example,
+        Question,
+        Sense,
+        Tag,
+        Theme,
+        ThemedExample,
+        ThemedSense,
+        Word,
+        WordTag,
+    )
+
+    lex, _gen, session_factory = _make_lexicon(
+        engine, cam_words={}, norm_by_id={}, results_by_word={}
+    )
+    async with session_scope(session_factory) as session:
+        # Two done words (one with 2 senses/3 examples, one with 1 sense/1 example),
+        # a pending stub, and an error word.
+        w1 = Word(norm="alpha", match_key="alpha", status="done")
+        w2 = Word(norm="beta", match_key="beta", status="done")
+        w3 = Word(norm="gamma", match_key="gamma", status="pending")
+        w4 = Word(norm="delta", match_key="delta", status="error")
+        session.add_all([w1, w2, w3, w4])
+        await session.flush()
+        s1 = Sense(word_id=w1.id, definition="d1", tier="core", sense_order=0)
+        s2 = Sense(word_id=w1.id, definition="d2", tier="common", sense_order=1)
+        s3 = Sense(word_id=w2.id, definition="d3", tier="core", sense_order=0)
+        session.add_all([s1, s2, s3])
+        await session.flush()
+        session.add_all(
+            [
+                Example(sense_id=s1.id, text="e1", example_order=0),
+                Example(sense_id=s1.id, text="e2", example_order=1),
+                Example(sense_id=s3.id, text="e3", example_order=0),
+            ]
+        )
+        # One tag linked to w1; one theme with an overlay on s1 (one themed word).
+        tag = Tag(name="business", title="Business", tag_key="business")
+        theme = Theme(theme_key="bard", name="Bard", style_prompt="voice")
+        session.add_all([tag, theme])
+        await session.flush()
+        session.add(WordTag(word_id=w1.id, tag_id=tag.id))
+        ts = ThemedSense(sense_id=s1.id, theme_id=theme.id, definition="themed d1")
+        session.add(ts)
+        await session.flush()
+        session.add(ThemedExample(themed_sense_id=ts.id, text="te1", example_order=0))
+        # One asset of each kind + one question.
+        session.add_all(
+            [
+                Asset(
+                    source_kind="sense_def",
+                    source_id=s1.id,
+                    kind="translate",
+                    params="vi",
+                    content_hash="h1",
+                    text_value="dịch",
+                ),
+                Asset(
+                    source_kind="sense_def",
+                    source_id=s1.id,
+                    kind="tts",
+                    params="alloy|mp3",
+                    content_hash="h2",
+                    file_path="x.mp3",
+                ),
+                Question(
+                    word_id=w1.id,
+                    sense_id=s1.id,
+                    format="contextual_mcq",
+                    answer_kind="choice",
+                    payload="{}",
+                ),
+            ]
+        )
+        await session.flush()
+
+    stats = await lex.stats()
+    assert stats.words_by_status == {"done": 2, "pending": 1, "error": 1}
+    assert stats.senses == 3
+    assert stats.examples == 3
+    assert stats.tags == 1
+    assert stats.themes == 1
+    assert stats.themed_words == 1  # only w1 has a themed overlay
+    assert stats.assets_by_kind == {"translate": 1, "tts": 1}
+    assert stats.questions == 1
+
+
+async def test_stats_empty_dictionary(engine):
+    lex, _gen, _sf = _make_lexicon(
+        engine, cam_words={}, norm_by_id={}, results_by_word={}
+    )
+    stats = await lex.stats()
+    assert stats.words_by_status == {}
+    assert stats.senses == 0
+    assert stats.examples == 0
+    assert stats.tags == 0
+    assert stats.themes == 0
+    assert stats.themed_words == 0
+    assert stats.assets_by_kind == {}
+    assert stats.questions == 0

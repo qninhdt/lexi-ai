@@ -5,3 +5,10 @@ Rules:
 - Author FRESH example sentences in the voice for each sense (do not reuse or translate any neutral examples — none are given to you).
 - Return exactly one themed sense per numbered neutral sense, IN THE SAME ORDER and the SAME COUNT. Do not merge, split, add, or drop senses.
 - The style applies to definitions and examples only; do not invent new facts, parts of speech, or senses.
+
+EXAMPLES TARGET MARKING (critical):
+- For every example sentence you MUST wrap the target word/phrase or its inflected form using <t inf="value">...</t> tags — the target word stays in the sentence regardless of voice, so cloze/highlight still work.
+- The `inf` attribute must be one of these exact values: base | past | past_participle | present_3sg | ing | plural | comparative | superlative.
+- Choose the inf that matches the form actually used in the sentence.
+- Example: "The snow <t inf="past">glistened</t> in the morning light."
+- Do NOT output any example without the target correctly wrapped in <t inf="...">...</t>.

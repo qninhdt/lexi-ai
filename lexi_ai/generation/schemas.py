@@ -21,6 +21,7 @@ become ``aliases`` on one unit (decision #17, enforced by the prompt).
 # reportGeneralTypeIssues, ...) still surfaces, so type-checking is not blind here.
 # pyright: reportInvalidTypeForm=false
 
+from dataclasses import dataclass, field
 from typing import Literal
 from warnings import filterwarnings
 
@@ -257,3 +258,40 @@ class GeneratedResult(BaseModel):
             "independent lemmas with different meanings on one page."
         ),
     )
+
+
+class ExampleBatch(BaseModel):
+    """Targeted example augmentation for ONE sense (neutral or themed).
+
+    The same schema (and its ``<t inf>`` tag contract) is reused by both the
+    neutral and themed ``add_examples`` paths so the two never drift — there is
+    no themed-specific batch schema.
+    """
+
+    examples: list[str] = Field(
+        default_factory=list,
+        max_length=12,
+        description=(
+            "Fresh English example sentences for the given sense. For every "
+            "sentence you MUST wrap the target word/phrase (or its inflected "
+            'form) using <t inf="value">...</t> tags. Valid inf values are: '
+            "base | past | past_participle | present_3sg | ing | plural | "
+            "comparative | superlative. "
+            'Example for \'glisten\': \'The snow <t inf="past">glistened</t> '
+            "in the sun.' (same contract as GeneratedSense.examples)."
+        ),
+    )
+
+
+@dataclass
+class ExampleGenContext:
+    """Internal carrier of the facts a targeted example generator needs for ONE
+    sense: its definition/pos/guideword/tier plus the ``(inf, surface)`` paradigm.
+    NOT a public read model — assembled in the repository, consumed by the
+    generator."""
+
+    definition: str
+    pos: str | None
+    guideword: str | None
+    tier: str
+    forms: list[tuple[str, str]] = field(default_factory=list)

@@ -117,9 +117,16 @@ Every resource has get/list/delete alongside create — `get_theme`/`update_them
 `delete_theme`, `delete_entry`/`list_entries`/`list_entries_by_tag`,
 `rename_tag`/`delete_tag`/`merge_tags`, `get_asset`/`list_assets`/`delete_asset`/
 `purge_assets`. Bulk variants (`generate_many`, `get_many`, `translate_many`,
-`get_status_many`, `lex.questions.grade_many`) run concurrently and return a
-`list[BatchResult]` — one entry per input, in order; a failed item never aborts
-the rest (check `result.ok` / `result.value` / `result.error`).
+`tts_many`, `get_status_many`, `lex.questions.grade_many`) run concurrently and
+return a `list[BatchResult]` — one entry per input, in order; a failed item never
+aborts the rest (check `result.ok` / `result.value` / `result.error`).
+
+`add_examples(sense_id, n=3, theme=None)` appends up to `n` fresh example
+sentences to a single sense (neutral, or a themed overlay when `theme=` is set —
+the word must already be themed) and returns the updated `SenseView`; it never
+overwrites existing examples and never re-embeds. `stats()` returns read-only
+dictionary counts (words by status, senses, examples, tags, themes, themed
+words, assets by kind, questions).
 
 ### Question formats
 

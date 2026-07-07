@@ -11,7 +11,7 @@ low temperature keeps output roughly deterministic.
 from collections.abc import Sequence
 
 from lexi_ai.config import Settings, get_settings
-from lexi_ai.generation.schemas import GeneratedResult
+from lexi_ai.generation.schemas import ExampleBatch, ExampleGenContext, GeneratedResult
 from lexi_ai.llm import StructuredLLM, ainvoke_structured, build_structured_llm, sys_msg, user_msg
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.references.loader import ReferenceBundle
@@ -63,6 +63,35 @@ class Generator:
             self.llm,
             messages,
             GeneratedResult,
+            max_retries=self._max_retries,
+            base_delay=self._base_delay,
+        )
+
+    async def generate_examples(
+        self, sense: ExampleGenContext, existing: Sequence[str], n: int
+    ) -> ExampleBatch:
+        """Author up to ``n`` fresh tagged example sentences for ONE sense.
+
+        Targeted counterpart to :meth:`generate` (which produces a whole word):
+        feeds the sense's facts + its existing examples (soft dedup) to the model
+        and returns a validated :class:`ExampleBatch`. ``n`` is a best-effort max.
+        """
+        system_content = PromptLoader.render("example_augment_system")
+        user_content = PromptLoader.render(
+            "example_augment_user",
+            definition=sense.definition,
+            pos=sense.pos,
+            guideword=sense.guideword,
+            tier=sense.tier,
+            forms=sense.forms,
+            existing=list(existing),
+            n=n,
+        )
+        messages = [sys_msg(system_content), user_msg(user_content)]
+        return await ainvoke_structured(
+            self.llm,
+            messages,
+            ExampleBatch,
             max_retries=self._max_retries,
             base_delay=self._base_delay,
         )
