@@ -1,0 +1,21 @@
+{# Shared <t inf> target-marking rules. Set `voice = true` before including for themed prompts. #}
+## Target markup (required)
+
+Wrap the target word or phrase — in whatever inflected form appears — in `<t inf="...">...</t>` tags in every example sentence.{% if voice %} The target stays in the sentence regardless of voice, so cloze and highlight still work.{% endif %} Never emit an example without this markup.
+
+`inf` must be exactly one of:
+- `base` — base form (glisten, run, cat)
+- `past` — past simple (glistened, ran)
+- `past_participle` — past participle (run, as in "has run")
+- `present_3sg` — third-person singular present (glistens, runs)
+- `ing` — -ing form (glistening, running)
+- `plural` — plural noun (cats)
+- `comparative` — comparative (happier)
+- `superlative` — superlative (happiest)
+
+Pick the `inf` matching the form actually used in the sentence; when word forms are listed, draw from those surfaces. Tag each part of a multi-word target separately.
+
+Examples:
+- "The snow <t inf="past">glistened</t> in the morning light."
+- "Her eyes <t inf="base">glisten</t> with tears."
+- Phrase "bring up": "She <t inf="past">brought</t> the children <t inf="base">up</t> alone."
