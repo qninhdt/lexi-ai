@@ -1,6 +1,6 @@
 """``contextual_mcq`` — LLM MCQ from a novel context; PERSISTS its output."""
 
-from lexi_ai.llm import ainvoke_structured, sys_msg, user_msg
+from lexi_ai.llm import ainvoke_structured, guarded_messages
 from lexi_ai.normalize import match_key
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.questions.base import FormatSpec, QuestionContext, register
@@ -35,7 +35,7 @@ class ContextualMCQ:
         )
         mcq = await ainvoke_structured(
             ctx.llm,
-            [sys_msg(_CONTEXTUAL_SYSTEM), user_msg(human)],
+            guarded_messages(_CONTEXTUAL_SYSTEM, human),
             GeneratedMCQ,
         )
         # We use only the llm's stem + distractors; the correct answer is always the

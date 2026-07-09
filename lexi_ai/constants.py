@@ -16,6 +16,85 @@ TIERS = ("core", "common", "extended", "rare")
 TIER_SET = frozenset(TIERS)
 TIER_ORDER = {tier: i for i, tier in enumerate(TIERS)}
 
+# senses.pos — closed controlled vocab (Phase 1 of sense-level relations). The
+# 12 learner-facing part-of-speech labels. Closing this (previously free
+# ``String(32)``) is the foundation for the WSD POS-filter: a target sense whose
+# POS is a drifted variant ("adj" vs "adjective") would be filtered wrong. The
+# generation schema builds a strict enum from this set (required per sense), and
+# ``normalize_pos`` folds legacy/loose variants for the WSD matcher and for
+# reading pre-vocab rows. Stored as ``String(32)`` (no native enum — portable).
+POS_TAGS = frozenset(
+    {
+        "noun",
+        "verb",
+        "adjective",
+        "adverb",
+        "pronoun",
+        "preposition",
+        "conjunction",
+        "determiner",
+        "interjection",
+        "numeral",
+        "article",
+        "auxiliary",
+    }
+)
+
+# Loose/legacy surface forms -> canonical POS label. Applied on BOTH sides of the
+# WSD POS comparison (source POS is already closed vocab; target POS may be older
+# drifted data like "adj"/"v."/NULL) so ``NULL == NULL`` (false in SQL) and
+# variant spellings never mis-filter candidates. Returns ``None`` for anything
+# unmappable — never guesses.
+_POS_ALIASES = {
+    "n": "noun",
+    "n.": "noun",
+    "v": "verb",
+    "v.": "verb",
+    "adj": "adjective",
+    "adj.": "adjective",
+    "a": "adjective",
+    "adv": "adverb",
+    "adv.": "adverb",
+    "pron": "pronoun",
+    "pron.": "pronoun",
+    "prep": "preposition",
+    "prep.": "preposition",
+    "conj": "conjunction",
+    "conj.": "conjunction",
+    "det": "determiner",
+    "det.": "determiner",
+    "interj": "interjection",
+    "interj.": "interjection",
+    "int": "interjection",
+    "num": "numeral",
+    "num.": "numeral",
+    "art": "article",
+    "art.": "article",
+    "aux": "auxiliary",
+    "aux.": "auxiliary",
+    "modal": "auxiliary",
+}
+
+
+def normalize_pos(raw: str | None) -> str | None:
+    """Fold a loose/legacy POS surface form to a canonical :data:`POS_TAGS` label.
+
+    Pure function: lowercase + strip, accept an exact vocab label, else map a
+    known alias (``adj`` -> ``adjective``, ``N`` -> ``noun``). Returns ``None``
+    for empty / unmappable input — it NEVER guesses (an unknown POS is treated as
+    "unknown", not force-fit to a tag). Used by the WSD POS-filter (Phase 4, both
+    source and target side) and as a safety net when reading pre-vocab rows.
+    """
+    if not raw:
+        return None
+    token = raw.strip().lower()
+    if not token:
+        return None
+    if token in POS_TAGS:
+        return token
+    return _POS_ALIASES.get(token)
+
+
 # word_aliases.type taxonomy (brainstorm §6.1).
 ALIAS_TYPES = frozenset(
     {
@@ -43,10 +122,10 @@ ALIAS_TYPES = frozenset(
 # word_aliases.dialect
 DIALECTS = frozenset({"uk", "us"})
 
-# entry_links.rel_type. ``word_family``/``confused_with``/``hypernym``/``hyponym``
-# are word-references: they NAME a lemma, so they ride the same normalized
-# related[] → entry_links path as synonyms (match_key stub-rows + dedup),
-# inheriting all of it for free.
+# relation rel_type — the full vocabulary. Each type is routed to ONE table by
+# ``REL_LEVEL`` below: word-level types ride the ``related[]`` → ``word_relation``
+# path (match_key stub-rows + dedup), sense-level types become ``sense_relation``
+# half-edges emitted per SENSE and later WSD-resolved (Phase 3/4).
 REL_TYPES = frozenset(
     {
         "arrow_redirect",
@@ -60,8 +139,65 @@ REL_TYPES = frozenset(
         "confused_with",
         "hypernym",
         "hyponym",
+        "meronym",
+        "holonym",
     }
 )
+
+# The routing table (single source of truth): each ``rel_type`` maps to the level
+# of the relation, ``"word"`` (→ ``word_relation``, no sense on either end, no WSD)
+# or ``"sense"`` (→ ``sense_relation``, sense-DEPENDENT, WSD-resolved). The two
+# generation enums (`_WordRelTypeLit`/`_SenseRelTypeLit`) and the persist router
+# are all derived from THIS map so a rel_type can never be mis-levelled. A test
+# asserts every REL_TYPES member appears here (no orphan level).
+REL_LEVEL = {
+    # word-level → word_relation
+    "word_family": "word",
+    "confused_with": "word",
+    "variant_of": "word",
+    "arrow_redirect": "word",
+    "another_word": "word",
+    "part_of_phrasal_family": "word",
+    # sense-level → sense_relation
+    "synonym": "sense",
+    "antonym": "sense",
+    "hypernym": "sense",
+    "hyponym": "sense",
+    "meronym": "sense",
+    "holonym": "sense",
+    "see_also": "sense",
+}
+
+WORD_REL_TYPES = frozenset(rt for rt, level in REL_LEVEL.items() if level == "word")
+SENSE_REL_TYPES = frozenset(rt for rt, level in REL_LEVEL.items() if level == "sense")
+
+# Direction semantics of each SENSE-level rel_type, used by the READ model (Phase
+# 6) to surface inverse/symmetric edges from the far side WITHOUT ever mutating a
+# row ([F8] — canonicalize-on-read, never on-write). Values:
+#   "symmetric"      — the relation reads the same both ways (synonym↔synonym).
+#   "inverse:<other>" — reading from the target flips the label (hypernym seen
+#                       from the target is a hyponym, and vice versa).
+# Only sense-level types appear (word-level relations are not WSD-resolved and are
+# surfaced as emitted). A test asserts every SENSE_REL_TYPES member is classified
+# and that every ``inverse:<other>`` names a real, mutually-inverse sense type.
+REL_SYMMETRY = {
+    "synonym": "symmetric",
+    "antonym": "symmetric",
+    "see_also": "symmetric",
+    "hypernym": "inverse:hyponym",
+    "hyponym": "inverse:hypernym",
+    "meronym": "inverse:holonym",
+    "holonym": "inverse:meronym",
+}
+
+# WSD batch cost guards ([F9]) — caller/data-controlled sizes are DoS vectors, so
+# both are hard-clamped in the resolve path (never merely defaulted):
+#   WSD_BATCH_CEIL   — max edges reconciled per resolve_relations() call.
+#   WSD_CANDIDATE_CAP — max target senses shown to the judge per task (top-K by
+#                       sense_order); keeps a pathological many-sense word from
+#                       ballooning one prompt.
+WSD_BATCH_CEIL = 50
+WSD_CANDIDATE_CAP = 12
 
 # senses.grammar — countability / transitivity / complementation labels. Stored
 # comma-joined in one column, so a label must NEVER contain a comma (the join

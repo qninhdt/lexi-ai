@@ -48,13 +48,46 @@ def create_session_factory(
     return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
+async def migrate_relations(engine: AsyncEngine) -> None:
+    """Rename the legacy ``entry_links`` table to ``word_relation`` (Phase 2).
+
+    ``init_models`` is ``create_all`` — additive only, it never renames. On the
+    real 149MB DB the old ``entry_links`` table already exists; a plain
+    ``create_all`` would leave it orphaned and build an EMPTY ``word_relation``
+    alongside it, so every ``Entry.links`` would read blank. This migration runs
+    BEFORE ``create_all`` (wired into :func:`init_models`, [RED TEAM F1]) so the
+    populated table is carried over by a metadata-only ``ALTER TABLE ... RENAME``
+    (fast on both SQLite and Postgres, no row copy).
+
+    Idempotent: it acts only when ``entry_links`` exists AND ``word_relation``
+    does not, so re-running (or a fresh DB that never had ``entry_links``) is a
+    no-op. ``create_all`` then adds the new ``sense_relation`` table.
+    """
+    async with engine.begin() as conn:
+        has_old = await conn.run_sync(
+            lambda sync_conn: engine.dialect.has_table(sync_conn, "entry_links")
+        )
+        has_new = await conn.run_sync(
+            lambda sync_conn: engine.dialect.has_table(sync_conn, "word_relation")
+        )
+        if has_old and not has_new:
+            await conn.exec_driver_sql("ALTER TABLE entry_links RENAME TO word_relation")
+
+
 async def init_models(engine: AsyncEngine) -> None:
     """Create all tables on a fresh generated-dictionary DB (additive only).
 
     This is ``create_all``: it NEVER drops a table or adds a column to an
     existing one. Structural changes to a table that already exists need
     :func:`reset_assets_table` (or, once real data must survive, a migration
-    tool — deferred, see the roadmap)."""
+    tool — deferred, see the roadmap).
+
+    [RED TEAM F1] :func:`migrate_relations` runs FIRST (before ``create_all``) so
+    the legacy ``entry_links`` table is renamed to ``word_relation`` in place —
+    otherwise ``create_all`` would orphan the populated table and build an empty
+    one. ``init()`` is the only bootstrap path, so wiring it here guarantees no
+    caller can skip the migration."""
+    await migrate_relations(engine)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

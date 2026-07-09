@@ -17,12 +17,13 @@ from lexi_ai.db import (
     session_scope,
 )
 from lexi_ai.models import (
-    EntryLink,
     Example,
     Sense,
     SenseReference,
+    SenseRelation,
     Word,
     WordAlias,
+    WordRelation,
 )
 
 
@@ -147,8 +148,8 @@ async def test_entry_link_unique_triple(session_factory):
             b = await _make_word(session, match_key="b", norm="b")
             session.add_all(
                 [
-                    EntryLink(from_word_id=a.id, to_word_id=b.id, rel_type="synonym"),
-                    EntryLink(from_word_id=a.id, to_word_id=b.id, rel_type="synonym"),
+                    WordRelation(from_word_id=a.id, to_word_id=b.id, rel_type="synonym"),
+                    WordRelation(from_word_id=a.id, to_word_id=b.id, rel_type="synonym"),
                 ]
             )
             await session.flush()
@@ -169,6 +170,140 @@ async def test_cascade_delete_word_removes_children(session_factory):
     async with session_scope(session_factory) as session:
         assert (await session.execute(select(Sense))).all() == []
         assert (await session.execute(select(WordAlias))).all() == []
+
+
+# --- sense_relation (Phase 2): edge + derived-state work queue ------------
+
+
+async def _make_sense(session, word, definition="d", tier="core", pos="noun"):
+    sense = Sense(word_id=word.id, definition=definition, tier=tier, pos=pos)
+    session.add(sense)
+    await session.flush()
+    return sense
+
+
+async def test_sense_relation_insert_pending(session_factory):
+    # A half-edge: to_sense_id NULL + resolve_attempted_at NULL == derived pending.
+    async with session_scope(session_factory) as session:
+        a = await _make_word(session, match_key="a", norm="a")
+        b = await _make_word(session, match_key="b", norm="b")
+        src = await _make_sense(session, a, definition="lacking light", pos="adjective")
+        rel = SenseRelation(
+            from_sense_id=src.id,
+            to_word_id=b.id,
+            to_sense_id=None,
+            rel_type="antonym",
+            gloss="full of light",
+        )
+        session.add(rel)
+        await session.flush()
+
+    async with session_scope(session_factory) as session:
+        row = (await session.execute(select(SenseRelation))).scalar_one()
+        assert row.to_sense_id is None
+        assert row.resolve_attempted_at is None  # derived: pending
+
+
+async def test_sense_relation_unique_triple(session_factory):
+    with pytest.raises(IntegrityError):
+        async with session_scope(session_factory) as session:
+            a = await _make_word(session, match_key="a", norm="a")
+            b = await _make_word(session, match_key="b", norm="b")
+            src = await _make_sense(session, a)
+            session.add_all(
+                [
+                    SenseRelation(
+                        from_sense_id=src.id, to_word_id=b.id, rel_type="synonym", gloss="g1"
+                    ),
+                    SenseRelation(
+                        from_sense_id=src.id, to_word_id=b.id, rel_type="synonym", gloss="g2"
+                    ),
+                ]
+            )
+            await session.flush()
+
+
+async def test_target_sense_delete_sets_null_keeps_edge(session_factory):
+    # Deleting the TARGET sense must SET NULL to_sense_id (not delete the edge):
+    # the sense->word relation survives.
+    async with session_scope(session_factory) as session:
+        a = await _make_word(session, match_key="a", norm="a")
+        b = await _make_word(session, match_key="b", norm="b")
+        src = await _make_sense(session, a, pos="adjective")
+        tgt = await _make_sense(session, b, pos="adjective")
+        session.add(
+            SenseRelation(
+                from_sense_id=src.id,
+                to_word_id=b.id,
+                to_sense_id=tgt.id,
+                rel_type="antonym",
+                gloss="g",
+                target_hash="deadbeef",
+            )
+        )
+        await session.flush()
+        tgt_id = tgt.id
+
+    async with session_scope(session_factory) as session:
+        await session.execute(
+            select(Sense).where(Sense.id == tgt_id)
+        )  # ensure loaded path
+        tgt = (await session.execute(select(Sense).where(Sense.id == tgt_id))).scalar_one()
+        await session.delete(tgt)
+
+    async with session_scope(session_factory) as session:
+        row = (await session.execute(select(SenseRelation))).scalar_one()
+        assert row.to_sense_id is None  # SET NULL — edge survives at sense->word
+
+
+async def test_target_sense_delete_auto_demotes_via_fk(session_factory):
+    # [VALIDATE Q1] resolved edge, then target sense deleted: FK SET NULL alone
+    # drops to_sense_id -> derived state is NO LONGER 'resolved'. (Full re-queue to
+    # 'pending' needs the Phase 5 helper to also clear resolve_attempted_at.)
+    async with session_scope(session_factory) as session:
+        a = await _make_word(session, match_key="a", norm="a")
+        b = await _make_word(session, match_key="b", norm="b")
+        src = await _make_sense(session, a)
+        tgt = await _make_sense(session, b)
+        session.add(
+            SenseRelation(
+                from_sense_id=src.id,
+                to_word_id=b.id,
+                to_sense_id=tgt.id,
+                rel_type="synonym",
+                gloss="g",
+            )
+        )
+        await session.flush()
+        tgt_id = tgt.id
+
+    async with session_scope(session_factory) as session:
+        tgt = (await session.execute(select(Sense).where(Sense.id == tgt_id))).scalar_one()
+        await session.delete(tgt)
+
+    async with session_scope(session_factory) as session:
+        row = (await session.execute(select(SenseRelation))).scalar_one()
+        assert row.to_sense_id is None  # not resolved anymore, no code demote needed
+
+
+async def test_source_sense_delete_cascades_edge(session_factory):
+    # Deleting the SOURCE sense must CASCADE-delete the edge (Case 6).
+    async with session_scope(session_factory) as session:
+        a = await _make_word(session, match_key="a", norm="a")
+        b = await _make_word(session, match_key="b", norm="b")
+        src = await _make_sense(session, a)
+        session.add(
+            SenseRelation(from_sense_id=src.id, to_word_id=b.id, rel_type="synonym", gloss="g")
+        )
+        await session.flush()
+        src_id = src.id
+
+    async with session_scope(session_factory) as session:
+        src = (await session.execute(select(Sense).where(Sense.id == src_id))).scalar_one()
+        await session.delete(src)
+
+    async with session_scope(session_factory) as session:
+        assert (await session.execute(select(SenseRelation))).all() == []
 
 
 # --- dual-dialect portability (no live Postgres needed) -------------------

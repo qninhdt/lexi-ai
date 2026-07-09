@@ -111,7 +111,7 @@ def _result(norm: str, topics: list[tuple[str, str]]) -> GeneratedResult:
             GeneratedEntry(
                 norm=norm,
                 entry_type="word",
-                senses=[GeneratedSense(definition=f"def of {norm}", tier="core")],
+                senses=[GeneratedSense(definition=f"def of {norm}", tier="core", pos="noun")],
                 topics=[GeneratedTopic(tag=t, title=ti) for t, ti in topics],
             )
         ]

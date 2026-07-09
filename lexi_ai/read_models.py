@@ -52,6 +52,37 @@ class SenseView:
     # (None for views synthesized without a row). Lets the questions engine record
     # which sense a generated question targets, for provenance.
     sense_id: int | None = None
+    # Sense-level semantic relations THIS sense emits (synonym/antonym/hypernym/
+    # ...). Distinct from ``Entry.links`` (word-level): these are anchored to the
+    # specific meaning that emitted them. Additive — a consumer reading only
+    # ``Entry.links`` is unaffected. Empty when the sense emits none.
+    relations: list["SenseRelationView"] = field(default_factory=list)
+
+
+@dataclass
+class SenseRelationView:
+    """One sense-level relation surfaced from a :class:`SenseView` (parallel to
+    :class:`LinkView` for word-level links).
+
+    Always carries the sense->word half: ``to_word_id`` + ``to_word_display`` +
+    ``rel_type`` + ``to_word_status`` (a ``pending`` target is a stub awaiting
+    lazy generation). The resolved target sense is additive: ``to_sense_id`` +
+    ``to_sense_gloss`` are set only once WSD reconciled it AND the read-time hash
+    still matches (F5 — a stale target is surfaced as unresolved).
+
+    ``wsd_state`` is DERIVED (Q1 — there is no ``wsd_state`` DB column): the read
+    model computes ``resolved`` / ``unresolvable`` / ``pending`` from
+    ``to_sense_id`` + ``resolve_attempted_at`` + the hash-verify result, exposed
+    as a string for consumers to filter on.
+    """
+
+    rel_type: str
+    to_word_display: str
+    to_word_id: int
+    to_word_status: str
+    wsd_state: str
+    to_sense_id: int | None = None
+    to_sense_gloss: str | None = None
 
 
 @dataclass

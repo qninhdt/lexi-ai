@@ -73,10 +73,12 @@ class Word(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    # Outgoing links (this word -> others).
-    links_out: Mapped[list["EntryLink"]] = relationship(
+    # Outgoing word-level links (this word -> others). Table renamed
+    # EntryLink -> WordRelation (Phase 2); the ``links_out`` attribute name is
+    # kept so the read model / consumers do not churn.
+    links_out: Mapped[list["WordRelation"]] = relationship(
         back_populates="from_word",
-        foreign_keys="EntryLink.from_word_id",
+        foreign_keys="WordRelation.from_word_id",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
@@ -106,8 +108,17 @@ class WordAlias(Base):
     word: Mapped["Word"] = relationship(back_populates="aliases")
 
 
-class EntryLink(Base):
-    __tablename__ = "entry_links"
+class WordRelation(Base):
+    """A WORD-level relation (this word -> another word), Phase 2 rename of the
+    former ``EntryLink`` / ``entry_links`` table. Shape is unchanged: no sense on
+    either end, no WSD. ``word_family``/``confused_with``/``variant_of``/
+    ``arrow_redirect``/``another_word``/``part_of_phrasal_family`` ride this path.
+
+    Sense-DEPENDENT relations (synonym/antonym/hypernym/...) live in the separate
+    :class:`SenseRelation` table (sense-level).
+    """
+
+    __tablename__ = "word_relation"
     __table_args__ = (
         UniqueConstraint("from_word_id", "to_word_id", "rel_type", name="uq_link_triple"),
     )
@@ -126,6 +137,67 @@ class EntryLink(Base):
         back_populates="links_out", foreign_keys=[from_word_id]
     )
     to_word: Mapped["Word"] = relationship(foreign_keys=[to_word_id])
+
+
+class SenseRelation(Base):
+    """A SENSE-level semantic relation: it is BOTH the edge AND the WSD work-queue
+    row (Phase 2). Emitted at generation time as a half-edge
+    ``from_sense -> (to_word, gloss)``; a later WSD pass fills ``to_sense_id``.
+
+    State is DERIVED (Q1 — there is deliberately NO ``wsd_state`` column):
+
+    - ``resolved``     ⟺ ``to_sense_id IS NOT NULL``
+    - ``unresolvable`` ⟺ ``to_sense_id IS NULL AND resolve_attempted_at IS NOT NULL``
+    - ``pending``      ⟺ ``to_sense_id IS NULL AND resolve_attempted_at IS NULL``
+
+    FK ondelete is load-bearing:
+
+    - ``from_sense_id`` CASCADE — source sense gone ⇒ the edge is meaningless, drop
+      it (Case 6; re-emitted when the source regenerates).
+    - ``to_sense_id``   SET NULL — target sense gone ⇒ keep the edge at sense->word
+      level (``to_word_id`` still valid), only the resolved target is cleared. This
+      auto-demotes ``resolved`` -> (``to_sense_id`` NULL) via a single FK path, so
+      there is no hand-maintained column to fall out of sync (the F4 bug class).
+      A ``_demote_edges_for_senses`` helper still resets ``resolve_attempted_at``
+      so the edge lands back in ``pending`` rather than ``unresolvable`` (Phase 5).
+    """
+
+    __tablename__ = "sense_relation"
+    __table_args__ = (
+        UniqueConstraint("from_sense_id", "to_word_id", "rel_type", name="uq_sense_rel"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Source is ALWAYS a concrete sense (the meaning that emits the relation).
+    from_sense_id: Mapped[int] = mapped_column(
+        ForeignKey("senses.id", ondelete="CASCADE"), nullable=False
+    )
+    # Target WORD is always present (stub-row pattern) — the consumer always gets
+    # at least sense->word, enough to display.
+    to_word_id: Mapped[int] = mapped_column(
+        ForeignKey("words.id", ondelete="CASCADE"), nullable=False
+    )
+    # Target SENSE: filled by WSD (resolved); SET NULL when the target sense is
+    # deleted/regenerated (Case 2). NULL = not-yet / no-longer resolved.
+    to_sense_id: Mapped[int | None] = mapped_column(
+        ForeignKey("senses.id", ondelete="SET NULL")
+    )
+    rel_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    # LM description of the TARGET's intended meaning — the load-bearing signal WSD
+    # uses to pick the right target sense. Non-empty (Phase 3 skips empty edges).
+    gloss: Mapped[str] = mapped_column(Text, nullable=False)
+    # sha256 of the resolved to_sense content, stamped at resolve; VERIFIED on read
+    # (Phase 6) so a mutated/regenerated target is treated as unresolved.
+    target_hash: Mapped[str | None] = mapped_column(String(64))
+    # Marks "WSD tried and the judge returned none" — the ONLY thing distinguishing
+    # derived ``unresolvable`` from ``pending`` (Q1). NO ``wsd_state`` column.
+    resolve_attempted_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    from_sense: Mapped["Sense"] = relationship(
+        back_populates="relations_out", foreign_keys=[from_sense_id]
+    )
+    to_word: Mapped["Word"] = relationship(foreign_keys=[to_word_id])
+    to_sense: Mapped["Sense | None"] = relationship(foreign_keys=[to_sense_id])
 
 
 class Sense(Base):
@@ -185,6 +257,17 @@ class Sense(Base):
     )
     forms: Mapped[list["SenseForm"]] = relationship(
         back_populates="sense",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    # Sense-level relations THIS sense emits (synonym/antonym/hypernym/...). The
+    # edge rows carry from_sense_id -> to_word (+ optional resolved to_sense).
+    # CASCADE on from_sense_id: regenerating/deleting this sense drops its edges
+    # (Case 6). Edges targeting THIS sense (to_sense_id) are NOT in this collection
+    # and are SET NULL, not cascaded (Case 2).
+    relations_out: Mapped[list["SenseRelation"]] = relationship(
+        back_populates="from_sense",
+        foreign_keys="SenseRelation.from_sense_id",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )

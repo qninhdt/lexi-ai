@@ -20,9 +20,10 @@ from lexi_ai.generation.schemas import (
     GeneratedForm,
     GeneratedResult,
     GeneratedSense,
+    GeneratedSenseRelation,
     RelatedWord,
 )
-from lexi_ai.models import Collocation, EntryLink, SenseForm, Word
+from lexi_ai.models import Collocation, SenseForm, SenseRelation, Word, WordRelation
 from lexi_ai.normalize import match_key
 from lexi_ai.persistence.repository import Repository
 
@@ -62,11 +63,14 @@ def _result(
     forms: list[tuple[str, str]] | None = None,
     domain: str | None = None,
     usage_note: str | None = None,
+    sense_relations: list[tuple[str, str, str]] | None = None,
 ) -> GeneratedResult:
     """One-unit result whose single sense carries the given enrichments.
 
     ``related`` is a list of ``(norm, rel_type)`` pairs -> word-references.
     ``forms`` is a list of ``(inf, surface)`` pairs -> inflection paradigm.
+    ``sense_relations`` is a list of ``(rel_type, norm, gloss)`` triples ->
+    sense-level half-edges emitted by the single sense.
     """
     return GeneratedResult(
         units=[
@@ -77,6 +81,7 @@ def _result(
                     GeneratedSense(
                         definition=f"def of {norm}",
                         tier="core",
+                        pos="noun",
                         guideword=guideword,
                         grammar=grammar or [],
                         register=register,
@@ -87,6 +92,10 @@ def _result(
                         forms=[GeneratedForm(inf=i, surface=s) for i, s in (forms or [])],
                         domain=domain,
                         usage_note=usage_note,
+                        relations=[
+                            GeneratedSenseRelation(rel_type=rt, norm=n, gloss=g)
+                            for rt, n, g in (sense_relations or [])
+                        ],
                     )
                 ],
                 related=[RelatedWord(norm=n, rel_type=rt) for n, rt in (related or [])],
@@ -120,9 +129,9 @@ async def test_word_family_normalized_and_shared(engine):
         links = list(
             (
                 await s.execute(
-                    select(EntryLink).where(
-                        EntryLink.to_word_id == target_id,
-                        EntryLink.rel_type == "word_family",
+                    select(WordRelation).where(
+                        WordRelation.to_word_id == target_id,
+                        WordRelation.rel_type == "word_family",
                     )
                 )
             ).scalars()
@@ -142,37 +151,120 @@ async def test_confused_with_links(engine):
     assert confused[0].display == "effect"
 
 
-async def test_hypernym_hyponym_links(engine):
-    # Two taxonomic relations the LLM generates itself; they ride the same
-    # related[] -> entry_links id-based path as synonym/word_family, resolving to
-    # real stub words rows, and surface unfiltered in the flat Entry.links list.
+async def test_hypernym_hyponym_sense_relations(engine):
+    # Two taxonomic relations are now SENSE-level (Phase 3): the emitting sense
+    # carries them with a gloss, and they persist as sense_relation half-edges
+    # (to_sense_id NULL = pending) keyed to real stub words rows.
     sf = create_session_factory(engine)
     repo = Repository(sf)
     words = await repo.persist_result(
-        _result("dog", related=[("animal", "hypernym"), ("poodle", "hyponym")])
+        _result(
+            "dog",
+            sense_relations=[
+                ("hypernym", "animal", "a living creature"),
+                ("hyponym", "poodle", "a curly-haired dog breed"),
+            ],
+        )
     )
 
-    # Persisted as id-based EntryLink rows with real to_word_id stubs.
     async with sf() as s:
-        links = list(
+        sense_id = (
+            await s.execute(select(SenseRelation.from_sense_id).limit(1))
+        ).scalar_one()
+        rels = list(
             (
                 await s.execute(
-                    select(EntryLink).where(EntryLink.from_word_id == words[0].id)
+                    select(SenseRelation).where(SenseRelation.from_sense_id == sense_id)
                 )
             ).scalars()
         )
-        by_type = {ln.rel_type: ln for ln in links}
+        by_type = {r.rel_type: r for r in rels}
         assert set(by_type) == {"hypernym", "hyponym"}
+        # Half-edges: target word resolved, target sense still pending (NULL).
         assert by_type["hypernym"].to_word_id is not None
-        assert by_type["hyponym"].to_word_id is not None
+        assert by_type["hypernym"].to_sense_id is None
+        assert by_type["hypernym"].resolve_attempted_at is None
+        assert by_type["hypernym"].gloss == "a living creature"
+        assert by_type["hyponym"].gloss == "a curly-haired dog breed"
 
-    # Surface unfiltered in the flat read model by their rel_type (grouping is a
-    # consumer concern — no read-model change needed for the new types).
+    # Word-level links list stays empty — these are NOT word relations anymore.
     lex = await _reading_lexicon(engine, repo)
     entry = await lex.get_entry(words[0].id)
-    surfaced = {ln.rel_type: ln.display for ln in entry.links}
-    assert surfaced.get("hypernym") == "animal"
-    assert surfaced.get("hyponym") == "poodle"
+    assert all(ln.rel_type not in ("hypernym", "hyponym") for ln in entry.links)
+
+
+async def test_meronym_holonym_sense_relations(engine):
+    # Part-whole relations are also SENSE-level; same half-edge persistence path.
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    await repo.persist_result(
+        _result(
+            "car",
+            sense_relations=[
+                ("meronym", "wheel", "round part a car rolls on"),
+                ("holonym", "vehicle", "a machine for transport"),
+            ],
+        )
+    )
+
+    async with sf() as s:
+        rels = list((await s.execute(select(SenseRelation))).scalars())
+        by_type = {r.rel_type: r for r in rels}
+        assert set(by_type) == {"meronym", "holonym"}
+        assert by_type["meronym"].to_word_id is not None
+        assert by_type["meronym"].to_sense_id is None
+        assert by_type["holonym"].to_word_id is not None
+
+
+async def test_sense_relation_empty_gloss_skipped(engine):
+    # [F12] gloss is the load-bearing WSD signal — a blank one (after sanitize)
+    # gets the whole half-edge dropped, never persisted as a dead row.
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    await repo.persist_result(
+        _result(
+            "bright",
+            sense_relations=[
+                ("antonym", "dark", "   \x00  "),  # whitespace/ctrl-only -> empty
+                ("synonym", "brilliant", "shining vividly"),
+            ],
+        )
+    )
+    async with sf() as s:
+        rels = list((await s.execute(select(SenseRelation))).scalars())
+        assert {r.rel_type for r in rels} == {"synonym"}  # antonym dropped
+
+
+async def test_sense_relation_self_reference_skipped(engine):
+    # [Case 8] a sense-level relation whose target normalizes to the emitting
+    # sense's OWN word is vacuous and never persisted.
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    await repo.persist_result(
+        _result("Happy", sense_relations=[("synonym", "happy", "feeling joy")])
+    )
+    async with sf() as s:
+        count = (await s.execute(select(func.count()).select_from(SenseRelation))).scalar_one()
+        assert count == 0
+
+
+async def test_sense_relation_dedup_on_triple(engine):
+    # Dedup mirrors _ensure_link: the UNIQUE (from_sense, to_word, rel_type)
+    # triple collapses duplicate emissions to one row (last gloss not overwritten).
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    await repo.persist_result(
+        _result(
+            "big",
+            sense_relations=[
+                ("synonym", "large", "of great size"),
+                ("synonym", "large", "sizeable"),  # same triple -> deduped
+            ],
+        )
+    )
+    async with sf() as s:
+        count = (await s.execute(select(func.count()).select_from(SenseRelation))).scalar_one()
+        assert count == 1
 
 
 # --- sense labels: round-trip + lossless grammar join/split ----------------
@@ -225,14 +317,14 @@ def test_grammar_labels_have_no_comma():
 
 def test_grammar_rejects_out_of_vocab():
     with pytest.raises(ValueError):
-        GeneratedSense(definition="d", tier="core", grammar=["bogus"])
+        GeneratedSense(definition="d", tier="core", pos="noun", grammar=["bogus"])
 
 
 def test_register_connotation_reject_out_of_vocab():
     with pytest.raises(ValueError):
-        GeneratedSense(definition="d", tier="core", register="sarcastic")
+        GeneratedSense(definition="d", tier="core", pos="noun", register="sarcastic")
     with pytest.raises(ValueError):
-        GeneratedSense(definition="d", tier="core", connotation="mixed")
+        GeneratedSense(definition="d", tier="core", pos="noun", connotation="mixed")
 
 
 # --- collocations: ordering + sanitization + best-effort skip --------------
@@ -330,7 +422,7 @@ async def test_word_family_count_and_no_self_link(engine):
     async with create_session_factory(engine)() as s:
         n = (
             await s.execute(
-                select(func.count(EntryLink.id)).where(EntryLink.from_word_id == words[0].id)
+                select(func.count(WordRelation.id)).where(WordRelation.from_word_id == words[0].id)
             )
         ).scalar()
     assert n == 0  # self-reference skipped

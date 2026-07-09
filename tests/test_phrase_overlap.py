@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from lexi_ai.db import create_session_factory, init_models, session_scope
-from lexi_ai.models import EntryLink, Word
+from lexi_ai.models import WordRelation, Word
 from lexi_ai.normalize import match_key
 from lexi_ai.persistence.repository import Repository
 from lexi_ai.prep.phrase_overlap import PhraseOverlapPrep
@@ -122,9 +122,9 @@ async def test_overlap_links_host_to_unit(cambridge_fixture, generated_repo):
         ).scalar_one()
         link = (
             await session.execute(
-                select(EntryLink).where(
-                    EntryLink.from_word_id == host.id,
-                    EntryLink.to_word_id == unit.id,
+                select(WordRelation).where(
+                    WordRelation.from_word_id == host.id,
+                    WordRelation.to_word_id == unit.id,
                 )
             )
         ).scalar_one()
@@ -136,12 +136,12 @@ async def test_prep_is_idempotent(cambridge_fixture, generated_repo):
     prep = PhraseOverlapPrep(CambridgeSource(cambridge_fixture), repo)
     await prep.run()
     words_after_first = await _count(session_factory, Word)
-    links_after_first = await _count(session_factory, EntryLink)
+    links_after_first = await _count(session_factory, WordRelation)
 
     # Re-run: no new stubs or links.
     await prep.run()
     assert await _count(session_factory, Word) == words_after_first
-    assert await _count(session_factory, EntryLink) == links_after_first
+    assert await _count(session_factory, WordRelation) == links_after_first
 
 
 async def test_prep_against_real_cambridge_smoke(generated_repo):

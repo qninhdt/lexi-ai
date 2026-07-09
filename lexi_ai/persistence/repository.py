@@ -14,12 +14,15 @@ durable backstop; a concurrent insert that trips it is recovered via SAVEPOINT
 re-fetch (decision #18 — single-process library, so this is a rare edge).
 """
 
+import hashlib
 from collections.abc import Iterable, Sequence
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, NamedTuple, cast
 
 from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import aliased
 
 from lexi_ai.constants import canonical_cambridge_ref
 from lexi_ai.db import session_scope
@@ -29,24 +32,26 @@ from lexi_ai.generation.schemas import (
     GeneratedEntry,
     GeneratedResult,
     GeneratedSense,
+    GeneratedSenseRelation,
     GeneratedTopic,
     RelatedWord,
 )
 from lexi_ai.models import (
     Asset,
     Collocation,
-    EntryLink,
     Example,
     Question,
     Sense,
     SenseForm,
     SenseReference,
+    SenseRelation,
     Tag,
     Theme,
     ThemedExample,
     ThemedSense,
     Word,
     WordAlias,
+    WordRelation,
     WordTag,
 )
 from lexi_ai.read_models import Stats
@@ -55,6 +60,18 @@ from lexi_ai.normalize import _CTRL_RE, match_key, tag_key, theme_key
 if TYPE_CHECKING:
     from lexi_ai.assets.repository import AssetRepository
     from lexi_ai.theming.schemas import ThemedResult
+
+
+def sense_content_hash(definition: str) -> str:
+    """Stable content fingerprint of a target sense (Phase 4/6).
+
+    Stamped on ``sense_relation.target_hash`` at resolve time and re-checked on
+    read (Phase 6): if the target sense's definition later changes (regenerate),
+    the stored hash no longer matches and the edge is treated as unresolved
+    rather than silently pointing at a mutated meaning. The definition is the
+    load-bearing meaning carrier, so it alone keys the hash.
+    """
+    return hashlib.sha256(definition.encode("utf-8")).hexdigest()
 
 
 class EmbeddedSenseRow(NamedTuple):
@@ -67,6 +84,53 @@ class EmbeddedSenseRow(NamedTuple):
     definition: str
     tier: str
     embedding: bytes
+
+
+class ResolveCandidate(NamedTuple):
+    """One target-sense option for a WSD task: the DB sense id + the facts the
+    judge sees (``pos`` for the POS filter, ``definition`` shown in the prompt)."""
+
+    sense_id: int
+    pos: str | None
+    definition: str
+
+
+class ResolveTask(NamedTuple):
+    """One pending edge lifted off the queue, ready for the judge. ``edge_id`` is
+    the ``sense_relation`` row; ``candidates`` are its target word's senses
+    (POS-filtered later). ``source_pos`` drives the POS filter; ``gloss`` +
+    ``source_def`` are the (untrusted) prompt text."""
+
+    edge_id: int
+    rel_type: str
+    gloss: str
+    source_def: str
+    source_pos: str | None
+    candidates: list[ResolveCandidate]
+
+
+class ResolveDecision(NamedTuple):
+    """The bounds-validated ([F3]) verdict for one edge, ready to apply.
+    ``to_sense_id`` None ⇒ mark unresolvable; else resolve to that sense with the
+    stamped ``target_hash``."""
+
+    edge_id: int
+    to_sense_id: int | None
+    target_hash: str | None
+
+
+class ResolveOutcome(NamedTuple):
+    """One edge's WSD result (per :meth:`Repository.apply_resolutions`).
+
+    ``state`` is the DERIVED post-resolve state (Q1): ``resolved`` when a target
+    sense was chosen, ``unresolvable`` when the judge returned none, ``noop`` when
+    a racing regenerate made the conditional write a no-op ([F6]), ``error`` when
+    a poison-pill isolated the edge ([F7]). Order-aligned with the input decisions.
+    """
+
+    edge_id: int
+    state: str
+    error: str | None = None
 
 
 class Repository:
@@ -138,6 +202,12 @@ class Repository:
         on the SAME session so it rolls back with the delete."""
         async with session_scope(self._session_factory) as session:
             await self._gc_word_assets(session, word_id)
+            # [F4] No inbound-edge demotion needed here: ``sense_relation.to_word_id``
+            # is ``ON DELETE CASCADE``, so deleting this word removes every edge that
+            # points AT it outright — there is no orphaned sense->word row left to
+            # strand as derived-unresolvable. (The demote helper's live job is the
+            # regenerate path in ``_sync_senses``, where the word survives but its
+            # senses churn and inbound edges must be re-queued.)
             result = await session.execute(delete(Word).where(Word.id == word_id))
             return (cast("CursorResult", result).rowcount or 0) > 0
 
@@ -412,6 +482,19 @@ class Repository:
         # GC cached assets for the OLD senses/examples/collocations before they are
         # bulk-deleted (their ids vanish after the delete). Same session → atomic.
         await self._gc_word_assets(session, word_id)
+        # [Case 2 / F4] Before the old senses vanish, demote every INBOUND resolved
+        # edge that points at one of them back to derived-pending: FK SET NULL will
+        # clear ``to_sense_id`` on delete, but that alone leaves ``resolve_attempted_at``
+        # set (→ derived unresolvable, stuck out of the queue). The helper also resets
+        # it. [F13] It further re-queues inbound edges to THIS word that are currently
+        # derived-unresolvable, so a better regeneration gets a fresh WSD attempt.
+        old_sense_ids = list(
+            (await session.execute(select(Sense.id).where(Sense.word_id == word_id)))
+            .scalars()
+            .all()
+        )
+        await self._demote_edges_for_senses(session, old_sense_ids)
+        await self._requeue_unresolvable_inbound(session, word_id)
         # Deleting senses cascades to references+examples+collocations (ON DELETE CASCADE).
         await session.execute(delete(Sense).where(Sense.word_id == word_id))
         for order, gen_sense in enumerate(senses):
@@ -483,7 +566,249 @@ class Repository:
                 session.add(
                     SenseForm(sense_id=sense.id, inf=form.inf, surface=surface, form_order=f_order)
                 )
+            # Sense-level relations (synonym/antonym/hypernym/...) -> sense_relation
+            # half-edges: from_sense = THIS sense, to_word = stub target, to_sense_id
+            # NULL (WSD fills it later, Phase 4), gloss = LM description of the
+            # target's intended meaning. resolve_attempted_at defaults NULL (Q1
+            # derived: pending). [F12] gloss is load-bearing for WSD — an empty
+            # gloss after _clean SKIPS the edge (no domed gloss='' rows).
+            await self._link_sense_relations(session, sense, gen_sense.relations)
         await session.flush()
+
+    async def _link_sense_relations(
+        self, session: AsyncSession, sense: Sense, relations: Iterable["GeneratedSenseRelation"]
+    ) -> None:
+        """Persist a sense's sense-level relations as ``sense_relation`` half-edges.
+
+        Each relation resolves its target lemma to a real (stub) ``words`` row via
+        the shared ``_get_or_create_stub`` path (same normalization/dedup as
+        word-level links), then inserts a ``SenseRelation`` keyed by the UNIQUE
+        ``(from_sense_id, to_word_id, rel_type)`` triple. Skips:
+
+        - [Case 8] a self-reference at sense level (target normalizes to THIS
+          sense's own word — the relation would be vacuous);
+        - [F12] an empty gloss after ``_clean`` (gloss is the load-bearing WSD
+          signal; a domed empty gloss would only ever resolve wrong).
+        """
+        for rel in relations:
+            gloss = self._clean(rel.gloss, self._MAX_GLOSS)
+            if not gloss:
+                continue  # [F12] gloss is load-bearing for WSD — no empty-gloss rows
+            stub = await self._get_or_create_stub(session, rel.norm)
+            if stub.id == sense.word_id:
+                continue  # [Case 8] never a sense-level self-relation
+            await self._ensure_sense_relation(session, sense.id, stub.id, rel.rel_type, gloss)
+        await session.flush()
+
+    async def _ensure_sense_relation(
+        self, session: AsyncSession, from_sense_id: int, to_word_id: int, rel_type: str, gloss: str
+    ) -> None:
+        """Insert a ``sense_relation`` if the (from_sense, to_word, rel_type) triple
+        is absent (dedup mirrors ``_ensure_link``). ``to_sense_id`` stays NULL
+        (derived ``pending``); ``gloss`` is stored for the WSD pass."""
+        exists = await session.execute(
+            select(SenseRelation.id).where(
+                SenseRelation.from_sense_id == from_sense_id,
+                SenseRelation.to_word_id == to_word_id,
+                SenseRelation.rel_type == rel_type,
+            )
+        )
+        if exists.first() is None:
+            session.add(
+                SenseRelation(
+                    from_sense_id=from_sense_id,
+                    to_word_id=to_word_id,
+                    rel_type=rel_type,
+                    gloss=gloss,
+                )
+            )
+
+    # --- sense-relation invalidation (Phase 5): Case 2 + F4 + F13 ---------
+
+    async def _demote_edges_for_senses(
+        self, session: AsyncSession, sense_ids: Sequence[int]
+    ) -> None:
+        """Demote every ``sense_relation`` resolved onto one of ``sense_ids`` back to
+        derived-``pending`` ([Case 2] / [F4]).
+
+        The ``to_sense_id`` FK is ``ON DELETE SET NULL``, so deleting a target sense
+        already clears ``to_sense_id`` — but that alone leaves ``resolve_attempted_at``
+        set, which reads as derived ``unresolvable`` (stuck OUT of the resolve queue,
+        the F4 bug). This helper runs BEFORE the delete and explicitly resets all
+        three columns (``to_sense_id`` / ``resolve_attempted_at`` / ``target_hash``)
+        so the edge lands squarely in derived ``pending`` and the target's new senses
+        get re-resolved. Called from ``_sync_senses`` (regenerate), ``delete_word``,
+        and ``delete_entry`` — every path that removes a target sense.
+        """
+        if not sense_ids:
+            return
+        await session.execute(
+            update(SenseRelation)
+            .where(SenseRelation.to_sense_id.in_(sense_ids))
+            .values(to_sense_id=None, resolve_attempted_at=None, target_hash=None)
+        )
+
+    async def _requeue_unresolvable_inbound(
+        self, session: AsyncSession, word_id: int
+    ) -> None:
+        """Re-queue derived-``unresolvable`` edges pointing AT ``word_id`` ([F13]).
+
+        An ``unresolvable`` edge (``to_sense_id`` NULL, ``resolve_attempted_at`` set)
+        is terminal for the resolve pass — but it often became unresolvable only
+        because the target lacked the right POS/sense at the time. When the target
+        word regenerates (presumably better), clearing ``resolve_attempted_at`` puts
+        those edges back into derived ``pending`` so WSD retries them against the new
+        content, avoiding a permanent false-negative. Only touches edges that are
+        NOT resolved (``to_sense_id IS NULL``) so a live resolution is never disturbed.
+        """
+        await session.execute(
+            update(SenseRelation)
+            .where(
+                SenseRelation.to_word_id == word_id,
+                SenseRelation.to_sense_id.is_(None),
+                SenseRelation.resolve_attempted_at.is_not(None),
+            )
+            .values(resolve_attempted_at=None)
+        )
+
+    # --- WSD resolve (Phase 4): work-queue read + conditional apply -------
+
+    async def pending_relations_for_resolve(
+        self, batch_size: int, word_ids: list[int] | None = None
+    ) -> list["ResolveTask"]:
+        """Fetch up to ``batch_size`` sense-relation edges ready for WSD.
+
+        "Ready" = derived ``pending`` (``to_sense_id IS NULL AND
+        resolve_attempted_at IS NULL``, Q1) whose target word is ``done`` and has
+        ≥1 sense (Case 3). ``word_ids`` restricts to edges pointing AT those words
+        — the inbound-resolve hook after a target flips ``done`` ([F11]); omit for
+        the global backfill scan. Each task carries the source facts plus the
+        target's candidate senses, ordered deterministically ``(sense_order, id)``
+        and capped at ``_WSD_CANDIDATE_CAP`` ([F9]) so the exact ordering is
+        reproducible at apply time ([F3]).
+        """
+        from_sense = aliased(Sense)
+        async with session_scope(self._session_factory) as session:
+            stmt = (
+                select(
+                    SenseRelation.id,
+                    SenseRelation.rel_type,
+                    SenseRelation.gloss,
+                    SenseRelation.to_word_id,
+                    from_sense.pos,
+                    from_sense.definition,
+                )
+                .join(Word, Word.id == SenseRelation.to_word_id)
+                .join(from_sense, from_sense.id == SenseRelation.from_sense_id)
+                .where(
+                    SenseRelation.to_sense_id.is_(None),
+                    SenseRelation.resolve_attempted_at.is_(None),
+                    Word.status == "done",
+                    select(Sense.id)
+                    .where(Sense.word_id == SenseRelation.to_word_id)
+                    .exists(),
+                )
+                .order_by(SenseRelation.id)
+                .limit(batch_size)
+            )
+            if word_ids is not None:
+                if not word_ids:
+                    return []
+                stmt = stmt.where(SenseRelation.to_word_id.in_(word_ids))
+            rows = (await session.execute(stmt)).all()
+            tasks: list[ResolveTask] = []
+            for edge_id, rel_type, gloss, to_word_id, src_pos, src_def in rows:
+                cand_rows = (
+                    await session.execute(
+                        select(Sense.id, Sense.pos, Sense.definition)
+                        .where(Sense.word_id == to_word_id)
+                        .order_by(Sense.sense_order, Sense.id)
+                        .limit(self._WSD_CANDIDATE_CAP)
+                    )
+                ).all()
+                candidates = [
+                    ResolveCandidate(sense_id=sid, pos=pos, definition=defn)
+                    for sid, pos, defn in cand_rows
+                ]
+                tasks.append(
+                    ResolveTask(
+                        edge_id=edge_id,
+                        rel_type=rel_type,
+                        gloss=gloss,
+                        source_def=src_def,
+                        source_pos=src_pos,
+                        candidates=candidates,
+                    )
+                )
+            return tasks
+
+    async def apply_resolutions(
+        self, decisions: Iterable["ResolveDecision"]
+    ) -> list["ResolveOutcome"]:
+        """Apply judged decisions, each in its OWN savepoint ([F7]).
+
+        A ``ResolveDecision`` carries the edge id and the CHOSEN target sense id
+        (already bounds-validated by the caller, [F3]) or ``None`` (judge said no
+        sense fits → mark unresolvable). Each edge is wrapped in ``begin_nested()``
+        so one failing edge (e.g. its target sense vanished mid-batch, a racing
+        regenerate) is isolated — its savepoint rolls back and it is reported as an
+        error while the rest of the batch commits.
+
+        The write is CONDITIONAL ([F6] TOCTOU): the UPDATE only fires while the
+        edge is still derived-``pending`` and (for a resolve) the chosen sense
+        still exists. A racing regenerate that already changed the edge or deleted
+        the sense makes the UPDATE a no-op rather than writing a dead id.
+        """
+        outcomes: list[ResolveOutcome] = []
+        async with session_scope(self._session_factory) as session:
+            for dec in decisions:
+                try:
+                    async with session.begin_nested():
+                        if dec.to_sense_id is None:
+                            state = await self._mark_unresolvable(session, dec.edge_id)
+                        else:
+                            state = await self._apply_resolved(
+                                session, dec.edge_id, dec.to_sense_id, dec.target_hash
+                            )
+                    outcomes.append(ResolveOutcome(edge_id=dec.edge_id, state=state))
+                except Exception as exc:  # noqa: BLE001 - isolated per savepoint
+                    outcomes.append(
+                        ResolveOutcome(edge_id=dec.edge_id, state="error", error=str(exc))
+                    )
+        return outcomes
+
+    async def _apply_resolved(
+        self, session: AsyncSession, edge_id: int, to_sense_id: int, target_hash: str | None
+    ) -> str:
+        """Conditional UPDATE to ``resolved`` — no-op if the edge left pending or the
+        target sense vanished ([F6]). Returns the derived state actually reached."""
+        result = await session.execute(
+            update(SenseRelation)
+            .where(
+                SenseRelation.id == edge_id,
+                SenseRelation.to_sense_id.is_(None),
+                SenseRelation.resolve_attempted_at.is_(None),
+                select(Sense.id).where(Sense.id == to_sense_id).exists(),
+            )
+            .values(to_sense_id=to_sense_id, target_hash=target_hash)
+        )
+        return "resolved" if (cast("CursorResult", result).rowcount or 0) > 0 else "noop"
+
+    async def _mark_unresolvable(self, session: AsyncSession, edge_id: int) -> str:
+        """Conditional UPDATE stamping ``resolve_attempted_at`` (→ derived
+        ``unresolvable``) — no-op if the edge already left pending ([F6])."""
+        result = await session.execute(
+            update(SenseRelation)
+            .where(
+                SenseRelation.id == edge_id,
+                SenseRelation.to_sense_id.is_(None),
+                SenseRelation.resolve_attempted_at.is_(None),
+            )
+            .values(resolve_attempted_at=datetime.now(timezone.utc))
+        )
+        return "unresolvable" if (cast("CursorResult", result).rowcount or 0) > 0 else "noop"
+
+    _WSD_CANDIDATE_CAP = 12  # [F9] cap candidate senses per task (cost ceiling)
 
     # --- topic tags (resolve-or-create, deterministic dedup) --------------
 
@@ -491,6 +816,7 @@ class Repository:
     _MAX_TITLE = 128
     _MAX_TAG_KEY = 255  # must match Tag.tag_key String(255) — NFKD can expand a key
     _MAX_GUIDEWORD = 64  # must match Sense.guideword String(64)
+    _MAX_GLOSS = 255  # SenseRelation.gloss is Text (unbounded) — generous sanity cap only
     _MAX_IPA = 64  # must match Sense.ipa_uk/ipa_us String(64)
     _MAX_COLLOCATION = 512  # Collocation.text is Text (unbounded) — generous sanity cap only
     _MAX_SURFACE = 64  # SenseForm.surface is Text (unbounded) — generous sanity cap only
@@ -1072,16 +1398,16 @@ class Repository:
     async def _ensure_link(
         self, session: AsyncSession, from_id: int, to_id: int, rel_type: str
     ) -> None:
-        """Insert an entry_link if the (from, to, rel_type) triple is absent."""
+        """Insert a word_relation if the (from, to, rel_type) triple is absent."""
         exists = await session.execute(
-            select(EntryLink.id).where(
-                EntryLink.from_word_id == from_id,
-                EntryLink.to_word_id == to_id,
-                EntryLink.rel_type == rel_type,
+            select(WordRelation.id).where(
+                WordRelation.from_word_id == from_id,
+                WordRelation.to_word_id == to_id,
+                WordRelation.rel_type == rel_type,
             )
         )
         if exists.first() is None:
-            session.add(EntryLink(from_word_id=from_id, to_word_id=to_id, rel_type=rel_type))
+            session.add(WordRelation(from_word_id=from_id, to_word_id=to_id, rel_type=rel_type))
 
     async def _get_or_create_stub(self, session: AsyncSession, norm: str) -> Word:
         key = match_key(norm)

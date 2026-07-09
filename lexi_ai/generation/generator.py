@@ -12,7 +12,7 @@ from collections.abc import Sequence
 
 from lexi_ai.config import Settings, get_settings
 from lexi_ai.generation.schemas import ExampleBatch, ExampleGenContext, GeneratedResult
-from lexi_ai.llm import StructuredLLM, ainvoke_structured, build_structured_llm, sys_msg, user_msg
+from lexi_ai.llm import StructuredLLM, ainvoke_structured, build_structured_llm, guarded_messages
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.references.loader import ReferenceBundle
 
@@ -58,7 +58,7 @@ class Generator:
             wordnet_synsets=bundle.wordnet_synsets,
             existing_tags=existing_tags,
         )
-        messages = [sys_msg(system_content), user_msg(user_content)]
+        messages = guarded_messages(system_content, user_content)
         return await ainvoke_structured(
             self.llm,
             messages,
@@ -87,7 +87,7 @@ class Generator:
             existing=list(existing),
             n=n,
         )
-        messages = [sys_msg(system_content), user_msg(user_content)]
+        messages = guarded_messages(system_content, user_content)
         return await ainvoke_structured(
             self.llm,
             messages,

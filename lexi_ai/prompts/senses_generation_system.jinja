@@ -26,12 +26,31 @@ Produce a complete dictionary entry for the target word: its senses, aliases, re
   - A page bundling two unrelated idioms → TWO units.
 - Do NOT over-split same-meaning variants. Do NOT merge unrelated meanings.
 
-## Related words (emit as `related`)
-Each related item is NORMALIZED to a real entry, so give a clean canonical `norm`: US spelling, {sb}/{sth}/{one's}/{oneself} placeholders, no junk.
+## Related words (emit as `related`) — WORD level
+These name a whole LEMMA (no single meaning), so they live on the ENTRY's `related`.
+Each is NORMALIZED to a real entry: give a clean canonical `norm` — US spelling,
+{sb}/{sth}/{one's}/{oneself} placeholders, no junk.
 - `word_family` — derivational/inflectional relatives of the headword (happy → happiness, happily, unhappy).
 - `confused_with` — commonly-confused near-forms learners mix up (affect ↔ effect, advice ↔ advise).
-- `hypernym` — a broader category the headword belongs to (dog → animal, rose → flower).
-- `hyponym` — a more specific kind of the headword (dog → poodle, flower → rose).
+
+## Sense-level relations (emit as each sense's `relations`) — SENSE level
+These depend on WHICH MEANING is intended (bright=light ↔ dark, bright=clever ↔ stupid),
+so emit them on the SPECIFIC sense they belong to, NOT on the entry. Each item has a
+`rel_type`, a normalized target `norm` (US spelling, placeholders, no junk), and a SHORT
+`gloss` describing the TARGET's intended meaning (this lets the system later link to the
+right sense of the target — it is REQUIRED and must be non-empty).
+- `synonym` — a word meaning the same as THIS sense.
+- `antonym` — a word meaning the opposite of THIS sense.
+- `hypernym` — a broader category THIS sense belongs to (rose → flower).
+- `hyponym` — a more specific kind of THIS sense (flower → rose).
+- `meronym` — a part/member, when THIS sense is the whole (car → wheel, tree → branch).
+- `holonym` — a whole, when THIS sense is the part (finger → hand, branch → tree).
+- `see_also` — a related word worth cross-referencing from THIS sense.
+Example (for a sense of "bright" meaning "full of light"): relations =
+[{"rel_type": "antonym", "norm": "dark", "gloss": "lacking light"}].
+
+## Part of speech (required per sense)
+Every sense MUST carry a `pos` from EXACTLY this set: noun, verb, adjective, adverb, pronoun, preposition, conjunction, determiner, interjection, numeral, article, auxiliary. Never omit it — the system relies on per-sense POS to link sense-level relations.
 
 ## Tiers
 Assign each sense exactly one tier:

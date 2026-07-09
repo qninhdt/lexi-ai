@@ -16,6 +16,7 @@ from lexi_ai.generation.generator import Generator
 from lexi_ai.generation.schemas import (
     GeneratedEntry,
     GeneratedResult,
+    GeneratedSense,
 )
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.references.cambridge import CamSense
@@ -158,7 +159,9 @@ async def test_generate_returns_valid_result():
                 norm="book",
                 entry_type="word",
                 pos="noun",
-                senses=[{"definition": "a written text", "tier": "core", "cefr_level": "A1"}],
+                senses=[
+                    {"definition": "a written text", "tier": "core", "cefr_level": "A1", "pos": "noun"}
+                ],
                 aliases=[],
             )
         ]
@@ -203,6 +206,25 @@ def test_entry_requires_at_least_one_sense():
         GeneratedEntry(norm="x", entry_type="word", senses=[])
 
 
+# --- POS controlled vocab (Phase 1) ---------------------------------------
+
+
+def test_sense_pos_required():
+    # [F2] pos is REQUIRED per sense (no default) — a missing pos must reject, so
+    # the WSD POS-filter (Phase 4) never sees a null-POS sense.
+    with pytest.raises(ValidationError):
+        GeneratedSense(definition="d", tier="core")
+
+
+def test_sense_pos_rejects_out_of_vocab():
+    with pytest.raises(ValidationError):
+        GeneratedSense(definition="d", tier="core", pos="foobar")
+
+
+def test_sense_pos_accepts_vocab():
+    assert GeneratedSense(definition="d", tier="core", pos="adjective").pos == "adjective"
+
+
 # --- split-vs-alias contract ---------------------------------------------
 
 
@@ -213,12 +235,12 @@ async def test_split_yields_multiple_units():
             GeneratedEntry(
                 norm="idiom one",
                 entry_type="idiom",
-                senses=[{"definition": "meaning one", "tier": "common"}],
+                senses=[{"definition": "meaning one", "tier": "common", "pos": "noun"}],
             ),
             GeneratedEntry(
                 norm="idiom two",
                 entry_type="idiom",
-                senses=[{"definition": "meaning two", "tier": "common"}],
+                senses=[{"definition": "meaning two", "tier": "common", "pos": "noun"}],
             ),
         ]
     )
@@ -234,7 +256,7 @@ async def test_same_meaning_variant_is_one_unit_with_alias():
             GeneratedEntry(
                 norm="log in",
                 entry_type="phrasal_verb",
-                senses=[{"definition": "to access a computer system", "tier": "core"}],
+                senses=[{"definition": "to access a computer system", "tier": "core", "pos": "verb"}],
                 aliases=[{"alias_norm": "log on", "type": "particle"}],
             )
         ]
@@ -252,7 +274,7 @@ async def test_us_canonical_with_uk_alias():
             GeneratedEntry(
                 norm="color",
                 entry_type="word",
-                senses=[{"definition": "hue", "tier": "core"}],
+                senses=[{"definition": "hue", "tier": "core", "pos": "noun"}],
                 aliases=[{"alias_norm": "colour", "type": "spelling_uk", "dialect": "uk"}],
             )
         ]
@@ -274,7 +296,7 @@ async def test_generate_retries_then_succeeds():
             GeneratedEntry(
                 norm="book",
                 entry_type="word",
-                senses=[{"definition": "d", "tier": "core"}],
+                senses=[{"definition": "d", "tier": "core", "pos": "noun"}],
             )
         ]
     )

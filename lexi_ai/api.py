@@ -24,10 +24,10 @@ from lexi_ai.db import create_engine, create_session_factory, init_models, sessi
 from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
 from lexi_ai.generation.schemas import ExampleBatch
-from lexi_ai.models import EntryLink, Sense, Word, WordAlias, WordTag
+from lexi_ai.models import Sense, SenseRelation, Word, WordAlias, WordRelation, WordTag
 from lexi_ai.normalize import match_key, render, tag_key
 from lexi_ai.normalize import theme_key as _norm_theme_key
-from lexi_ai.persistence.repository import Repository
+from lexi_ai.persistence.repository import Repository, sense_content_hash
 from lexi_ai.read_models import (
     AliasView,
     Asset,
@@ -38,6 +38,7 @@ from lexi_ai.read_models import (
     ReferenceView,
     SearchResult,
     SemanticHit,
+    SenseRelationView,
     SenseView,
     Stats,
     TagCount,
@@ -50,6 +51,7 @@ from lexi_ai.references.wordnet import WordNetSource
 from lexi_ai.vectors import cosine, pack_vector, unpack_vector
 
 if TYPE_CHECKING:
+    from lexi_ai.generation.wsd import WsdJudge
     from lexi_ai.llm import StructuredLLM
     from lexi_ai.questions.base import TtsPort
     from lexi_ai.questions.engine import QuestionEngine
@@ -58,6 +60,47 @@ if TYPE_CHECKING:
 # max_length so the two never drift: prompting for more than the schema accepts
 # would guarantee a validation failure and burn the structured-output retries.
 _MAX_EXAMPLES_PER_CALL = ExampleBatch.model_fields["examples"].metadata[0].max_length
+
+
+def _build_sense_relation(rel) -> SenseRelationView:
+    """Assemble one sense-level relation view from a ``SenseRelation`` row.
+
+    State is DERIVED (Q1 — no ``wsd_state`` column). A resolved edge
+    (``to_sense_id`` set) is additionally hash-VERIFIED ([F5]/Q2): if the target
+    sense's current definition no longer matches the ``target_hash`` stamped at
+    resolve time (an in-place edit or an invalidation path that Phase 5 missed),
+    the edge is surfaced as if UNRESOLVED — only ``to_word_id`` is trusted,
+    ``to_sense_id`` is dropped and the state reported as ``pending``. This is the
+    final safety net for every target-mutation path, mirroring the asset-cache
+    ``content_hash`` verified-on-read policy. Requires ``to_word`` (and, for a
+    resolved edge, ``to_sense``) to be eager-loaded on the same session.
+    """
+    to_sense = rel.to_sense
+    resolved = rel.to_sense_id is not None and to_sense is not None
+    # [F5] Hash-verify a resolved edge; a mismatch demotes it to pending-on-read.
+    if resolved and rel.target_hash != sense_content_hash(to_sense.definition):
+        resolved = False
+    if resolved:
+        state = "resolved"
+        to_sense_id = rel.to_sense_id
+        to_sense_gloss = to_sense.definition
+    else:
+        # unresolvable ⟺ an attempt was made but no sense chosen; else pending.
+        state = "unresolvable" if rel.resolve_attempted_at is not None else "pending"
+        # A stale-hash demotion reads as pending (a re-resolve is warranted).
+        if rel.to_sense_id is not None:
+            state = "pending"
+        to_sense_id = None
+        to_sense_gloss = None
+    return SenseRelationView(
+        rel_type=rel.rel_type,
+        to_word_display=render(rel.to_word.norm),
+        to_word_id=rel.to_word_id,
+        to_word_status=rel.to_word.status,
+        to_sense_id=to_sense_id,
+        to_sense_gloss=to_sense_gloss,
+        wsd_state=state,
+    )
 
 
 class Lexicon:
@@ -72,6 +115,7 @@ class Lexicon:
         engine: AsyncEngine | None = None,
         embedder: Embedder | None = None,
         assets: AssetRepository | None = None,
+        wsd_judge: WsdJudge | None = None,
     ):
         self._session_factory = session_factory
         self._loader = loader
@@ -80,6 +124,11 @@ class Lexicon:
         self._engine = engine
         self._embedder = embedder or Embedder()
         self._assets = assets
+        # WSD judge (sense-relation reconciliation). Injectable for hermetic tests;
+        # lazily built from settings otherwise. ``None`` sentinel = not-yet-built,
+        # resolved via the ``_wsd`` property.
+        self._wsd_judge = wsd_judge
+        self._wsd_built = wsd_judge is not None
         self._locks: dict[str, asyncio.Lock] = {}
         # Lazy questions engine (built on first access; see the `questions` property).
         self._questions: QuestionEngine | None = None
@@ -156,6 +205,25 @@ class Lexicon:
         from lexi_ai.llm import build_structured_llm
 
         return build_structured_llm(settings)
+
+    def _build_wsd_judge(self):
+        """WSD judge for sense-relation reconciliation, or ``None`` when no LLM is
+        configured (resolve degrades to a no-op, like the other llm formats)."""
+        llm = self._build_structured()
+        if llm is None:
+            return None
+        from lexi_ai.generation.wsd import WsdJudge
+
+        return WsdJudge(llm)
+
+    @property
+    def _wsd(self) -> WsdJudge | None:
+        """The WSD judge, built once from settings on first use (or the injected
+        fake). ``None`` when no LLM is configured — resolve is then a no-op."""
+        if not self._wsd_built:
+            self._wsd_judge = self._build_wsd_judge()
+            self._wsd_built = True
+        return self._wsd_judge
 
     def _build_tts_port(self) -> TtsPort | None:
         """Audio-synthesis port for the listening/spelling formats, or ``None`` when
@@ -1032,7 +1100,116 @@ class Lexicon:
             result, cambridge_word_id=cambridge_id, cambridge_cefr=cefr_map
         )
         await self._embed_words([w.id for w in words])
+        # [F11] Inbound-resolve hook: these words just flipped to ``done``, so any
+        # pending sense-relation edge pointing AT them can now be reconciled.
+        # Coverage grows with traffic — no scheduler needed. Best-effort: a WSD
+        # failure must never fail an already-persisted generation.
+        await self._resolve_inbound([w.id for w in words])
         return result
+
+    # --- WSD relation resolution (Phase 4) --------------------------------
+
+    async def resolve_relations(self, batch_size: int = 20) -> list[BatchResult]:
+        """Reconcile one batch of pending sense-relation half-edges (manual/backfill).
+
+        Lifts up to ``batch_size`` derived-``pending`` edges whose target word is
+        ``done`` with senses, POS-filters each edge's candidate target senses,
+        LM-judges them in ONE batched prompt, and applies the verdicts under
+        per-edge savepoints with conditional writes ([F6]/[F7]). ``batch_size`` is
+        clamped to a hard ceiling ([F9]). Returns one :class:`BatchResult` per
+        edge (``value`` = derived state: ``resolved``/``unresolvable``/``noop``).
+
+        Complements the automatic inbound hook in :meth:`_run_generation` — this
+        is for words done BEFORE the feature existed, or a hook that was skipped.
+        """
+        return await self._resolve_core(batch_size, word_ids=None)
+
+    async def _resolve_inbound(self, word_ids: list[int]) -> list[BatchResult]:
+        """Best-effort resolve of edges pointing at the just-generated ``word_ids``.
+
+        Wraps :meth:`_resolve_core` and swallows every error: the generation that
+        triggered this hook is already committed, so a WSD hiccup (LLM down, judge
+        error) must degrade to "leave the edges pending", never propagate.
+        """
+        if not word_ids:
+            return []
+        try:
+            return await self._resolve_core(len(word_ids) * self._WSD_INBOUND_FACTOR, word_ids)
+        except Exception:  # noqa: BLE001 - inbound resolve is strictly best-effort
+            return []
+
+    # A generated word may be the target of many pending edges; give the inbound
+    # hook headroom over the raw word count, still clamped by the hard ceiling.
+    _WSD_INBOUND_FACTOR = 20
+
+    async def _resolve_core(
+        self, batch_size: int, word_ids: list[int] | None
+    ) -> list[BatchResult]:
+        """Shared resolve engine for both the hook and the public batch API.
+
+        Steps: clamp ``batch_size`` ([F9]) → read the pending queue → per edge,
+        POS-filter candidates ([F2]) and build a :class:`WsdTask` → ONE judge call
+        → validate each ``chosen_index`` against the (deterministically-ordered)
+        candidate list ([F3]) → apply as conditional, per-savepoint writes ([F6]/
+        [F7]). Degrades to ``[]`` when no judge is configured.
+        """
+        judge = self._wsd
+        if judge is None:
+            return []
+        from lexi_ai.generation.schemas import WsdCandidate, WsdTask
+        from lexi_ai.generation.wsd import WSD_BATCH_CEIL, pos_filtered_candidates
+        from lexi_ai.persistence.repository import ResolveDecision, sense_content_hash
+
+        capped = max(1, min(batch_size, WSD_BATCH_CEIL))
+        tasks = await self._repo.pending_relations_for_resolve(capped, word_ids=word_ids)
+        if not tasks:
+            return []
+
+        # Build judge tasks, remembering the POS-filtered candidate order PER edge
+        # so the judge's ``chosen_index`` maps back to the exact sense it saw ([F3]).
+        filtered_by_edge: dict[int, list] = {}
+        wsd_tasks: list[WsdTask] = []
+        for task in tasks:
+            cands = pos_filtered_candidates(task.source_pos, task.candidates)
+            filtered_by_edge[task.edge_id] = cands
+            wsd_tasks.append(
+                WsdTask(
+                    rel_type=task.rel_type,
+                    gloss=task.gloss,
+                    source_def=task.source_def,
+                    candidates=[
+                        WsdCandidate(index=i, definition=c.definition)
+                        for i, c in enumerate(cands)
+                    ],
+                )
+            )
+
+        choices = await judge.judge(wsd_tasks)
+
+        decisions: list[ResolveDecision] = []
+        for task, choice in zip(tasks, choices, strict=True):
+            cands = filtered_by_edge[task.edge_id]
+            idx = choice.chosen_index
+            # [F3] Never trust the model index: out-of-range / None ⇒ unresolvable.
+            if idx is None or not (0 <= idx < len(cands)):
+                decisions.append(ResolveDecision(task.edge_id, None, None))
+            else:
+                chosen = cands[idx]
+                decisions.append(
+                    ResolveDecision(
+                        task.edge_id,
+                        chosen.sense_id,
+                        sense_content_hash(chosen.definition),
+                    )
+                )
+
+        outcomes = await self._repo.apply_resolutions(decisions)
+        return [
+            BatchResult(key=o.edge_id, value=o.state)
+            if o.error is None
+            else BatchResult(key=o.edge_id, error=o.error)
+            for o in outcomes
+        ]
 
     # --- embeddings -------------------------------------------------------
 
@@ -1144,8 +1321,18 @@ class Lexicon:
                         selectinload(Word.senses).selectinload(Sense.examples),
                         selectinload(Word.senses).selectinload(Sense.collocations),
                         selectinload(Word.senses).selectinload(Sense.forms),
+                        # Sense-level relations (Phase 6): the edge + its target word
+                        # (always present) and target sense (present once resolved).
+                        # Nested loads keep the read hermetic (no lazy-load after the
+                        # session closes / no MissingGreenlet).
+                        selectinload(Word.senses)
+                        .selectinload(Sense.relations_out)
+                        .selectinload(SenseRelation.to_word),
+                        selectinload(Word.senses)
+                        .selectinload(Sense.relations_out)
+                        .selectinload(SenseRelation.to_sense),
                         selectinload(Word.aliases),
-                        selectinload(Word.links_out).selectinload(EntryLink.to_word),
+                        selectinload(Word.links_out).selectinload(WordRelation.to_word),
                         selectinload(Word.tags).selectinload(WordTag.tag),
                     )
                     .where(Word.id == word_id)
@@ -1202,6 +1389,7 @@ class Lexicon:
                     domain=s.domain,
                     usage_note=s.usage_note,
                     sense_id=s.id,
+                    relations=[_build_sense_relation(rel) for rel in s.relations_out],
                 )
                 for s in senses
             ],

@@ -4,12 +4,14 @@ Builds a :class:`~lexi_ai.api.Lexicon` wired to the OpenAI-compatible proxy
 configured in ``.env`` (see ``.env.example``).
 
 Why not just ``Lexicon.from_settings()``?
-    The library's default structured-output path uses the ``json_schema``
-    method. The proxy used here does not enforce that strictly — it returns
-    loose JSON that fails schema validation (missing required fields, wrong enum
-    casing). We rebuild the generator with ``method="function_calling"`` and a
-    ``reasoning_effort``, both of which the proxy honors reliably. The MODEL is
-    never hardcoded: it comes from ``LEXI_LLM_MODEL``.
+    The library's DEFAULT structured-output method is ``json_schema`` (the SDK's
+    strict native parse). The proxy used here does NOT enforce that strictly — it
+    returns loose JSON that fails validation (missing required fields, wrong enum
+    casing). The library seam now supports a ``function_calling`` method (a forced
+    single tool) which the proxy honors reliably; we select it here via
+    ``LEXI_LLM_STRUCTURED_METHOD=function_calling`` in ``.env`` (or the default
+    set below). No LangChain — everything rides the library's own OpenAI seam.
+    The MODEL is never hardcoded: it comes from ``LEXI_LLM_MODEL``.
 
 Run every script from the repo root so ``.env`` and ``./data`` resolve:
 
@@ -23,7 +25,7 @@ from lexi_ai.config import Settings
 from lexi_ai.db import create_engine, create_session_factory
 from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
-from lexi_ai.generation.schemas import GeneratedResult
+from lexi_ai.llm import build_structured_llm
 from lexi_ai.persistence.repository import Repository
 from lexi_ai.read_models import Entry, SearchResult
 from lexi_ai.references.cambridge import CambridgeSource
@@ -31,49 +33,28 @@ from lexi_ai.references.loader import ReferenceLoader
 from lexi_ai.references.wordnet import WordNetSource
 
 
-class DemoSettings(Settings):
-    """Project settings plus one extra env knob: the model's reasoning effort.
+def get_demo_settings() -> Settings:
+    """Load settings, defaulting to the proxy-friendly ``function_calling`` method.
 
-    Inherits the ``LEXI_`` env prefix and ``.env`` loading, so this reads
-    ``LEXI_LLM_REASONING_EFFORT`` (minimal | low | medium | high).
+    The library default is ``json_schema`` (strict, best on real OpenAI). The demo
+    proxy needs ``function_calling``; ``.env`` can override either knob
+    (``LEXI_LLM_STRUCTURED_METHOD`` / ``LEXI_LLM_REASONING_EFFORT``).
     """
-
-    llm_reasoning_effort: str = "medium"
-
-
-def get_demo_settings() -> DemoSettings:
-    return DemoSettings()
+    settings = Settings()
+    if not settings.llm_structured_method:
+        settings.llm_structured_method = "function_calling"
+    return settings
 
 
-def build_structured_llm(settings: DemoSettings):
-    """A ChatOpenAI runnable bound to ``GeneratedResult``, tuned for this proxy.
-
-    Everything comes from env / settings — nothing about the model is hardcoded:
-      * model / base_url / api_key / temperature  -> env
-      * reasoning_effort                          -> env (default 'medium')
-      * method='function_calling'                 -> proxy compatibility (the
-        default 'json_schema' method is not strictly enforced by this proxy).
-    """
-    from langchain_openai import ChatOpenAI
-    from pydantic import SecretStr
-
-    llm = ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=SecretStr(settings.llm_api_key),
-        model=settings.llm_model,
-        temperature=settings.llm_temperature,
-        reasoning_effort=settings.llm_reasoning_effort,
-    )
-    return llm.with_structured_output(GeneratedResult, method="function_calling")
-
-
-def build_lexicon(settings: DemoSettings | None = None) -> Lexicon:
+def build_lexicon(settings: Settings | None = None) -> Lexicon:
     """Assemble a Lexicon with a proxy-compatible generator + local embedder.
 
-    The embedder is the library default (local ``transformers``, model from
-    ``LEXI_EMBEDDING_MODEL``). If the ``[embeddings]`` extra isn't installed,
-    generation still works and embeddings are skipped best-effort — see
-    ``examples/09_semantic_search.py``.
+    The generator's structured LLM comes straight from the library seam
+    (:func:`lexi_ai.llm.build_structured_llm`), reading method/reasoning/model
+    from settings — no LangChain. The embedder is the library default (local
+    ``transformers``, model from ``LEXI_EMBEDDING_MODEL``); if the
+    ``[embeddings]`` extra isn't installed, generation still works and embeddings
+    are skipped best-effort — see ``examples/09_semantic_search.py``.
     """
     settings = settings or get_demo_settings()
     engine = create_engine(settings)

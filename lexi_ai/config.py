@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
     llm_temperature: float = 0.1
+    # Structured-output method for the OpenAI seam (see ``lexi_ai.llm``):
+    #   "" / "json_schema" → strict native parse (best on real OpenAI);
+    #   "function_calling" → forced single tool, for proxies that don't enforce
+    #     strict json_schema (loose JSON: wrong enum casing / missing fields).
+    llm_structured_method: str = ""
+    # Reasoning effort for reasoning-capable models (minimal|low|medium|high).
+    # Empty → omit the field entirely (plain chat models ignore it anyway).
+    llm_reasoning_effort: str = ""
 
     # Optional per-task model override for translation. Empty → falls back to
     # ``llm_model`` (shares the same base_url/api_key/temperature).

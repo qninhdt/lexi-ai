@@ -86,43 +86,106 @@ class StructuredLLM(Protocol):
 
 class OpenAIStructuredLLM:
     """Real :class:`StructuredLLM` over an OpenAI-compatible ``/chat/completions``
-    endpoint, using the SDK's native structured-output ``parse`` helper.
+    endpoint.
+
+    Two structured-output methods (``method``):
+
+    * ``"json_schema"`` (default) — the SDK's native ``chat.completions.parse``
+      strict structured output. Best on real OpenAI / providers that enforce the
+      schema server-side.
+    * ``"function_calling"`` — expose the schema as a single forced tool and read
+      the arguments back. Some OpenAI-compatible proxies do NOT enforce strict
+      json_schema and return loose JSON (wrong enum casing, missing required
+      fields) that fails validation; those honor tool-calling reliably, so this
+      method degrades far more gracefully against them.
+
+    ``reasoning_effort`` (when set) is passed through for reasoning-capable models.
 
     Constructed lazily (the client is only built when first needed) so importing
     a module that builds one costs no creds/network.
     """
 
-    def __init__(self, *, base_url: str, api_key: str, model: str, temperature: float):
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        temperature: float,
+        method: str = "json_schema",
+        reasoning_effort: str = "",
+    ):
         from openai import AsyncOpenAI
 
         self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self._model = model
         self._temperature = temperature
+        self._method = method or "json_schema"
+        self._reasoning_effort = reasoning_effort or None
+
+    def _extra(self) -> dict:
+        # reasoning_effort is not a first-class kwarg on all SDK versions/models;
+        # pass it via extra_body so an unsupported model simply ignores it.
+        return {"reasoning_effort": self._reasoning_effort} if self._reasoning_effort else {}
 
     async def parse(self, messages: list[ChatMsg], schema: type[_T]) -> _T:
+        if self._method == "function_calling":
+            return await self._parse_via_tool(messages, schema)
+        return await self._parse_via_json_schema(messages, schema)
+
+    async def _parse_via_json_schema(self, messages: list[ChatMsg], schema: type[_T]) -> _T:
         completion = await self._client.chat.completions.parse(
             model=self._model,
             messages=messages,  # type: ignore[arg-type]
             response_format=schema,
             temperature=self._temperature,
+            extra_body=self._extra() or None,
         )
         parsed = completion.choices[0].message.parsed
         if parsed is None:
             raise ValueError("model returned no parsed structured output")
         return parsed
 
+    async def _parse_via_tool(self, messages: list[ChatMsg], schema: type[_T]) -> _T:
+        # Expose the schema as ONE tool and force the model to call it, then
+        # validate the raw arguments ourselves (this is the loose-proxy escape
+        # hatch — the SDK's strict parse is bypassed on purpose).
+        import json
+
+        from openai import pydantic_function_tool
+
+        tool = pydantic_function_tool(schema, name="emit")
+        completion = await self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,  # type: ignore[arg-type]
+            tools=[tool],  # type: ignore[list-item]
+            tool_choice={"type": "function", "function": {"name": "emit"}},
+            temperature=self._temperature,
+            extra_body=self._extra() or None,
+        )
+        calls = completion.choices[0].message.tool_calls
+        call = calls[0] if calls else None
+        fn = getattr(call, "function", None)
+        if fn is None:
+            raise ValueError("model returned no function tool call for structured output")
+        return schema.model_validate(json.loads(fn.arguments))
+
 
 def build_structured_llm(settings, model: str | None = None) -> StructuredLLM:
     """Build the real openai-backed :class:`StructuredLLM` from settings.
 
     ``model`` overrides ``settings.llm_model`` (e.g. a per-task translate model);
-    base_url/api_key/temperature always come from the shared LLM settings.
+    base_url/api_key/temperature/method/reasoning always come from the shared LLM
+    settings. ``method``/``reasoning_effort`` fall back to safe defaults when the
+    settings object predates them (duck-typed via ``getattr``).
     """
     return OpenAIStructuredLLM(
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
         model=model or settings.llm_model,
         temperature=settings.llm_temperature,
+        method=getattr(settings, "llm_structured_method", "json_schema"),
+        reasoning_effort=getattr(settings, "llm_reasoning_effort", ""),
     )
 
 

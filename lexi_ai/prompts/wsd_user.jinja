@@ -1,0 +1,19 @@
+There are {{ tasks | length }} disambiguation task(s). For each, pick the target sense the relation points to, or none.
+
+{% for task in tasks %}
+=== TASK {{ loop.index0 }} ===
+Relation type: {{ task.rel_type }}
+
+The source meaning that emits this relation:
+{{ task.source_def }}
+
+The gloss describing the intended target meaning:
+{{ task.gloss }}
+
+Candidate target senses (choose one index, or none):
+{% for cand in task.candidates %}
+[{{ cand.index }}] {{ cand.definition }}
+{% endfor %}
+
+{% endfor %}
+Return one choice per task, in order. For task i, set `chosen_index` to the matching candidate index, or leave it null if no candidate fits the gloss.

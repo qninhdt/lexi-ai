@@ -136,7 +136,7 @@ def _entry(norm, aliases=None, related=None) -> GeneratedEntry:
         norm=norm,
         entry_type="word",
         pos="noun",
-        senses=[{"definition": f"def of {norm}", "tier": "core", "cefr_level": "A1"}],
+        senses=[{"definition": f"def of {norm}", "tier": "core", "cefr_level": "A1", "pos": "noun"}],
         aliases=aliases or [],
         related=related or [],
     )
@@ -385,9 +385,9 @@ async def test_senses_sorted_by_tier(engine):
         norm="run",
         entry_type="word",
         senses=[
-            {"definition": "rare meaning", "tier": "rare"},
-            {"definition": "core meaning", "tier": "core"},
-            {"definition": "common meaning", "tier": "common"},
+            {"definition": "rare meaning", "tier": "rare", "pos": "verb"},
+            {"definition": "core meaning", "tier": "core", "pos": "verb"},
+            {"definition": "common meaning", "tier": "common", "pos": "verb"},
         ],
     )
     lex, gen, _sf = _make_lexicon(
@@ -434,7 +434,7 @@ async def test_idiom_is_first_class_learnable_content(engine):
         norm="kick",
         entry_type="word",
         pos="verb",
-        senses=[{"definition": "strike with the foot", "tier": "core", "cefr_level": "A1"}],
+        senses=[{"definition": "strike with the foot", "tier": "core", "cefr_level": "A1", "pos": "verb"}],
         related=[RelatedWord(norm="kick the bucket", rel_type="part_of_phrasal_family")],
     )
     lex, gen, session_factory = _make_lexicon(
@@ -451,7 +451,7 @@ async def test_idiom_is_first_class_learnable_content(engine):
                         norm="kick the bucket",
                         entry_type="idiom",
                         pos=None,
-                        senses=[{"definition": "to die", "tier": "core", "cefr_level": "B2"}],
+                        senses=[{"definition": "to die", "tier": "core", "cefr_level": "B2", "pos": "verb"}],
                     )
                 ]
             ),
@@ -495,7 +495,7 @@ async def test_entry_link_carries_generatable_handle(engine):
         norm="kick",
         entry_type="word",
         pos="verb",
-        senses=[{"definition": "strike with the foot", "tier": "core", "cefr_level": "A1"}],
+        senses=[{"definition": "strike with the foot", "tier": "core", "cefr_level": "A1", "pos": "verb"}],
         related=[RelatedWord(norm="kick the bucket", rel_type="part_of_phrasal_family")],
     )
     lex, _gen, _sf = _make_lexicon(
@@ -510,7 +510,7 @@ async def test_entry_link_carries_generatable_handle(engine):
                         norm="kick the bucket",
                         entry_type="idiom",
                         pos=None,
-                        senses=[{"definition": "to die", "tier": "core", "cefr_level": "B2"}],
+                        senses=[{"definition": "to die", "tier": "core", "cefr_level": "B2", "pos": "verb"}],
                     )
                 ]
             ),
@@ -568,7 +568,7 @@ def _def_entry(norm: str, definition: str) -> GeneratedEntry:
         norm=norm,
         entry_type="word",
         pos="noun",
-        senses=[{"definition": definition, "tier": "core"}],
+        senses=[{"definition": definition, "tier": "core", "pos": "noun"}],
     )
 
 
@@ -707,7 +707,7 @@ def _entry_with_topics(norm, topics) -> GeneratedEntry:
         norm=norm,
         entry_type="word",
         pos="noun",
-        senses=[{"definition": f"def of {norm}", "tier": "core"}],
+        senses=[{"definition": f"def of {norm}", "tier": "core", "pos": "noun"}],
         topics=[{"tag": t, "title": ti} for t, ti in topics],
     )
 

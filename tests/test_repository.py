@@ -15,7 +15,7 @@ from lexi_ai.generation.schemas import (
     GeneratedEntry,
     GeneratedResult,
 )
-from lexi_ai.models import EntryLink, Example, Sense, SenseReference, Word, WordAlias
+from lexi_ai.models import Example, Sense, SenseReference, Word, WordAlias, WordRelation
 from lexi_ai.normalize import match_key
 from lexi_ai.persistence.repository import Repository
 
@@ -55,13 +55,14 @@ def _color_result() -> GeneratedResult:
                     {
                         "definition": "the property of reflecting light",
                         "tier": "core",
+                        "pos": "noun",
                         "cefr_level": "A1",
                         "examples": ["a bright color"],
                         "references": [{"source": "cambridge", "source_ref": "s1"}],
                     }
                 ],
                 aliases=[{"alias_norm": "colour", "type": "spelling_uk", "dialect": "uk"}],
-                related=[{"norm": "hue", "rel_type": "synonym"}],
+                related=[{"norm": "hue", "rel_type": "word_family"}],
             )
         ]
     )
@@ -83,7 +84,7 @@ async def test_persist_creates_full_graph(repo, session_factory):
     assert await _count(session_factory, SenseReference) == 1
     # 'hue' stub + the 'color' word = 2 words.
     assert await _count(session_factory, Word) == 2
-    assert await _count(session_factory, EntryLink) == 1
+    assert await _count(session_factory, WordRelation) == 1
 
 
 async def test_persist_is_idempotent(repo, session_factory):
@@ -94,7 +95,7 @@ async def test_persist_is_idempotent(repo, session_factory):
     assert await _count(session_factory, WordAlias) == 1
     assert await _count(session_factory, Sense) == 1
     assert await _count(session_factory, Example) == 1
-    assert await _count(session_factory, EntryLink) == 1
+    assert await _count(session_factory, WordRelation) == 1
 
 
 async def test_multi_unit_split_creates_n_words(repo, session_factory):
@@ -103,12 +104,12 @@ async def test_multi_unit_split_creates_n_words(repo, session_factory):
             GeneratedEntry(
                 norm="idiom one",
                 entry_type="idiom",
-                senses=[{"definition": "meaning one", "tier": "common"}],
+                senses=[{"definition": "meaning one", "tier": "common", "pos": "noun"}],
             ),
             GeneratedEntry(
                 norm="idiom two",
                 entry_type="idiom",
-                senses=[{"definition": "meaning two", "tier": "common"}],
+                senses=[{"definition": "meaning two", "tier": "common", "pos": "noun"}],
             ),
         ]
     )
@@ -125,9 +126,9 @@ async def test_related_creates_pending_stub_and_real_link(repo, session_factory)
             await session.execute(select(Word).where(Word.match_key == match_key("hue")))
         ).scalar_one()
         assert stub.status == "pending"
-        link = (await session.execute(select(EntryLink))).scalar_one()
+        link = (await session.execute(select(WordRelation))).scalar_one()
         assert link.to_word_id == stub.id  # real FK id, not a string
-        assert link.rel_type == "synonym"
+        assert link.rel_type == "word_family"
 
 
 async def test_cambridge_cefr_overrides_llm(repo, session_factory):
@@ -142,6 +143,7 @@ async def test_cambridge_cefr_overrides_llm(repo, session_factory):
                         "definition": "a written text",
                         "tier": "core",
                         "cefr_level": "B2",
+                        "pos": "noun",
                         "references": [{"source": "cambridge", "source_ref": "s1"}],
                     }
                 ],
@@ -168,6 +170,7 @@ async def test_cambridge_cefr_matches_labelled_source_ref(repo, session_factory)
                         "definition": "a written text",
                         "tier": "core",
                         "cefr_level": "B2",
+                        "pos": "noun",
                         "references": [{"source": "cambridge", "source_ref": "sense#42"}],
                     }
                 ],
@@ -187,7 +190,7 @@ async def test_cefr_llm_fallback_when_no_cambridge(repo, session_factory):
             GeneratedEntry(
                 norm="book",
                 entry_type="word",
-                senses=[{"definition": "d", "tier": "core", "cefr_level": "B2"}],
+                senses=[{"definition": "d", "tier": "core", "cefr_level": "B2", "pos": "noun"}],
             )
         ]
     )
@@ -207,8 +210,8 @@ async def test_upsert_updates_existing_word_in_place(repo, session_factory):
                 entry_type="word",
                 pos="noun",
                 senses=[
-                    {"definition": "updated meaning", "tier": "core"},
-                    {"definition": "second meaning", "tier": "common"},
+                    {"definition": "updated meaning", "tier": "core", "pos": "noun"},
+                    {"definition": "second meaning", "tier": "common", "pos": "noun"},
                 ],
             )
         ]
@@ -241,7 +244,7 @@ async def test_stub_promoted_to_done_on_generation(repo, session_factory):
             GeneratedEntry(
                 norm="hue",
                 entry_type="word",
-                senses=[{"definition": "a color shade", "tier": "core"}],
+                senses=[{"definition": "a color shade", "tier": "core", "pos": "noun"}],
             )
         ]
     )
@@ -295,6 +298,7 @@ def _ipa_result(ipa_uk: str | None, ipa_us: str | None) -> GeneratedResult:
                     {
                         "definition": "a heavy metal",
                         "tier": "core",
+                        "pos": "noun",
                         "ipa_uk": ipa_uk,
                         "ipa_us": ipa_us,
                     }

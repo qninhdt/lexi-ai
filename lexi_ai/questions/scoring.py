@@ -8,7 +8,7 @@ way, and that sameness is exactly the cross-axis proof — the llm-authored
 :func:`grade_single_choice`, so "who generated it" is irrelevant to grading.
 """
 
-from lexi_ai.llm import StructuredLLM, ainvoke_structured, sys_msg, user_msg
+from lexi_ai.llm import StructuredLLM, ainvoke_structured, guarded_messages
 from lexi_ai.normalize import match_key
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.questions.schemas import Judgment
@@ -71,7 +71,7 @@ async def grade_rubric(question: Question, answer: object, *, judge: StructuredL
     )
     judgment = await ainvoke_structured(
         judge,
-        [sys_msg(_RUBRIC_SYSTEM), user_msg(human)],
+        guarded_messages(_RUBRIC_SYSTEM, human),
         Judgment,
     )
     return Score(

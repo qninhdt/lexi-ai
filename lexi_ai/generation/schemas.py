@@ -34,10 +34,12 @@ from lexi_ai.constants import (
     ENTRY_TYPES,
     GRAMMAR_LABELS,
     INFLECTION_LABELS,
+    POS_TAGS,
     REFERENCE_SOURCES,
     REGISTERS,
-    REL_TYPES,
+    SENSE_REL_TYPES,
     TIERS,
+    WORD_REL_TYPES,
 )
 
 # Sorted tuples give deterministic enum ordering in the emitted JSON schema.
@@ -45,7 +47,12 @@ _TierLit = Literal[TIERS]
 _EntryTypeLit = Literal[tuple(sorted(ENTRY_TYPES))]
 _AliasTypeLit = Literal[tuple(sorted(ALIAS_TYPES))]
 _DialectLit = Literal[tuple(sorted(DIALECTS))]
-_RelTypeLit = Literal[tuple(sorted(REL_TYPES))]
+# Two derived enums pin each relation to its correct level so the LM cannot emit
+# a sense-level rel at the entry level (or vice versa). Both come from REL_LEVEL
+# via WORD_REL_TYPES/SENSE_REL_TYPES so they can never drift from the router.
+_WordRelTypeLit = Literal[tuple(sorted(WORD_REL_TYPES))]
+_SenseRelTypeLit = Literal[tuple(sorted(SENSE_REL_TYPES))]
+_PosLit = Literal[tuple(sorted(POS_TAGS))]
 _SourceLit = Literal[tuple(sorted(REFERENCE_SOURCES))]
 _GrammarLit = Literal[tuple(sorted(GRAMMAR_LABELS))]
 _RegisterLit = Literal[tuple(sorted(REGISTERS))]
@@ -83,10 +90,37 @@ class GeneratedForm(BaseModel):
     surface: str = Field(max_length=64, description="The inflected surface form.")
 
 
+class GeneratedSenseRelation(BaseModel):
+    """One SENSE-level relation emitted by a specific sense (Phase 3).
+
+    Unlike ``RelatedWord`` (word-level), this carries a ``gloss`` describing the
+    TARGET's intended meaning — the load-bearing signal the later WSD pass (Phase
+    4) uses to pick the right target sense. ``gloss`` is REQUIRED + non-empty
+    ([F12]); a blank one gets the whole edge skipped on the write path, never
+    persisted as a dead row.
+    """
+
+    rel_type: _SenseRelTypeLit
+    # Normalized to a real entry via match_key; bounded like RelatedWord.norm.
+    norm: str = Field(max_length=128, description="Canonical form of the target word/phrase.")
+    gloss: str = Field(
+        min_length=1,
+        max_length=255,
+        description=(
+            "A short gloss of the TARGET's intended meaning (which sense of the "
+            "target this relation points to), e.g. for antonym 'dark' -> "
+            "'lacking light'. Required — used to reconcile the exact target sense."
+        ),
+    )
+
+
 class GeneratedSense(BaseModel):
     definition: str = Field(description="Learner-friendly definition.")
     tier: _TierLit = Field(description="core | common | extended | rare.")
-    pos: str | None = Field(default=None, description="Part of speech.")
+    # [F2] REQUIRED per sense (no default): the WSD POS-filter (Phase 4) mass-marks
+    # edges unresolvable when target senses carry no POS. Closed vocab (POS_TAGS)
+    # hard-rejects out-of-vocab, and the prompt mandates emitting one per sense.
+    pos: _PosLit = Field(description="Part of speech (required); one of the 12 allowed labels.")
     cefr_level: str | None = Field(
         default=None, description="A1..C2; prefer the Cambridge value when mapped."
     )
@@ -183,6 +217,18 @@ class GeneratedSense(BaseModel):
             "repeat when a form has variants (dreamed / dreamt). Omit for invariant words."
         ),
     )
+    # Sense-level semantic relations THIS sense emits (synonym/antonym/hypernym/
+    # hyponym/meronym/holonym/see_also). Carried at the SENSE level (not entry) so
+    # the write path knows WHICH meaning emitted each relation — the whole point of
+    # sense-level relations. Word-level relations stay on GeneratedEntry.related.
+    relations: list["GeneratedSenseRelation"] = Field(
+        default_factory=list,
+        description=(
+            "Sense-level relations emitted by THIS specific sense. For each, give "
+            "the target lemma (norm) and a SHORT gloss of the target's intended "
+            "meaning so the system can later link it to the right target sense."
+        ),
+    )
 
 
 class GeneratedAlias(BaseModel):
@@ -204,7 +250,10 @@ class RelatedWord(BaseModel):
     # status='error' on Postgres, never corruption). Also bounds the existing
     # synonym/antonym related[] path, not just the new word-references.
     norm: str = Field(max_length=128, description="Canonical form of the related word/phrase.")
-    rel_type: _RelTypeLit
+    # WORD-level rel_type only (word_family/confused_with/...): the sense-level
+    # rels (synonym/antonym/hypernym/...) now live on GeneratedSense.relations, so
+    # constraining this enum stops the LM emitting a sense-level rel at entry level.
+    rel_type: _WordRelTypeLit
 
 
 class GeneratedTopic(BaseModel):
@@ -236,7 +285,9 @@ class GeneratedEntry(BaseModel):
         description="Canonical headword; placeholders as {sb}/{sth}/{one's}/{oneself}.",
     )
     entry_type: _EntryTypeLit
-    pos: str | None = None
+    # Word-level POS stays nullable: a headword may span several POS across its
+    # senses, and it is NOT used for WSD (only per-sense pos is). Closed vocab.
+    pos: _PosLit | None = None
     senses: list[GeneratedSense] = Field(min_length=1)
     aliases: list[GeneratedAlias] = Field(default_factory=list)
     related: list[RelatedWord] = Field(default_factory=list)
@@ -258,6 +309,52 @@ class GeneratedResult(BaseModel):
             "independent lemmas with different meanings on one page."
         ),
     )
+
+
+class WsdCandidate(BaseModel):
+    """One target-sense option shown to the WSD judge. ``index`` is the position
+    in the task's ``candidates`` list (0-based) and is what the judge echoes back
+    as ``chosen_index`` — the mapping index->sense_id is held server-side and NEVER
+    trusted from the model ([F3])."""
+
+    index: int
+    definition: str
+
+
+class WsdTask(BaseModel):
+    """One reconciliation ask: given a source sense that emitted a relation with a
+    ``gloss`` describing the intended target meaning, which candidate target sense
+    (if any) does it point to? ``gloss``/``source_def`` are UNTRUSTED free text
+    ([F14]) — the prompt fences them as data."""
+
+    rel_type: str
+    gloss: str
+    source_def: str
+    candidates: list[WsdCandidate]
+
+
+class WsdChoice(BaseModel):
+    """The judge's pick for one task. ``chosen_index`` is the candidate index the
+    relation resolves to, or ``None`` when NO candidate fits the gloss (→ derived
+    ``unresolvable``). The value is validated against the candidate bounds on apply
+    ([F3]) — an out-of-range index is treated as ``None``, never indexed blindly."""
+
+    chosen_index: int | None = Field(
+        default=None,
+        description=(
+            "0-based index of the target sense this relation points to, or null if "
+            "no candidate sense matches the gloss. Never guess — prefer null."
+        ),
+    )
+
+
+class WsdBatch(BaseModel):
+    """The judge's answers for a whole batch, order-aligned with the input tasks
+    (``choices[i]`` answers ``tasks[i]``). Length must match the task count; a
+    short/long list is a validation failure the caller treats as all-unresolvable
+    for that batch."""
+
+    choices: list[WsdChoice] = Field(default_factory=list)
 
 
 class ExampleBatch(BaseModel):
