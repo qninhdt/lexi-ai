@@ -75,6 +75,8 @@ ck.md
 # But track repo-level rules that Claude Code reads
 !/.claude/rules/
 
+.agent
+
 # Local-only state inside tracked claude source
 claude/agent-memory/
 claude/hooks/.logs/
