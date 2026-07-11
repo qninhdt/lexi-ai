@@ -242,6 +242,20 @@ REFERENCE_SOURCES = frozenset({"cambridge", "wordnet"})
 # assets.kind — reference-addressed derived-asset cache (translation, TTS).
 ASSET_KINDS = frozenset({"translate", "tts"})
 
+# TTS voice/format allow-lists. Unlike ``translate``'s lang (validated against
+# TRANSLATION_LANGUAGES), voice/fmt were arbitrary free strings with two lossy
+# encodings: "en-US"/"en_US" are distinct DB rows but map to the SAME on-disk
+# filename (the put_file char-squash), so a second synth overwrites the first's
+# clip and a later get() serves the wrong voice's bytes. Validating both against
+# a closed vocab at the one normalize_asset_params choke point closes that
+# collision (and the identity-separator ambiguity) the same way lang does.
+#
+# The OpenAI-compatible provider vocab. The config defaults (config.tts_voice /
+# tts_format = "alloy"/"mp3") MUST be members — a test asserts it — so the happy
+# path never hard-rejects. ``None`` resolves to those defaults BEFORE validation.
+TTS_VOICES = frozenset({"alloy", "echo", "fable", "onyx", "nova", "shimmer"})
+TTS_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
+
 # assets.source_kind — the source row a cached asset derives from. Each kind maps
 # to a (table, text column) in the asset repository's resolver; that mapping is
 # driven by THIS set so a kind can never be half-wired (a test asserts every

@@ -8,6 +8,8 @@ way, and that sameness is exactly the cross-axis proof — the llm-authored
 :func:`grade_single_choice`, so "who generated it" is irrelevant to grading.
 """
 
+import re
+
 from lexi_ai.llm import StructuredLLM, ainvoke_structured, guarded_messages
 from lexi_ai.normalize import match_key
 from lexi_ai.prompts import PromptLoader
@@ -15,6 +17,10 @@ from lexi_ai.questions.schemas import Judgment
 from lexi_ai.read_models import Question, Score
 
 _RUBRIC_SYSTEM = PromptLoader.render("rubric_scoring_system")
+
+# An option index is an ASCII integer only. Guards the choice grader against
+# unicode digits and repeated signs that str.isdigit()/lstrip("-") let through.
+_ASCII_INT_RE = re.compile(r"^-?[0-9]+$")
 
 
 async def grade_single_choice(question: Question, answer: object) -> Score:
@@ -106,8 +112,17 @@ def _resolve_choice(answer: object, options: list[str]) -> int | None:
     if isinstance(answer, int):
         return answer
     text = str(answer).strip()
-    if text.lstrip("-").isdigit():
-        return int(text)
+    # Parse an option index TOTALLY: only an ASCII ``-?\d+`` is an index, and even
+    # then ``int()`` can still reject it (e.g. a 5000-digit string trips CPython's
+    # int_max_str_digits). ``str.isdigit()`` was wrong here — it accepts unicode
+    # digits ("²") and ``lstrip("-")`` allowed "--5", both of which ``int()`` then
+    # raised on, crashing the public grade() contract. A non-index (or unparseable)
+    # string must fall through to the match_key option lookup and score wrong.
+    if _ASCII_INT_RE.match(text):
+        try:
+            return int(text)
+        except ValueError:
+            return None
     want = match_key(text)
     for i, opt in enumerate(options):
         if match_key(opt) == want:

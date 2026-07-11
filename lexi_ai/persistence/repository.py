@@ -16,7 +16,6 @@ re-fetch (decision #18 — single-process library, so this is a rare edge).
 
 import hashlib
 from collections.abc import Iterable, Sequence
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, NamedTuple, cast
 
 from sqlalchemy import CursorResult, delete, func, select, update
@@ -24,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
-from lexi_ai.constants import canonical_cambridge_ref
+from lexi_ai.constants import WSD_CANDIDATE_CAP, canonical_cambridge_ref
 from lexi_ai.db import session_scope
 from lexi_ai.generation.schemas import (
     ExampleGenContext,
@@ -53,9 +52,10 @@ from lexi_ai.models import (
     WordAlias,
     WordRelation,
     WordTag,
+    _utcnow,
 )
-from lexi_ai.read_models import Stats
 from lexi_ai.normalize import _CTRL_RE, match_key, tag_key, theme_key
+from lexi_ai.read_models import Stats
 
 if TYPE_CHECKING:
     from lexi_ai.assets.repository import AssetRepository
@@ -394,8 +394,13 @@ class Repository:
         cefr_map: dict[str, str],
     ) -> Word:
         key = match_key(entry.norm)
-        word = await self._get_or_create_word(session, key, entry.norm)
-        word.norm = entry.norm
+        # norm is untrusted LM text landing in a Text column: a NUL crashes the
+        # Postgres INSERT (rolls the whole word back to status="error"). Clean it
+        # like every other free field. The key is already NUL/control-safe
+        # (match_key strips them), so cleaning norm cannot desync key from norm.
+        norm = self._clean(entry.norm, self._MAX_NORM)
+        word = await self._get_or_create_word(session, key, norm)
+        word.norm = norm
         word.entry_type = entry.entry_type
         word.pos = entry.pos
         word.status = "done"
@@ -420,10 +425,13 @@ class Repository:
             if akey in seen:
                 continue
             seen.add(akey)
+            # alias_norm is untrusted LM text in a Text column: clean it (NUL crashes
+            # the Postgres INSERT). alias_match_key is already NUL/control-safe.
+            alias_norm = self._clean(alias.alias_norm, self._MAX_NORM)
             session.add(
                 WordAlias(
                     word_id=word_id,
-                    alias_norm=alias.alias_norm,
+                    alias_norm=alias_norm,
                     alias_match_key=akey,
                     type=alias.type,
                     dialect=alias.dialect,
@@ -501,7 +509,11 @@ class Repository:
             cefr = self._resolve_cefr(gen_sense, cefr_map)
             sense = Sense(
                 word_id=word_id,
-                definition=gen_sense.definition,
+                # definition is untrusted LM text in a non-null Text column: a NUL
+                # crashes the Postgres INSERT (whole word rolls back to "error").
+                # The themed path already cleans its definition; the neutral path
+                # did not — route it through the same cleaner (control/NUL-strip).
+                definition=self._clean(gen_sense.definition, self._MAX_DEFINITION),
                 tier=gen_sense.tier,
                 sense_order=order,
                 pos=gen_sense.pos,
@@ -510,42 +522,43 @@ class Repository:
                 # set of schema-validated tokens joined with ',' (no token contains
                 # ',' — guarded by test); register/connotation are validated enum
                 # values or None. Empty -> None so the read side yields [] / None.
-                guideword=self._clean(gen_sense.guideword, self._MAX_GUIDEWORD) or None
-                if gen_sense.guideword
-                else None,
+                guideword=self._clean_opt(gen_sense.guideword, self._MAX_GUIDEWORD),
                 grammar=",".join(gen_sense.grammar) or None,
                 register=gen_sense.register,
                 connotation=gen_sense.connotation,
                 # IPA: copied from Cambridge when present, else LLM-generated for
                 # out-of-Cambridge words. Untrusted free text either way -> route
                 # through _clean (control-strip, incl. NUL that crashes Postgres).
-                ipa_uk=self._clean(gen_sense.ipa_uk, self._MAX_IPA) or None
-                if gen_sense.ipa_uk
-                else None,
-                ipa_us=self._clean(gen_sense.ipa_us, self._MAX_IPA) or None
-                if gen_sense.ipa_us
-                else None,
+                ipa_uk=self._clean_opt(gen_sense.ipa_uk, self._MAX_IPA),
+                ipa_us=self._clean_opt(gen_sense.ipa_us, self._MAX_IPA),
                 # domain (subject-area) + usage_note (one-line hint): free LLM text
                 # -> sanitize; empty -> None so the read side yields None.
-                domain=self._clean(gen_sense.domain, self._MAX_DOMAIN) or None
-                if gen_sense.domain
-                else None,
-                usage_note=self._clean(gen_sense.usage_note, self._MAX_USAGE_NOTE) or None
-                if gen_sense.usage_note
-                else None,
+                domain=self._clean_opt(gen_sense.domain, self._MAX_DOMAIN),
+                usage_note=self._clean_opt(gen_sense.usage_note, self._MAX_USAGE_NOTE),
             )
             session.add(sense)
             await session.flush()
             for ref in gen_sense.references:
+                # source_ref is untrusted LM text in String(255): a NUL crashes the
+                # Postgres INSERT and an over-length value raises "value too long".
+                # Schema now caps it at 255 (max_length), but clean here too so a
+                # NUL/control char never reaches the column on either dialect.
                 session.add(
                     SenseReference(
                         sense_id=sense.id,
                         source=ref.source,
-                        source_ref=ref.source_ref,
+                        source_ref=self._clean(ref.source_ref, self._MAX_SOURCE_REF),
                     )
                 )
+            # Neutral examples: untrusted LM text in a non-null Text column -> clean
+            # (NUL-strip) with the generous _MAX_EXAMPLE cap sized not to sever a
+            # <t inf> tag. The themed/append paths already clean; the neutral path
+            # did not. Empty/whitespace-only after cleaning is skipped (best-effort).
             for ex_order, ex in enumerate(gen_sense.examples):
-                session.add(Example(sense_id=sense.id, text=ex, example_order=ex_order))
+                text = self._clean(ex, self._MAX_EXAMPLE)
+                if not text:
+                    continue
+                session.add(Example(sense_id=sense.id, text=text, example_order=ex_order))
             # Collocations mirror examples: ordered child rows. text is a Text
             # column (unbounded) -> control-strip via _clean (Postgres NUL-safety)
             # with a GENEROUS sanity cap, not the tag's 255 (no DB need to truncate
@@ -648,9 +661,7 @@ class Repository:
             .values(to_sense_id=None, resolve_attempted_at=None, target_hash=None)
         )
 
-    async def _requeue_unresolvable_inbound(
-        self, session: AsyncSession, word_id: int
-    ) -> None:
+    async def _requeue_unresolvable_inbound(self, session: AsyncSession, word_id: int) -> None:
         """Re-queue derived-``unresolvable`` edges pointing AT ``word_id`` ([F13]).
 
         An ``unresolvable`` edge (``to_sense_id`` NULL, ``resolve_attempted_at`` set)
@@ -704,9 +715,7 @@ class Repository:
                     SenseRelation.to_sense_id.is_(None),
                     SenseRelation.resolve_attempted_at.is_(None),
                     Word.status == "done",
-                    select(Sense.id)
-                    .where(Sense.word_id == SenseRelation.to_word_id)
-                    .exists(),
+                    select(Sense.id).where(Sense.word_id == SenseRelation.to_word_id).exists(),
                 )
                 .order_by(SenseRelation.id)
                 .limit(batch_size)
@@ -804,11 +813,18 @@ class Repository:
                 SenseRelation.to_sense_id.is_(None),
                 SenseRelation.resolve_attempted_at.is_(None),
             )
-            .values(resolve_attempted_at=datetime.now(timezone.utc))
+            # Naive UTC (models._utcnow), NOT aware: every DateTime column is
+            # TIMESTAMP WITHOUT TIME ZONE, and asyncpg raises DataError binding an
+            # aware value to it. On Postgres the swallowed bind error at
+            # apply_resolutions would else convert every unresolvable edge to
+            # state="error" without stamping resolve_attempted_at, so it stays
+            # derived-pending and is re-judged by the LLM forever. SQLite stores
+            # the aware value as a string and never raises, hiding this.
+            .values(resolve_attempted_at=_utcnow())
         )
         return "unresolvable" if (cast("CursorResult", result).rowcount or 0) > 0 else "noop"
 
-    _WSD_CANDIDATE_CAP = 12  # [F9] cap candidate senses per task (cost ceiling)
+    _WSD_CANDIDATE_CAP = WSD_CANDIDATE_CAP  # [F9] cap candidate senses per task (single source)
 
     # --- topic tags (resolve-or-create, deterministic dedup) --------------
 
@@ -830,6 +846,12 @@ class Repository:
     # the cap is generous (4000, matching themed) — a tight cap could sever a sentence
     # mid-tag and hand parse_marked_example unbalanced markup.
     _MAX_EXAMPLE = 4000
+    _MAX_DEFINITION = 4000  # Sense.definition is Text (unbounded) — generous sanity cap only
+    # norm / alias_norm are Text (unbounded) but feed match_key -> String(512); the
+    # schema already bounds the LLM inputs to 128 (GeneratedEntry/Alias.norm), so this
+    # generous cap only guards adversarial NFKD expansion, never a legit lemma.
+    _MAX_NORM = 512
+    _MAX_SOURCE_REF = 255  # must match SenseReference.source_ref String(255)
 
     @staticmethod
     def _clean(s: str, cap: int) -> str:
@@ -842,6 +864,19 @@ class Repository:
         s = _CTRL_RE.sub(" ", s)
         s = " ".join(s.split()).strip()
         return s[:cap]
+
+    @classmethod
+    def _clean_opt(cls, s: str | None, cap: int) -> str | None:
+        """``_clean`` for an OPTIONAL field: ``None``/empty in -> ``None`` out.
+
+        Folds the six-copy ``self._clean(x, CAP) or None if x else None`` idiom
+        (guideword, ipa_uk, ipa_us, domain, usage_note, ...) into one place. A
+        value that cleans to empty (all control/whitespace) also collapses to
+        ``None`` so the read side yields ``None``/``[]`` consistently.
+        """
+        if not s:
+            return None
+        return cls._clean(s, cap) or None
 
     async def _sync_tags(
         self, session: AsyncSession, word_id: int, topics: Iterable[GeneratedTopic]
@@ -1143,22 +1178,41 @@ class Repository:
             return {sid: (definition, examples.get(tsid, [])) for tsid, sid, definition in themed}
 
     async def resolve_theme(self, key_or_id: str | int) -> tuple[int, str] | None:
-        """``(theme_id, style_prompt)`` for a ``theme_key`` or ``theme_id``, or ``None`` if unknown."""
+        """``(theme_id, style_prompt)`` for a ``theme_key`` or ``theme_id``, else ``None``.
+
+        Resolution order (2.4 — key-first, then id-fallback for ``str``):
+
+        - An ``int`` argument is ALWAYS an id lookup.
+        - A ``str`` argument tries the ``theme_key`` lookup FIRST (normalized via
+          ``theme_key`` exactly as ``create_theme`` stored it), and falls back to
+          an ``int()``-by-id lookup ONLY on a key miss. This fixes the shadowing
+          bug where a theme literally named "1984"/"007" was unaddressable by name
+          (the old ``int()``-first path claimed it as an id), WITHOUT removing the
+          stringified-id affordance JSON/HTTP callers (``?theme=42``) rely on: a
+          "42" that is no theme's key still resolves by id.
+        """
         async with session_scope(self._session_factory) as session:
             if isinstance(key_or_id, int):
                 row = await session.execute(
                     select(Theme.id, Theme.style_prompt).where(Theme.id == key_or_id)
                 )
-            else:
-                try:
-                    theme_id = int(key_or_id)
-                    row = await session.execute(
-                        select(Theme.id, Theme.style_prompt).where(Theme.id == theme_id)
-                    )
-                except ValueError:
-                    row = await session.execute(
-                        select(Theme.id, Theme.style_prompt).where(Theme.theme_key == key_or_id)
-                    )
+                found = row.first()
+                return (found[0], found[1]) if found is not None else None
+            # str: key FIRST, so a numeric-named theme resolves by name.
+            row = await session.execute(
+                select(Theme.id, Theme.style_prompt).where(Theme.theme_key == theme_key(key_or_id))
+            )
+            found = row.first()
+            if found is not None:
+                return (found[0], found[1])
+            # key miss: fall back to id-by-string ("42" -> id 42) if numeric.
+            try:
+                theme_id = int(key_or_id)
+            except ValueError:
+                return None
+            row = await session.execute(
+                select(Theme.id, Theme.style_prompt).where(Theme.id == theme_id)
+            )
             found = row.first()
             return (found[0], found[1]) if found is not None else None
 
@@ -1320,9 +1374,9 @@ class Repository:
             themes = (await session.execute(select(func.count(Theme.id)))).scalar_one()
             themed_words = (
                 await session.execute(
-                    select(func.count(func.distinct(Sense.word_id))).select_from(ThemedSense).join(
-                        Sense, Sense.id == ThemedSense.sense_id
-                    )
+                    select(func.count(func.distinct(Sense.word_id)))
+                    .select_from(ThemedSense)
+                    .join(Sense, Sense.id == ThemedSense.sense_id)
                 )
             ).scalar_one()
             questions = (await session.execute(select(func.count(Question.id)))).scalar_one()
@@ -1359,9 +1413,7 @@ class Repository:
                 if not clean:
                     continue
                 session.add(
-                    ThemedExample(
-                        themed_sense_id=themed_sense_id, text=clean, example_order=order
-                    )
+                    ThemedExample(themed_sense_id=themed_sense_id, text=clean, example_order=order)
                 )
                 order += 1
                 inserted += 1

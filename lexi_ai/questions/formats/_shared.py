@@ -49,8 +49,14 @@ def _shuffled_options(correct: str, distractors: list[str], seed: str) -> tuple[
     return options, options.index(correct)
 
 
-def _mcq_question(entry: Entry, sense: SenseView, stem: str, seed: str, distractors: list[str]):
-    """Build a validated single-choice Question (or None if too few options)."""
+def _mcq_question(
+    entry: Entry, sense: SenseView, stem: str, seed: str, distractors: list[str], format: str
+):
+    """Build a validated single-choice Question (or None if too few options).
+
+    ``format`` is passed in (the plugin knows its own id) so the returned read
+    model is COMPLETE — callers no longer mutate a constructed ``Question`` to
+    patch ``format=""`` after the fact (3.5)."""
     if len(distractors) < _MCQ_MIN_DISTRACTORS:
         return None
     options, correct_index = _shuffled_options(entry.display, distractors, seed)
@@ -59,10 +65,45 @@ def _mcq_question(entry: Entry, sense: SenseView, stem: str, seed: str, distract
         id=None,
         word_id=entry.word_id,
         sense_id=sense.sense_id,
-        format="",  # set by the caller (the plugin knows its own id)
+        format=format,
         answer_kind="single_choice",
         payload=payload.model_dump(),
     )
+
+
+_BLANK = "_____"
+# Punctuation stripped off a token's edges before its core is match_key-compared.
+_EDGE_PUNCT = ".,;:!?\"'()[]"
+
+
+def _blank_first_token_matching(text: str, want: set[str]) -> str | None:
+    """Blank the FIRST whitespace token whose (edge-punct-stripped) core folds into
+    ``want`` (a set of ``match_key`` values), preserving all original separators.
+
+    Shared by ``_blank_target``'s fallback and ``_blank_in_phrase`` (3.4). Two
+    correctness fixes over the earlier ``text.split()`` + ``" ".join()`` copies:
+
+    - **Separators preserved (#3):** iterate ``\\S+`` tokens by their located offset
+      and splice the blank at that offset, so double spaces / newlines in the
+      original survive into the stem (``" ".join(split())`` collapsed them).
+    - **Matched slice only (#3):** replace ONLY the token's stripped core, leaving
+      its edge punctuation — and a token like ``cat-cat`` blanks the matched half,
+      not the whole token (the core is what folds, so only it is replaced).
+
+    Case-insensitive folding rides on ``match_key`` (which lowercases), so no
+    length-changing ``.lower()`` is applied to the text here — that was the #4
+    slice-misalignment bug in the old boundary path.
+    """
+    for m in re.finditer(r"\S+", text):
+        tok = m.group(0)
+        core = tok.strip(_EDGE_PUNCT)
+        if not core or match_key(core) not in want:
+            continue
+        # Blank only the core within the token, then splice at the token offset so
+        # every separator (runs of spaces, newlines) outside the token is untouched.
+        blanked_tok = tok.replace(core, _BLANK, 1)
+        return text[: m.start()] + blanked_tok + text[m.end() :]
+    return None
 
 
 def _blank_target(example: str, entry: Entry) -> str | None:
@@ -79,28 +120,22 @@ def _blank_target(example: str, entry: Entry) -> str | None:
     variants. A truly inflected untagged surface still folds to a different key and
     is skipped — the caller tries the next example.
     """
-    blank = "_____"
     clean, spans = parse_marked_example(example)
     if spans:
         s = spans[0]
-        return clean[: s.start] + blank + clean[s.end :]
-    target_key = match_key(entry.norm)
-    display_lower = entry.display.lower()
+        return clean[: s.start] + _BLANK + clean[s.end :]
+    display = entry.display
     # Whole-phrase, case-insensitive, anchored to word boundaries so a substring
     # of a longer word (or an inflected form) is NOT matched. Lookarounds instead
     # of \b so a target that starts/ends with a non-word char still behaves.
-    m = re.search(rf"(?<!\w){re.escape(display_lower)}(?!\w)", clean.lower())
+    # re.IGNORECASE on the ORIGINAL clean (no pre-lowercasing): a length-changing
+    # .lower() (e.g. İ -> i̇) would misalign the match offsets against clean (#4).
+    m = re.search(rf"(?<!\w){re.escape(display)}(?!\w)", clean, flags=re.IGNORECASE)
     if m:
-        return clean[: m.start()] + blank + clean[m.end() :]
+        return clean[: m.start()] + _BLANK + clean[m.end() :]
     # Token-by-token via match_key equality (catches diacritic/case variants the
     # boundary match missed because the surface differs from the display).
-    tokens = clean.split()
-    for i, tok in enumerate(tokens):
-        stripped = tok.strip(".,;:!?\"'()[]")
-        if stripped and match_key(stripped) == target_key:
-            tokens[i] = tok.replace(stripped, blank)
-            return " ".join(tokens)
-    return None
+    return _blank_first_token_matching(clean, {match_key(entry.norm)})
 
 
 def _blank_in_phrase(phrase: str, entry: Entry, accepted: list[str]) -> str | None:
@@ -111,16 +146,9 @@ def _blank_in_phrase(phrase: str, entry: Entry, accepted: list[str]) -> str | No
     OR any accepted inflected surface — ``heavy rains`` blanks on the ``rains``
     form of ``rain``. Blanks the FIRST matching token; None when none matches (the
     caller tries the next collocation)."""
-    blank = "_____"
     want = {match_key(entry.norm)}
     want.update(match_key(s) for s in accepted if s)
-    tokens = phrase.split()
-    for i, tok in enumerate(tokens):
-        stripped = tok.strip(".,;:!?\"'()[]")
-        if stripped and match_key(stripped) in want:
-            tokens[i] = tok.replace(stripped, blank)
-            return " ".join(tokens)
-    return None
+    return _blank_first_token_matching(phrase, want)
 
 
 def _shuffled_pairs(definitions: list[str], seed: str) -> tuple[list[str], list[int]]:

@@ -168,9 +168,7 @@ async def test_hypernym_hyponym_sense_relations(engine):
     )
 
     async with sf() as s:
-        sense_id = (
-            await s.execute(select(SenseRelation.from_sense_id).limit(1))
-        ).scalar_one()
+        sense_id = (await s.execute(select(SenseRelation.from_sense_id).limit(1))).scalar_one()
         rels = list(
             (
                 await s.execute(
@@ -470,9 +468,7 @@ async def test_forms_sanitized_and_empty_skipped(engine):
         )
     )
     async with create_session_factory(engine)() as s:
-        rows = list(
-            (await s.execute(select(SenseForm).order_by(SenseForm.form_order))).scalars()
-        )
+        rows = list((await s.execute(select(SenseForm).order_by(SenseForm.form_order))).scalars())
     # NUL collapsed to space; whitespace-only surface dropped; a repeated label
     # (dreamed/dreamt) is allowed — forms is a flat list, not a dict.
     assert [(r.inf, r.surface) for r in rows] == [("past", "dreamed"), ("past", "dream t")]

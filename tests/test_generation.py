@@ -98,7 +98,8 @@ def _fake_llm(result: GeneratedResult) -> _FakeLLM:
 # --- prompt assembly ------------------------------------------------------
 
 
-def _format_bundle(bundle: ReferenceBundle, existing_tags: list = []) -> str:
+def _format_bundle(bundle: ReferenceBundle, existing_tags: list | None = None) -> str:
+    existing_tags = existing_tags if existing_tags is not None else []
     alts = (
         ", ".join(f"{a}({t})" for a, t in bundle.cambridge_alternatives)
         if bundle.cambridge_alternatives
@@ -160,7 +161,12 @@ async def test_generate_returns_valid_result():
                 entry_type="word",
                 pos="noun",
                 senses=[
-                    {"definition": "a written text", "tier": "core", "cefr_level": "A1", "pos": "noun"}
+                    {
+                        "definition": "a written text",
+                        "tier": "core",
+                        "cefr_level": "A1",
+                        "pos": "noun",
+                    }
                 ],
                 aliases=[],
             )
@@ -256,7 +262,9 @@ async def test_same_meaning_variant_is_one_unit_with_alias():
             GeneratedEntry(
                 norm="log in",
                 entry_type="phrasal_verb",
-                senses=[{"definition": "to access a computer system", "tier": "core", "pos": "verb"}],
+                senses=[
+                    {"definition": "to access a computer system", "tier": "core", "pos": "verb"}
+                ],
                 aliases=[{"alias_norm": "log on", "type": "particle"}],
             )
         ]

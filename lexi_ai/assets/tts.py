@@ -40,9 +40,7 @@ def _require_safe_base_url(base_url: str, api_key: str) -> None:
     if not api_key:
         return
     if not base_url:
-        raise ValueError(
-            "a TTS base_url (LEXI_TTS_BASE_URL) is required when a TTS api_key is set"
-        )
+        raise ValueError("a TTS base_url (LEXI_TTS_BASE_URL) is required when a TTS api_key is set")
     parsed = urlparse(base_url)
     host = parsed.hostname
     if not host:

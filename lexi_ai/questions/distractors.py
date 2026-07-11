@@ -15,7 +15,8 @@ distractor. The caller degrades the option count when the ladder returns fewer
 than requested.
 """
 
-from lexi_ai.normalize import match_key, render, tag_key
+from lexi_ai.normalize import render, tag_key
+from lexi_ai.questions.dedup import DistractorDedup
 from lexi_ai.read_models import Entry
 from lexi_ai.vectors import cosine, unpack_vector
 
@@ -42,15 +43,16 @@ class DistractorProvider:
         """
         if k <= 0:
             return []
-        seen = self._exclude_keys(entry)
-        out: list[str] = []
+        # Shared exclude+dedup (3.3): the target word + aliases can never be a
+        # distractor, and each display is deduped by match_key.
+        dedup = DistractorDedup(entry)
         for display in await self._semantic(entry):
-            if self._take(display, seen, out) and len(out) >= k:
-                return out
+            if dedup.take(display) and len(dedup.items) >= k:
+                return dedup.items
         for display in await self._by_topics(entry):
-            if self._take(display, seen, out) and len(out) >= k:
-                return out
-        return out
+            if dedup.take(display) and len(dedup.items) >= k:
+                return dedup.items
+        return dedup.items
 
     # --- ladder steps (each best-effort, returns [] on any miss/failure) ------
 
@@ -105,20 +107,3 @@ class DistractorProvider:
             if core_id is not None and r.sense_id == core_id:
                 return unpack_vector(r.embedding)
         return unpack_vector(own[0].embedding)
-
-    @staticmethod
-    def _exclude_keys(entry: Entry) -> set[str]:
-        """match_keys that must never appear as a distractor: the word + aliases."""
-        keys = {match_key(entry.norm)}
-        keys.update(match_key(a.alias_norm) for a in entry.aliases)
-        return keys
-
-    @staticmethod
-    def _take(display: str, seen: set[str], out: list[str]) -> bool:
-        """Append ``display`` if its match_key is new; return whether it was taken."""
-        key = match_key(display)
-        if not key or key in seen:
-            return False
-        seen.add(key)
-        out.append(display)
-        return True

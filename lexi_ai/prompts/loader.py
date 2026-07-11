@@ -1,4 +1,5 @@
 import os
+
 from jinja2 import Environment, FileSystemLoader
 
 # Resolve the folder containing this loader.py file

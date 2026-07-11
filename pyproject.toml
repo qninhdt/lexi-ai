@@ -25,6 +25,13 @@ embeddings = [
     "torch>=2.2",
     "transformers>=4.40",
 ]
+# Async Postgres driver for the opt-in dual-DB test tier. The default suite is
+# SQLite-only and hermetic; install with `uv sync --extra postgres` and set
+# LEXI_TEST_PG_URL to a disposable database to exercise the Postgres-only
+# defect class (NUL rejection, VARCHAR(n) length, tz-aware datetime binding).
+postgres = [
+    "asyncpg>=0.29",
+]
 
 [dependency-groups]
 dev = [

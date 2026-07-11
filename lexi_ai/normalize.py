@@ -88,6 +88,19 @@ def _strip_diacritics(s: str) -> str:
     return "".join(c for c in decomposed if not unicodedata.combining(c))
 
 
+def _drop_format_chars(s: str) -> str:
+    """Drop Unicode format / zero-width chars (category ``Cf``): ZWSP (U+200B),
+    BOM/ZWNBSP (U+FEFF), soft hyphen (U+00AD), ZWJ/ZWNJ, word-joiner, etc.
+
+    These are INVISIBLE, so an input carrying one must key identically to the
+    clean form — otherwise the write key and the read key diverge and the lookup
+    misses forever (core B3). ``_CTRL_RE`` (``\\x00-\\x1f\\x7f``) does NOT cover
+    this range, so the sibling keys don't strip these either; ``match_key`` must
+    EXCEED sibling behavior here. The placeholder sentinels are private-use
+    (category ``Co``), NOT ``Cf``, so they are preserved."""
+    return "".join(c for c in s if unicodedata.category(c) != "Cf")
+
+
 def _fold_placeholders(s: str) -> str:
     def _repl(m: re.Match) -> str:
         tok = m.group(0)
@@ -104,11 +117,26 @@ def _fold_placeholders(s: str) -> str:
 def match_key(s: str) -> str:
     """Deterministic lossy lookup key. Same input surface variants -> same key.
 
-    Pipeline: lowercase -> strip diacritics -> fold placeholders -> collapse
-    whitespace. Never splits on ``/``.
+    Pipeline: lowercase -> strip diacritics -> strip control chars (incl NUL,
+    Postgres-rejected) -> drop zero-width/format chars -> fold placeholders ->
+    collapse whitespace. Never splits on ``/``.
+
+    The control-strip + format-drop make ``match_key`` EXCEED its sibling keys
+    (``tag_key``/``theme_key`` only ``_CTRL_RE``): an embedded NUL crashes the
+    ``words.match_key`` INSERT on Postgres (core B2), and an invisible zero-width
+    char (ZWSP/BOM/soft-hyphen) keys differently from the clean form so the
+    write key and read key diverge forever (core B3). Both are stripped BEFORE
+    placeholder folding so the PUA sentinels (category ``Co``) survive.
+
+    Scope note (core B1/H4): this is a lossy read+write key; changing its output
+    for a given input orphans any row already keyed under the old output, so this
+    fix is pre-population-only against the regenerable DB the architecture doc
+    specifies. A non-regenerable DB needs a one-time backfill first.
     """
     s = s.lower()
     s = _strip_diacritics(s)
+    s = _CTRL_RE.sub(" ", s)
+    s = _drop_format_chars(s)
     s = _fold_placeholders(s)
     s = _WS_RE.sub(" ", s).strip()
     return s

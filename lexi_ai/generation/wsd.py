@@ -13,16 +13,16 @@ of ``chosen_index`` happens at the apply site ([F3]).
 
 from collections.abc import Iterable, Sequence
 
-from lexi_ai.constants import normalize_pos
+from lexi_ai.constants import WSD_BATCH_CEIL, normalize_pos
 from lexi_ai.generation.schemas import WsdBatch, WsdChoice, WsdTask
 from lexi_ai.llm import StructuredLLM, ainvoke_structured, guarded_messages
 from lexi_ai.prompts import PromptLoader
 
-# [F9] cost guards — both caller/data-controlled, so both are clamped: at most
-# WSD_BATCH_CEIL edges per LLM call, at most WSD_CANDIDATE_CAP target senses per
-# task (top-K by sense_order). A batch_size=1000 request is silently clamped.
-WSD_BATCH_CEIL = 50
-WSD_CANDIDATE_CAP = 12
+# [F9] cost guards live in ``constants.py`` (the single source): WSD_BATCH_CEIL is
+# re-exported here for the api resolve path that imports it from this module. The
+# old local WSD_CANDIDATE_CAP was dead (never referenced — the repository holds
+# its own ``_WSD_CANDIDATE_CAP`` for the SQL LIMIT) and has been removed.
+__all__ = ["WsdJudge", "pos_filtered_candidates", "WSD_BATCH_CEIL"]
 
 
 def pos_filtered_candidates(source_pos: str | None, candidates: Sequence):
@@ -68,8 +68,16 @@ class WsdJudge:
 
         One LLM call per batch. The returned list is normalized to exactly
         ``len(tasks)``: a short list is padded with ``chosen_index=None`` (treated
-        as unresolvable), a long list is truncated — so a mis-counted model
-        response can never mis-map choices onto the wrong edges.
+        as unresolvable), a long list is truncated.
+
+        Scope note (2.5 — COUNT only, not order): ``_align`` guarantees the returned
+        list LENGTH matches ``tasks``; it does NOT detect or repair a REORDER. The
+        alignment is purely positional — choice[i] is assumed to answer task[i].
+        Ordering is steered three ways (the prompt numbers each ``=== TASK {i} ===``,
+        shows candidate indices, and says "in order"), and the chosen candidate index
+        is server-validated on apply, but a model that silently permutes its answers
+        would mis-map. No reorder has been observed; if one ever is, add a
+        ``task_index`` echo to :class:`WsdChoice` and re-key on apply.
         """
         tasks = list(tasks)
         if not tasks:

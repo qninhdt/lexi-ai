@@ -179,9 +179,7 @@ class SenseRelation(Base):
     )
     # Target SENSE: filled by WSD (resolved); SET NULL when the target sense is
     # deleted/regenerated (Case 2). NULL = not-yet / no-longer resolved.
-    to_sense_id: Mapped[int | None] = mapped_column(
-        ForeignKey("senses.id", ondelete="SET NULL")
-    )
+    to_sense_id: Mapped[int | None] = mapped_column(ForeignKey("senses.id", ondelete="SET NULL"))
     rel_type: Mapped[str] = mapped_column(String(32), nullable=False)
     # LM description of the TARGET's intended meaning — the load-bearing signal WSD
     # uses to pick the right target sense. Non-empty (Phase 3 skips empty edges).

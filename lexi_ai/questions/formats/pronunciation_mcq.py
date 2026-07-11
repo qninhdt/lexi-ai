@@ -32,10 +32,9 @@ class PronunciationMCQ:
         distractors = await ctx.distractors.for_word(entry, k=_MCQ_OPTIONS - 1, pos=sense.pos)
         stem = f"Which word is pronounced /{ipa.strip('/')}/?"
         seed = f"pronunciation_mcq:{match_key(entry.norm)}"
-        q = _mcq_question(entry, sense, stem, seed, distractors)
+        q = _mcq_question(entry, sense, stem, seed, distractors, self.format)
         if q is None:
             return []
-        q.format = self.format
         return [q]
 
     async def grade(self, ctx: QuestionContext, question: Question, answer: object) -> Score:

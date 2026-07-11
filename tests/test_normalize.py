@@ -151,6 +151,67 @@ def test_match_key_has_no_nul_bytes():
         assert "\x00" not in match_key(s)
 
 
+# --- control/NUL + zero-width folding (core B2/B3, dual-DB) ---------------
+#
+# match_key is the read AND write key. An embedded NUL crashes the Postgres
+# words.match_key INSERT (B2); an invisible zero-width char keys differently
+# from the clean form so write-key != read-key and the lookup misses forever
+# (B3). Both must be folded, EXCEEDING the sibling keys (which only strip
+# _CTRL_RE and would leave the zero-width class in place).
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "col\x00or",  # NUL — Postgres text rejects it
+        "col\x01or",  # other control char
+        "col\x7for",  # DEL
+        "col\tor",  # tab (control range, not just \s)
+    ],
+)
+def test_match_key_strips_control_and_nul(raw):
+    # The key is Postgres-legal (no NUL/control survives) and deterministic: like
+    # the sibling keys, a control char folds to a SPACE (not removed), so a
+    # mid-word control becomes a word break — matching tag_key/theme_key. The
+    # load-bearing guarantee here is B2 (no NUL reaches words.match_key), proven
+    # by the no-NUL assert plus equality to the explicit space-form.
+    key = match_key(raw)
+    assert "\x00" not in key
+    assert all(ord(c) >= 0x20 and ord(c) != 0x7F for c in key)
+    assert key == match_key("col or")
+
+
+@pytest.mark.parametrize(
+    "invisible",
+    [
+        "col\u200bor",  # ZWSP
+        "col\ufeffor",  # BOM / zero-width no-break space
+        "col\u00ador",  # soft hyphen
+        "col\u200dor",  # ZWJ
+        "col\u200cor",  # ZWNJ
+        "col\u2060or",  # word joiner
+    ],
+)
+def test_match_key_folds_zero_width_format_chars(invisible):
+    # An invisible char must vanish (not become a space) so the key equals the
+    # clean form — exceeding sibling behavior (_CTRL_RE does NOT cover Cf).
+    assert match_key(invisible) == match_key("color")
+
+
+def test_match_key_zero_width_preserves_placeholder_sentinels():
+    # The PUA fold sentinels are category Co, NOT Cf — the format-drop must keep
+    # them, so placeholder equivalence still holds when the input carries a ZWSP.
+    assert match_key("act on behalf of {sb}\u200b") == match_key("act on behalf of somebody")
+
+
+def test_match_key_write_read_invariant_for_invisible_input():
+    # The headline B3 invariant: a stored norm carrying an invisible char keys
+    # identically to the clean user query — otherwise write==read breaks.
+    stored = match_key("make\u200b up")  # write path indexes the raw LLM norm
+    queried = match_key("make up")  # read path resolves the clean user input
+    assert stored == queried
+
+
 # --- render leaves unknown tokens degraded, not crashing -------------------
 
 

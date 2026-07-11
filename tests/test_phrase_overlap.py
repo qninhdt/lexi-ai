@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from lexi_ai.db import create_session_factory, init_models, session_scope
-from lexi_ai.models import WordRelation, Word
+from lexi_ai.models import Word, WordRelation
 from lexi_ai.normalize import match_key
 from lexi_ai.persistence.repository import Repository
 from lexi_ai.prep.phrase_overlap import PhraseOverlapPrep

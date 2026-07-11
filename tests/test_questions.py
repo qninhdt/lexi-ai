@@ -310,6 +310,25 @@ async def test_grade_single_choice_unmatched_is_wrong_not_error():
     assert score.correct is False and score.kind == "rule"
 
 
+@pytest.mark.parametrize(
+    "adversarial",
+    [
+        "--5",  # lstrip("-") let this through; int("--5") raised
+        "²",  # str.isdigit() accepts unicode superscripts; int() rejects them
+        "⁵",
+        "5" * 5000,  # exceeds CPython int_max_str_digits -> int() raises ValueError
+    ],
+)
+async def test_grade_single_choice_adversarial_answer_scores_wrong_not_raises(adversarial):
+    # The public grade() contract: an unmatched value scores wrong rather than
+    # raising. The old index parse (`text.lstrip("-").isdigit()` then `int(text)`)
+    # crashed on inputs isdigit() accepts but int() rejects. A non-index string
+    # must fall through to the match_key option lookup and score wrong.
+    q = _mcq_question(["a", "b"], 0)
+    score = await grade_single_choice(q, adversarial)
+    assert score.correct is False and score.kind == "rule"
+
+
 async def test_grade_text_span_rides_the_one_normalizer():
     # contract test: grading folds exactly what match_key folds — case, whitespace,
     # and diacritics — but NOT spelling variants (colour != color; that is an
@@ -713,8 +732,12 @@ def _matching_question(lefts, rights, correct_map) -> Question:
         sense_id=None,
         format="matching",
         answer_kind="matching",
-        payload={"prompt": "Match each.", "lefts": lefts, "rights": rights,
-                 "correct_map": correct_map},
+        payload={
+            "prompt": "Match each.",
+            "lefts": lefts,
+            "rights": rights,
+            "correct_map": correct_map,
+        },
     )
 
 
@@ -951,3 +974,47 @@ async def test_collocation_fill_without_collocations_is_unavailable(session_fact
 def test_new_formats_registered():
     assert "pronunciation_mcq" in REGISTRY
     assert "collocation_fill" in REGISTRY
+
+
+# --- 3.4 token-blank helper: separator preservation + unicode alignment ----
+#
+# The two token-blank loops (_blank_target fallback, _blank_in_phrase) were
+# consolidated into _blank_first_token_matching. That consolidation CHANGES
+# behavior (the old text.split()+" ".join() collapsed separators; the old
+# boundary path pre-lowercased and misaligned length-changing unicode), so these
+# are failing-first tests for the new behavior, NOT ride-alongs on unchanged ones.
+
+
+def test_blank_in_phrase_preserves_separators():
+    # #3: the old " ".join(phrase.split()) collapsed runs of whitespace. A
+    # collocation with a double space / newline must keep its separators in the
+    # stem — only the matched token's core is replaced.
+    from lexi_ai.questions.formats._shared import _blank_in_phrase
+
+    entry = _entry(1, 1, norm="rain")
+    stem = _blank_in_phrase("heavy   rain\nstorm", entry, [])
+    assert stem == "heavy   _____\nstorm"  # separators intact, only "rain" blanked
+
+
+def test_blank_in_phrase_blanks_only_matched_half_of_hyphenated_token():
+    # #3: a token like "cat-cat" must blank only the matched core, not the whole
+    # token. match_key("cat-cat") != match_key("cat"), so the token-level strip
+    # only fires when the core equals the target; here the target IS "cat-cat".
+    from lexi_ai.questions.formats._shared import _blank_in_phrase
+
+    entry = _entry(1, 1, norm="cat")
+    # "cat," strips edge punct to "cat" -> matches; the comma is preserved.
+    stem = _blank_in_phrase("the cat, sat", entry, [])
+    assert stem == "the _____, sat"
+
+
+def test_blank_target_unicode_dotted_capital_i_aligns():
+    # #4: a length-changing .lower() (İ U+0130 -> "i̇", two chars) would shift the
+    # regex match offsets against the un-lowered clean string, blanking the wrong
+    # span. Searching with re.IGNORECASE on the original clean keeps offsets aligned.
+    from lexi_ai.questions.formats._shared import _blank_target
+
+    entry = _entry(1, 1, norm="apple")
+    # "İ" precedes the target; the blank must land exactly on "apple".
+    stem = _blank_target("İ love apple pie", entry)
+    assert stem == "İ love _____ pie"

@@ -130,6 +130,13 @@ class Lexicon:
         self._wsd_judge = wsd_judge
         self._wsd_built = wsd_judge is not None
         self._locks: dict[str, asyncio.Lock] = {}
+        # Single-flight lock for the THEMED overlay step (2.6), keyed on
+        # (word_id, theme_id) — word_id is the canonical resolution of the word's
+        # match_key (using it, not the raw display key, sidesteps the 2.1
+        # display-vs-norm key mismatch). A DISTINCT map from _locks so the overlay
+        # lock can never form a cycle with the neutral per-key lock (the neutral
+        # lock is fully released before the overlay block runs, never nested).
+        self._theme_locks: dict[tuple[int, int], asyncio.Lock] = {}
         # Lazy questions engine (built on first access; see the `questions` property).
         self._questions: QuestionEngine | None = None
 
@@ -426,9 +433,7 @@ class Lexicon:
             raise ValueError("no LLM configured for example generation")
         return self._generator
 
-    async def _add_themed_examples(
-        self, sense_id: int, n: int, theme: str | int
-    ) -> SenseView:
+    async def _add_themed_examples(self, sense_id: int, n: int, theme: str | int) -> SenseView:
         """Append up to ``n`` in-voice examples to a sense's themed overlay.
 
         The overlay must already exist (word themed via :meth:`generate` with
@@ -927,7 +932,7 @@ class Lexicon:
         source: SearchResult | str,
         *,
         force: bool = False,
-        theme: str | None = None,
+        theme: str | int | None = None,
     ) -> Entry:
         """Generate (or return) the entry for a search result or a custom string.
 
@@ -980,10 +985,21 @@ class Lexicon:
                 raise ValueError(f"unknown theme: {theme!r}")
             theme_id, style_prompt = resolved
 
-            # Check if themed overlay already exists for this entry
-            overlay = await self._repo.themed_for_word(entry.word_id, theme_id)
-            if not overlay or force:
-                await self._run_themed_generation(entry.word_id, theme_id, style_prompt)
+            # Single-flight the overlay step (2.6): the LLM call in
+            # _run_themed_generation runs BEFORE persist_themed, so an unguarded
+            # check-then-act let two concurrent generate(word, theme=T) both see no
+            # overlay and both call the LLM. Serialize on (word_id, theme_id) and
+            # RE-CHECK the overlay inside the lock so the second waiter adopts the
+            # first's result instead of regenerating.
+            theme_lock_key = (entry.word_id, theme_id)
+            theme_lock = self._theme_locks.setdefault(theme_lock_key, asyncio.Lock())
+            try:
+                async with theme_lock:
+                    overlay = await self._repo.themed_for_word(entry.word_id, theme_id)
+                    if not overlay or force:
+                        await self._run_themed_generation(entry.word_id, theme_id, style_prompt)
+            finally:
+                self._evict_theme_lock(theme_lock_key, theme_lock)
 
             # Reload entry with the theme overlay
             entry = await self._to_entry(entry.word_id, theme_id)
@@ -995,7 +1011,7 @@ class Lexicon:
         sources: list[SearchResult | str],
         *,
         force: bool = False,
-        theme: str | None = None,
+        theme: str | int | None = None,
         concurrency: int = 5,
     ) -> list[BatchResult]:
         """Batch :meth:`generate` — one :class:`BatchResult` per input source, in
@@ -1142,9 +1158,7 @@ class Lexicon:
     # hook headroom over the raw word count, still clamped by the hard ceiling.
     _WSD_INBOUND_FACTOR = 20
 
-    async def _resolve_core(
-        self, batch_size: int, word_ids: list[int] | None
-    ) -> list[BatchResult]:
+    async def _resolve_core(self, batch_size: int, word_ids: list[int] | None) -> list[BatchResult]:
         """Shared resolve engine for both the hook and the public batch API.
 
         Steps: clamp ``batch_size`` ([F9]) → read the pending queue → per edge,
@@ -1178,8 +1192,7 @@ class Lexicon:
                     gloss=task.gloss,
                     source_def=task.source_def,
                     candidates=[
-                        WsdCandidate(index=i, definition=c.definition)
-                        for i, c in enumerate(cands)
+                        WsdCandidate(index=i, definition=c.definition) for i, c in enumerate(cands)
                     ],
                 )
             )
@@ -1266,6 +1279,13 @@ class Lexicon:
         """Drop a per-key lock once idle, so _locks does not grow unbounded."""
         if not lock.locked() and self._locks.get(lock_key) is lock:
             del self._locks[lock_key]
+
+    def _evict_theme_lock(self, lock_key: tuple[int, int], lock: asyncio.Lock) -> None:
+        """Drop a per-(word, theme) overlay lock once idle (2.6). A DISTINCT map
+        from ``_locks`` so the overlay lock never nests against the neutral
+        per-key lock — no cross-lock cycle."""
+        if not lock.locked() and self._theme_locks.get(lock_key) is lock:
+            del self._theme_locks[lock_key]
 
     @staticmethod
     async def _gather_batch(items: list, fn, concurrency: int | None = None) -> list[BatchResult]:

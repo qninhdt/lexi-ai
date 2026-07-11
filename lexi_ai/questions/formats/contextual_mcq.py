@@ -4,6 +4,7 @@ from lexi_ai.llm import ainvoke_structured, guarded_messages
 from lexi_ai.normalize import match_key
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.questions.base import FormatSpec, QuestionContext, register
+from lexi_ai.questions.dedup import DistractorDedup
 from lexi_ai.questions.formats._shared import (
     _CONTEXTUAL_SYSTEM,
     _MCQ_OPTIONS,
@@ -43,12 +44,10 @@ class ContextualMCQ:
         # a generated answer would risk a hallucinated key. `correct` steers the model
         # to build coherent distractors, then is intentionally discarded.
         distractors = await self._merge_distractors(ctx, entry, sense, mcq)
-        q = _mcq_question(
-            entry, sense, mcq.stem, f"contextual_mcq:{match_key(entry.norm)}", distractors
-        )
+        question_id = f"contextual_mcq:{match_key(entry.norm)}"
+        q = _mcq_question(entry, sense, mcq.stem, question_id, distractors, self.format)
         if q is None:
             return []
-        q.format = self.format
         if ctx.store is not None:  # the plugin decides to persist; the engine does not
             q = await ctx.store.insert(q)
         return [q]
@@ -57,25 +56,22 @@ class ContextualMCQ:
     async def _merge_distractors(
         ctx: QuestionContext, entry: Entry, sense: SenseView, mcq: GeneratedMCQ
     ) -> list[str]:
-        """LLM-proposed distractors first (answer-filtered), topped up from the ladder."""
-        exclude = {match_key(entry.norm)}
-        exclude.update(match_key(a.alias_norm) for a in entry.aliases)
-        merged: list[str] = []
-        seen: set[str] = set()
+        """LLM-proposed distractors first (answer-filtered), topped up from the ladder.
+
+        Uses the shared :class:`DistractorDedup` (3.3) so the exclude+dedup rule
+        (never the answer or an alias variant, never a repeat) is enforced by the
+        SAME code the ladder provider uses — not a hand-rolled second copy."""
+        dedup = DistractorDedup(entry)
+        want = _MCQ_OPTIONS - 1
         for cand in mcq.distractors:
-            key = match_key(cand)
-            if key and key not in exclude and key not in seen:
-                seen.add(key)
-                merged.append(cand)
-        if len(merged) < _MCQ_OPTIONS - 1:
-            for cand in await ctx.distractors.for_word(entry, k=_MCQ_OPTIONS - 1, pos=sense.pos):
-                key = match_key(cand)
-                if key not in seen:
-                    seen.add(key)
-                    merged.append(cand)
-                if len(merged) >= _MCQ_OPTIONS - 1:
+            if len(dedup.items) >= want:
+                break
+            dedup.take(cand)
+        if len(dedup.items) < want:
+            for cand in await ctx.distractors.for_word(entry, k=want, pos=sense.pos):
+                if dedup.take(cand) and len(dedup.items) >= want:
                     break
-        return merged[: _MCQ_OPTIONS - 1]
+        return dedup.items[:want]
 
     async def grade(self, ctx: QuestionContext, question: Question, answer: object) -> Score:
         # Same helper the rule DefinitionMCQ uses — the cross-axis proof.

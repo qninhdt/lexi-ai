@@ -245,9 +245,7 @@ async def test_target_sense_delete_sets_null_keeps_edge(session_factory):
         tgt_id = tgt.id
 
     async with session_scope(session_factory) as session:
-        await session.execute(
-            select(Sense).where(Sense.id == tgt_id)
-        )  # ensure loaded path
+        await session.execute(select(Sense).where(Sense.id == tgt_id))  # ensure loaded path
         tgt = (await session.execute(select(Sense).where(Sense.id == tgt_id))).scalar_one()
         await session.delete(tgt)
 

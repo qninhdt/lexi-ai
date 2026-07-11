@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from lexi_ai.config import Settings, get_settings
-from lexi_ai.llm import StructuredLLM, ainvoke_structured, build_structured_llm, sys_msg, user_msg
+from lexi_ai.llm import StructuredLLM, ainvoke_structured, build_structured_llm, guarded_messages
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.theming.schemas import ThemedResult
 
@@ -62,7 +62,11 @@ class ThemedGenerator:
             style_prompt=style_prompt,
             neutral_senses=mapped_senses,
         )
-        messages = [sys_msg(system_content), user_msg(user_content)]
+        # style_prompt is user-authored (theme creation) -> the user turn is
+        # untrusted. Route through guarded_messages (nonce-wrapped) like every
+        # other LM caller; the themed subsystem was the one injection hole left
+        # unguarded (3.1, promoted security-High).
+        messages = guarded_messages(system_content, user_content)
         return await ainvoke_structured(
             self.llm,
             messages,
@@ -99,7 +103,8 @@ class ThemedGenerator:
             existing=list(existing),
             n=n,
         )
-        messages = [sys_msg(system_content), user_msg(user_content)]
+        # style_prompt is user-authored -> guard the user turn (3.1).
+        messages = guarded_messages(system_content, user_content)
         return await ainvoke_structured(
             self.llm,
             messages,
@@ -139,7 +144,7 @@ class ThemeMetadataGenerator:
             key=key,
             prompt=prompt,
         )
-        messages = [sys_msg(system_content), user_msg(user_content)]
+        messages = guarded_messages(system_content, user_content)
         return await ainvoke_structured(
             self.llm,
             messages,

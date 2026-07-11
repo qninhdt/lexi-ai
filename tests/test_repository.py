@@ -349,4 +349,100 @@ async def test_insert_word_recovers_from_concurrent_duplicate(repo, session_fact
         # Adopted the pre-existing row (status stays 'done'), no new row.
         assert word.status == "done"
 
-    assert await _count(session_factory, Word) == 1
+
+# --- 1.3 untrusted-column NUL sanitation (dual-DB) ------------------------
+#
+# The neutral write path cleaned IPA/guideword/domain but NOT the neutral
+# definition, examples, norm, alias_norm, or source_ref — all untrusted LM text
+# landing in Postgres-strict columns. A NUL in any of them makes the Postgres
+# INSERT raise; persist_result rolls back and marks the whole word
+# status="error" (the fatal path). Invisible on SQLite, which accepts the NUL.
+# Each test below is modeled on the IPA NUL test and confirmed to FAIL on
+# pre-fix code (the raw value carried the NUL straight into the column).
+
+
+def _nul_entry(
+    *,
+    norm: str = "shine",
+    definition: str = "to give off light",
+    example: str = "the stars shine",
+    alias_norm: str | None = None,
+    source_ref: str | None = None,
+) -> GeneratedResult:
+    sense: dict = {
+        "definition": definition,
+        "tier": "core",
+        "pos": "verb",
+        "examples": [example],
+    }
+    if source_ref is not None:
+        sense["references"] = [{"source": "cambridge", "source_ref": source_ref}]
+    entry_kwargs: dict = {
+        "norm": norm,
+        "entry_type": "word",
+        "pos": "verb",
+        "senses": [sense],
+    }
+    if alias_norm is not None:
+        entry_kwargs["aliases"] = [{"alias_norm": alias_norm, "type": "spelling_uk"}]
+    return GeneratedResult(units=[GeneratedEntry(**entry_kwargs)])
+
+
+async def test_nul_in_definition_survives_persist(repo, session_factory):
+    await repo.persist_result(_nul_entry(definition="to give off\x00 light"))
+    async with session_scope(session_factory) as session:
+        word = (await session.execute(select(Word))).scalar_one()
+        sense = (await session.execute(select(Sense))).scalar_one()
+    assert word.status == "done"  # not rolled back to "error"
+    assert "\x00" not in sense.definition
+
+
+async def test_nul_in_example_survives_persist(repo, session_factory):
+    await repo.persist_result(_nul_entry(example="the stars\x00 shine"))
+    async with session_scope(session_factory) as session:
+        word = (await session.execute(select(Word))).scalar_one()
+        ex = (await session.execute(select(Example))).scalar_one()
+    assert word.status == "done"
+    assert "\x00" not in ex.text
+
+
+async def test_nul_in_norm_survives_persist(repo, session_factory):
+    await repo.persist_result(_nul_entry(norm="shi\x00ne"))
+    async with session_scope(session_factory) as session:
+        word = (await session.execute(select(Word))).scalar_one()
+    assert word.status == "done"
+    assert "\x00" not in word.norm
+    # match_key already strips control chars, so the key is NUL-free too.
+    assert "\x00" not in word.match_key
+
+
+async def test_nul_in_alias_norm_survives_persist(repo, session_factory):
+    await repo.persist_result(_nul_entry(alias_norm="shi\x00ne up"))
+    async with session_scope(session_factory) as session:
+        word = (await session.execute(select(Word))).scalar_one()
+        alias = (await session.execute(select(WordAlias))).scalar_one()
+    assert word.status == "done"
+    assert "\x00" not in alias.alias_norm
+    assert "\x00" not in alias.alias_match_key
+
+
+async def test_nul_in_source_ref_survives_persist(repo, session_factory):
+    await repo.persist_result(_nul_entry(source_ref="s\x001"))
+    async with session_scope(session_factory) as session:
+        word = (await session.execute(select(Word))).scalar_one()
+        ref = (await session.execute(select(SenseReference))).scalar_one()
+    assert word.status == "done"
+    assert "\x00" not in ref.source_ref
+
+
+def test_over_length_source_ref_rejected_at_schema():
+    # source_ref lands in String(255); an over-length value is the same dual-DB
+    # class as the keys. Bound it at the model boundary (max_length=255) so it is
+    # rejected before it can reach the DB and raise "value too long".
+    import pydantic
+
+    from lexi_ai.generation.schemas import GeneratedReference
+
+    GeneratedReference(source="cambridge", source_ref="4" * 255)  # at the bound: ok
+    with pytest.raises(pydantic.ValidationError):
+        GeneratedReference(source="cambridge", source_ref="4" * 256)

@@ -58,7 +58,39 @@ def test_translate_params_invalid_raises():
 
 def test_tts_params_stable():
     assert normalize_asset_params("tts", voice="Alloy", fmt="MP3") == "alloy|mp3"
-    assert normalize_asset_params("tts", voice=None, fmt=None) == "|"
+    # None-param contract CHANGED (2.3): voice/fmt are now allow-list validated, and
+    # "" (the old None token) is in no vocab. A None param resolves to the CONFIGURED
+    # default (config.tts_voice/tts_format = alloy/mp3) BEFORE validation, so the
+    # token is the resolved default, not "|". This is the happy path a default TTS
+    # call takes; it must never hard-reject.
+    assert normalize_asset_params("tts", voice=None, fmt=None) == "alloy|mp3"
+
+
+def test_tts_config_defaults_are_allow_list_members():
+    # Security #5: the configured defaults MUST be in the vocab, else a default TTS
+    # call (voice=None/fmt=None -> default -> validate) would hard-reject on the
+    # happy path. Assert the coupling so a future default change can't silently break.
+    from lexi_ai.config import get_settings
+    from lexi_ai.constants import TTS_FORMATS, TTS_VOICES
+
+    settings = get_settings()
+    assert settings.tts_voice in TTS_VOICES
+    assert settings.tts_format in TTS_FORMATS
+
+
+def test_tts_params_collision_rejected():
+    # The bug: "en-US" and "en_US" are distinct rows but squash to the SAME on-disk
+    # filename, so a later get() serves the wrong voice's bytes. Both are now
+    # rejected at the choke point (out of vocab) before they can collide.
+    with pytest.raises(ValueError, match="invalid/unsupported TTS voice"):
+        normalize_asset_params("tts", voice="en-US", fmt="mp3")
+    with pytest.raises(ValueError, match="invalid/unsupported TTS voice"):
+        normalize_asset_params("tts", voice="en_US", fmt="mp3")
+
+
+def test_tts_out_of_vocab_format_rejected():
+    with pytest.raises(ValueError, match="invalid/unsupported TTS format"):
+        normalize_asset_params("tts", voice="alloy", fmt="ogg")
 
 
 def test_unknown_kind_raises():
@@ -254,11 +286,14 @@ async def test_get_missing_file_is_miss(session_factory, assets, tmp_path):
 
 
 async def test_put_file_path_traversal_is_contained(session_factory, assets, tmp_path):
-    # A voice/fmt with path separators must NOT escape the shard dir.
+    # A params token with path separators must NOT escape the shard dir. The 2.3
+    # allow-list now rejects "../evil" at normalize_asset_params, so that upstream
+    # guard would make this a phantom test. Feed the crafted params to put_file
+    # DIRECTLY (bypassing normalization) so the downstream path-sanitizer's
+    # traversal containment stays covered on its own (red-team Finding 3 / sec #5).
     sid = await _make_sense(session_factory)
     text = "a small domestic cat"
-    params = normalize_asset_params("tts", voice="../evil", fmt="mp3")
-    put = await assets.put_file("sense_def", sid, "tts", params, text, b"\x01", ext="mp3")
+    put = await assets.put_file("sense_def", sid, "tts", "../evil|mp3", text, b"\x01", ext="mp3")
     resolved = (tmp_path / put.file_path).resolve()
     assert str(resolved).startswith(str(tmp_path.resolve()))
 
@@ -515,9 +550,7 @@ def test_tts_no_key_skips_base_url_check():
     )
 
 
-async def test_tts_provider_selection_real_when_configured(
-    session_factory, tmp_path, monkeypatch
-):
+async def test_tts_provider_selection_real_when_configured(session_factory, tmp_path, monkeypatch):
     from lexi_ai.assets.tts import OpenAICompatibleTTSProvider
 
     monkeypatch.setenv("LEXI_TTS_BASE_URL", "https://tts.example/v1")
@@ -594,9 +627,7 @@ def test_tts_base_url_missing_scheme_with_key_raises():
     from lexi_ai.assets.tts import OpenAICompatibleTTSProvider
 
     with pytest.raises(ValueError):
-        OpenAICompatibleTTSProvider(
-            base_url="tts.example/v1", api_key="sk-test", model="tts-1"
-        )
+        OpenAICompatibleTTSProvider(base_url="tts.example/v1", api_key="sk-test", model="tts-1")
 
 
 def test_tts_base_url_ipv6_loopback_http_allowed():

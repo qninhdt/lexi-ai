@@ -79,9 +79,7 @@ async def _seed_legacy_entry_links(engine, n_words: int = 2, n_links: int = 1) -
 
 async def _has_table(engine, name: str) -> bool:
     async with engine.begin() as conn:
-        return await conn.run_sync(
-            lambda sync_conn: engine.dialect.has_table(sync_conn, name)
-        )
+        return await conn.run_sync(lambda sync_conn: engine.dialect.has_table(sync_conn, name))
 
 
 async def test_migrate_renames_legacy_entry_links(raw_engine):

@@ -21,7 +21,14 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from lexi_ai.constants import ASSET_KINDS, SOURCE_KINDS, TRANSLATION_LANGUAGES
+from lexi_ai.config import get_settings
+from lexi_ai.constants import (
+    ASSET_KINDS,
+    SOURCE_KINDS,
+    TRANSLATION_LANGUAGES,
+    TTS_FORMATS,
+    TTS_VOICES,
+)
 from lexi_ai.db import session_scope
 from lexi_ai.models import Asset as AssetRow
 from lexi_ai.models import Collocation, Example, Sense
@@ -54,6 +61,14 @@ def normalize_asset_params(kind: str, **kw: str | None) -> str:
 
     ``translate`` → a normalized lang code (``lang``); ``tts`` → ``voice|fmt``.
     Unknown kind → ``ValueError``.
+
+    Every free param is validated against a closed vocab at this one choke point
+    (like ``lang`` against ``TRANSLATION_LANGUAGES``): ``voice``/``fmt`` against
+    ``TTS_VOICES``/``TTS_FORMATS``. This closes the filename-collision bug where
+    two distinct DB rows (``en-US`` vs ``en_US``) squashed to the SAME on-disk
+    path and served each other's bytes. A ``None`` voice/fmt resolves to the
+    configured default (``alloy``/``mp3``) BEFORE validation, so a default TTS
+    call never hard-rejects on the happy path.
     """
     if kind not in ASSET_KINDS:
         raise ValueError(f"unknown asset kind: {kind!r}")
@@ -62,9 +77,14 @@ def normalize_asset_params(kind: str, **kw: str | None) -> str:
         if lang not in TRANSLATION_LANGUAGES:
             raise ValueError(f"invalid/unsupported language code: {lang!r}")
         return lang
-    # tts
-    voice = _norm_token(kw.get("voice"))
-    fmt = _norm_token(kw.get("fmt"))
+    # tts — resolve None to the configured default, then validate both params.
+    settings = get_settings()
+    voice = _norm_token(kw.get("voice") if kw.get("voice") is not None else settings.tts_voice)
+    fmt = _norm_token(kw.get("fmt") if kw.get("fmt") is not None else settings.tts_format)
+    if voice not in TTS_VOICES:
+        raise ValueError(f"invalid/unsupported TTS voice: {voice!r}")
+    if fmt not in TTS_FORMATS:
+        raise ValueError(f"invalid/unsupported TTS format: {fmt!r}")
     return f"{voice}|{fmt}"
 
 

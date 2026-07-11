@@ -252,6 +252,50 @@ async def test_resolve_unresolvable_on_no_match(engine):
     assert judge2.calls == 0
 
 
+async def test_mark_unresolvable_stamps_naive_utc(engine):
+    # SQLite-distinguishable teeth for the dual-DB fix: _mark_unresolvable must
+    # stamp a NAIVE datetime, matching the tz-naive DateTime columns. An AWARE
+    # value binds fine on SQLite (stored as a string) but raises asyncpg DataError
+    # against TIMESTAMP WITHOUT TIME ZONE — silently converting every unresolvable
+    # edge to state="error" and re-queueing it forever (the Postgres tier in
+    # test_postgres_integration observes the downstream no-re-queue).
+    #
+    # A read-back has NO teeth here: SQLite's DateTime type strips tzinfo on the
+    # way out, so ``edge.resolve_attempted_at.tzinfo`` is None whether the write
+    # was aware or naive. Instead capture the value BOUND to the UPDATE at cursor
+    # time — an aware datetime serializes with a "+00:00" offset, a naive one does
+    # not. That difference is the SQLite-observable signal.
+    bound_stamps: list[str] = []
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def _capture(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        if "resolve_attempted_at" in statement and "UPDATE" in statement.upper():
+            bound_stamps.extend(str(p) for p in parameters if "-" in str(p) and ":" in str(p))
+
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    await _seed_source_with_relation(
+        repo,
+        source_norm="bright",
+        source_pos="adjective",
+        rel_type="antonym",
+        target_norm="dark",
+        gloss="a meaning no sense carries",
+    )
+    await repo.persist_result(
+        GeneratedResult(units=[_entry("dark", [_sense("lacking light", "adjective")])])
+    )
+    judge = _FakeJudge(WsdBatch(choices=[WsdChoice(chosen_index=None)]))  # "none"
+    lex = await _lexicon(engine, repo, judge)
+    assert (await lex.resolve_relations())[0].value == "unresolvable"
+
+    edge = await _edge(sf)
+    assert edge.resolve_attempted_at is not None
+    # The stamp bound to the UPDATE must carry no timezone offset (naive UTC).
+    assert bound_stamps, "expected a resolve_attempted_at stamp bound to the UPDATE"
+    assert all("+00:00" not in s and "+0000" not in s for s in bound_stamps), bound_stamps
+
+
 async def test_resolve_regenerate_race_noop(engine):
     # [F6] TOCTOU: the apply UPDATE is CONDITIONAL. Once an edge is already
     # resolved (a racing pass / regenerate moved it out of pending), re-applying a
@@ -283,8 +327,8 @@ async def test_resolve_regenerate_race_noop(engine):
     # The condition `to_sense_id IS NULL` no longer holds -> no-op, not overwrite.
     async with sf() as s:
         other = (
-            await s.execute(select(Sense.id).where(Sense.id != first_target))
-        ).scalars().first()
+            (await s.execute(select(Sense.id).where(Sense.id != first_target))).scalars().first()
+        )
     outcomes = await repo.apply_resolutions(
         [ResolveDecision(edge.id, other or first_target, "deadhash")]
     )
@@ -331,9 +375,7 @@ async def test_batch_poison_pill_isolated(engine, monkeypatch):
         return await real_apply(session, edge_id, to_sense_id, target_hash)
 
     monkeypatch.setattr(repo, "_apply_resolved", _maybe_boom)
-    outcomes = await repo.apply_resolutions(
-        [ResolveDecision(e.id, target, "h") for e in edges]
-    )
+    outcomes = await repo.apply_resolutions([ResolveDecision(e.id, target, "h") for e in edges])
     by_edge = {o.edge_id: o for o in outcomes}
     assert by_edge[poison_id].state == "error"  # isolated
     other_id = edges[1].id
@@ -446,9 +488,7 @@ async def test_generate_target_triggers_inbound_resolve(engine):
     assert edge.to_sense_id is None and edge.resolve_attempted_at is None
 
     judge = _FakeJudge(WsdBatch(choices=[WsdChoice(chosen_index=0)]))
-    target_result = GeneratedResult(
-        units=[_entry("dark", [_sense("lacking light", "adjective")])]
-    )
+    target_result = GeneratedResult(units=[_entry("dark", [_sense("lacking light", "adjective")])])
     lex = Lexicon(
         sf,
         _FakeLoader(),  # type: ignore[arg-type]

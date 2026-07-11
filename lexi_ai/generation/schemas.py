@@ -73,12 +73,17 @@ filterwarnings(
 
 class GeneratedReference(BaseModel):
     source: _SourceLit
+    # Bounded to the Sense.source_ref String(255) column: an unbounded value
+    # (a hallucinated giant ref) is the same over-length dual-DB class as the
+    # keys — it lands fine on SQLite but raises "value too long" on Postgres.
+    # Reject it at the model boundary, not at the DB.
     source_ref: str = Field(
+        max_length=255,
         description=(
             "The source sense/synset this sense maps to. For Cambridge use the "
             "bare numeric sense id shown after 'sense#' (e.g. '42'); for WordNet "
             "use the synset key (e.g. 'book.n.01')."
-        )
+        ),
     )
 
 
@@ -129,8 +134,9 @@ class GeneratedSense(BaseModel):
         description=(
             "1-3 natural English example sentences illustrating this sense. "
             "For every sentence, you MUST wrap the target word/phrase (or its inflected forms) "
-            "using <t inf=\"value\">...</t> tags. Valid inf values are: "
-            "base | past | past_participle | present_3sg | ing | plural | comparative | superlative. "
+            'using <t inf="value">...</t> tags. Valid inf values are: '
+            "base | past | past_participle | present_3sg | ing | plural | "
+            "comparative | superlative. "
             "Example for 'glisten': 'The snow <t inf=\"past\">glistened</t> in the sun.'"
         ),
     )
@@ -174,7 +180,7 @@ class GeneratedSense(BaseModel):
         max_length=255,
         description=(
             "One short usage or confusable hint when helpful "
-            "(e.g. \"often confused with 'affect'\"; \"usually in the passive\"). "
+            '(e.g. "often confused with \'affect\'"; "usually in the passive"). '
             "Omit when nothing notable."
         ),
     )
@@ -374,7 +380,7 @@ class ExampleBatch(BaseModel):
             'form) using <t inf="value">...</t> tags. Valid inf values are: '
             "base | past | past_participle | present_3sg | ing | plural | "
             "comparative | superlative. "
-            'Example for \'glisten\': \'The snow <t inf="past">glistened</t> '
+            "Example for 'glisten': 'The snow <t inf=\"past\">glistened</t> "
             "in the sun.' (same contract as GeneratedSense.examples)."
         ),
     )
