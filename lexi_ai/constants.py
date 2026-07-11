@@ -52,7 +52,8 @@ _POS_ALIASES = {
     "v.": "verb",
     "adj": "adjective",
     "adj.": "adjective",
-    "a": "adjective",
+    # NOTE: "a" (article/ambiguous) and "int" (integer in most contexts) are
+    # intentionally absent — the module never guesses. Use "adj"/"interj" instead.
     "adv": "adverb",
     "adv.": "adverb",
     "pron": "pronoun",
@@ -65,7 +66,7 @@ _POS_ALIASES = {
     "det.": "determiner",
     "interj": "interjection",
     "interj.": "interjection",
-    "int": "interjection",
+    # "int" excluded (see note above "a").
     "num": "numeral",
     "num.": "numeral",
     "art": "article",

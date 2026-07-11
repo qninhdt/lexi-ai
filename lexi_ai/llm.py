@@ -54,7 +54,9 @@ def _wrap_untrusted(text: str, nonce: str, max_len: int | None = None) -> str:
       forge the closing tag or spoof the nonce.
     - Safety-preserving truncation: when ``max_len`` is given, the INNER text is
       truncated first, then the matching nonce closing tag is re-applied, so the
-      boundary is always intact.
+      boundary is always intact. NOTE (3.9): no in-scope caller currently passes
+      ``max_len`` (all six ``guarded_messages`` call sites omit it); this branch is
+      preserved for future use but is presently dead.
     """
     safe = ("" if text is None else str(text)).replace("</untrusted", "</untrusted-escaped")
     if max_len is not None and len(safe) > max_len:

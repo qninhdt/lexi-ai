@@ -1525,6 +1525,18 @@ class Repository:
     # --- error path + reload ---------------------------------------------
 
     async def _record_error(self, result: GeneratedResult, message: str) -> None:
+        """Stamp every unit in a failed generation with ``status='error'``.
+
+        PRODUCT DECISION (3.10): this unconditionally sets ``status='error'`` even
+        when the word was already ``done`` (good content). A transient regen failure
+        therefore hides a healthy entry from every read surface until it is manually
+        re-generated or the error is cleared. The alternative — skip the status flip
+        for already-``done`` words — would preserve visibility but could leave a
+        stale entry live after a failed content update.
+
+        Change only with an owner decision. The current fail-closed behavior is
+        intentional and test-locked via ``test_error_path_sets_status_error``.
+        """
         try:
             async with session_scope(self._session_factory) as session:
                 for entry in result.units:

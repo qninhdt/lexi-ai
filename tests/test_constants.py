@@ -54,6 +54,14 @@ def test_normalize_pos_returns_none_for_junk():
     assert normalize_pos("   ") is None
 
 
+def test_normalize_pos_ambiguous_aliases_return_none():
+    # 3.8a: "a" (article in most contexts) and "int" (integer abbreviation) are
+    # intentionally absent from _POS_ALIASES so the function never guesses a wrong
+    # POS. Use "adj" / "interj" instead of the dropped shorthands.
+    assert normalize_pos("a") is None, "'a' must not guess 'adjective'"
+    assert normalize_pos("int") is None, "'int' must not guess 'interjection'"
+
+
 # --- REL_LEVEL routing table (Phase 3) ------------------------------------
 
 

@@ -364,6 +364,14 @@ class Lexicon:
 
     @staticmethod
     def _build_sense_view(s: Sense) -> SenseView:
+        """Build a :class:`SenseView` from the ORM ``Sense`` row.
+
+        Intentionally omits ``relations`` (3.7 owner decision): ``get_senses()``
+        is a lightweight bulk read path — loading WSD-resolved sense relations
+        requires joining ``SenseRelation`` and is reserved for the full
+        ``_build_entry`` path (which populates ``relations``). If ``get_senses``
+        ever needs relations, add the selectinload and pass them here.
+        """
         return SenseView(
             definition=s.definition,
             tier=s.tier,
@@ -1273,6 +1281,11 @@ class Lexicon:
         # The queried key didn't match any generated unit exactly (e.g. the model
         # normalized the norm differently); fall back to the first persisted unit.
         fallback = await self._resolve(match_key(result.units[0].norm))
+        if not fallback:
+            raise ValueError(
+                f"no persisted entry found for key {key!r} or "
+                f"first-unit norm {result.units[0].norm!r} — generation may have errored"
+            )
         return await self._to_entry(fallback[0][0])
 
     def _evict_lock(self, lock_key: str, lock: asyncio.Lock) -> None:
