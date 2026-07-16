@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: lexi
+      POSTGRES_USER: lexi
+      POSTGRES_PASSWORD: lexi-dev-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lexi -d lexi"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    profiles: ["migrate"]
+    command: ["/app/.venv/bin/alembic", "upgrade", "head"]
+    environment: &service-environment
+      LEXI_DB_URL: postgresql+asyncpg://lexi:lexi-dev-only@postgres:5432/lexi
+      LEXI_CAMBRIDGE_DB_PATH: /reference/cambridge.db
+      LEXI_SERVICE_DATABASE_URL: postgresql+asyncpg://lexi:lexi-dev-only@postgres:5432/lexi
+      LEXI_SERVICE_REDIS_URL: redis://redis:6379/0
+      LEXI_SERVICE_REFERENCE_DATASET_FINGERPRINT: ${LEXI_SERVICE_REFERENCE_DATASET_FINGERPRINT:-}
+      LEXI_SERVICE_MAX_REQUEST_BYTES: ${LEXI_SERVICE_MAX_REQUEST_BYTES:-65536}
+      LEXI_SERVICE_MAX_QUERY_CHARS: ${LEXI_SERVICE_MAX_QUERY_CHARS:-256}
+      LEXI_SERVICE_MAX_IDEMPOTENCY_KEY_CHARS: ${LEXI_SERVICE_MAX_IDEMPOTENCY_KEY_CHARS:-128}
+      LEXI_SERVICE_MAX_PAGE_SIZE: ${LEXI_SERVICE_MAX_PAGE_SIZE:-100}
+      LEXI_SERVICE_MAX_BATCH_SIZE: ${LEXI_SERVICE_MAX_BATCH_SIZE:-25}
+      LEXI_SERVICE_MAX_PROVIDER_CONCURRENCY: ${LEXI_SERVICE_MAX_PROVIDER_CONCURRENCY:-4}
+      LEXI_SERVICE_MAX_PROVIDER_CONCURRENCY_PER_TENANT: ${LEXI_SERVICE_MAX_PROVIDER_CONCURRENCY_PER_TENANT:-2}
+      LEXI_SERVICE_MAXIMUM_JOB_AGE_SECONDS: ${LEXI_SERVICE_MAXIMUM_JOB_AGE_SECONDS:-3600}
+      LEXI_SERVICE_PROVIDER_ATTEMPT_TIMEOUT_SECONDS: ${LEXI_SERVICE_PROVIDER_ATTEMPT_TIMEOUT_SECONDS:-60}
+      LEXI_SERVICE_MAX_RETRIES: ${LEXI_SERVICE_MAX_RETRIES:-2}
+      LEXI_SERVICE_MAX_OUTSTANDING_JOBS_PER_OWNER: ${LEXI_SERVICE_MAX_OUTSTANDING_JOBS_PER_OWNER:-100}
+    volumes:
+      - ../data:/reference/cambridge.db:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  library-bootstrap:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    profiles: ["bootstrap"]
+    command:
+      [
+        "/app/.venv/bin/python",
+        "-c",
+        "import asyncio; from lexi_ai.config import Settings; from lexi_ai.db import create_engine, init_models; asyncio.run(init_models(create_engine(Settings())))",
+      ]
+    environment:
+      LEXI_DB_URL: postgresql+asyncpg://lexi:lexi-dev-only@postgres:5432/lexi
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment: *service-environment
+    ports: ["8443:8443"]
+    volumes:
+      - ../data:/reference/cambridge.db:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["/app/.venv/bin/python", "-m", "lexi_service.worker.runner"]
+    environment: *service-environment
+    volumes:
+      - ../data:/reference/cambridge.db:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}

@@ -51,6 +51,10 @@ class Word(Base):
     match_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True, index=True)
     entry_type: Mapped[str | None] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    # Monotonic service-generation fence.  A worker may publish a replacement
+    # graph only while it still owns this value; ordinary library calls do not
+    # need to provide a fence.
+    generation_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     pos: Mapped[str | None] = mapped_column(String(32))
     # Provenance if this entry matched a Cambridge row (no cross-DB FK).
     cambridge_word_id: Mapped[int | None] = mapped_column(Integer)

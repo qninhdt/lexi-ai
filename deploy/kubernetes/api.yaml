@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lexi-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: lexi-api}
+  template:
+    metadata:
+      labels: {app: lexi-api}
+    spec:
+      containers:
+        - name: api
+          image: lexi-ai:latest
+          envFrom:
+            - secretRef: {name: lexi-service-config}
+          env:
+            - name: LEXI_CAMBRIDGE_DB_PATH
+              value: /reference/cambridge.db
+          ports: [{containerPort: 8443}]
+          volumeMounts:
+            - name: reference-dataset
+              mountPath: /reference
+              readOnly: true
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          # `/readyz` requires a workload certificate. A TCP probe avoids
+          # bypassing that policy; dependency readiness remains available to
+          # authenticated callers and service-mesh probes.
+          readinessProbe: {tcpSocket: {port: 8443}}
+          livenessProbe: {httpGet: {path: /healthz, port: 8443}}
+      volumes:
+        - name: reference-dataset
+          persistentVolumeClaim:
+            claimName: lexi-reference-dataset

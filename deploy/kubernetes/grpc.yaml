@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lexi-grpc
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: lexi-grpc}
+  template:
+    metadata:
+      labels: {app: lexi-grpc}
+    spec:
+      containers:
+        - name: grpc
+          image: lexi-ai:latest
+          command: ["/app/.venv/bin/python", "-m", "lexi_service.grpc_runner"]
+          envFrom:
+            - secretRef: {name: lexi-service-config}
+          ports: [{containerPort: 9443}]
+          env:
+            - name: LEXI_CAMBRIDGE_DB_PATH
+              value: /reference/cambridge.db
+            - name: LEXI_SERVICE_GRPC_PRIVATE_KEY_FILE
+              value: /tls/tls.key
+            - name: LEXI_SERVICE_GRPC_CERTIFICATE_CHAIN_FILE
+              value: /tls/tls.crt
+            - name: LEXI_SERVICE_GRPC_CLIENT_CA_FILE
+              value: /tls/ca.crt
+          volumeMounts:
+            - name: reference-dataset
+              mountPath: /reference
+              readOnly: true
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {cpu: "1", memory: 512Mi}
+      volumes:
+        - name: reference-dataset
+          persistentVolumeClaim:
+            claimName: lexi-reference-dataset
+        - name: grpc-tls
+          secret:
+            secretName: lexi-grpc-tls

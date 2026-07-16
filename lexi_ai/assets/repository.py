@@ -212,7 +212,9 @@ class AssetRepository:
         text/fmt, different TTS voice) map to distinct files. ``params``/``ext`` are
         sanitized to path-safe tokens (no traversal via env ``voice``/``fmt``). The
         file is written BEFORE the row so a row always implies a file. A stale row is
-        overwritten (self-heal)."""
+        overwritten (self-heal). If the row write fails with a non-IntegrityError,
+        the just-written file is unlinked (only when THIS call created it) so a
+        failure does not orphan a file with no backing row."""
         _check_source_kind(source_kind)
         h = content_hash(source_text)
         safe_ext = "".join(c if c.isalnum() else "-" for c in ext.strip().lstrip(".")).lower()
@@ -220,44 +222,61 @@ class AssetRepository:
         safe_params = "".join(c if c.isalnum() else "-" for c in params).strip("-") or "x"
         rel_path = f"{h[:2]}/{h}.{safe_params}.{safe_ext}"
         abs_path = self._cache_dir / rel_path
+        # Did THIS call create the file? A pre-existing path (same content-addressed
+        # rel_path from an earlier put) must never be unlinked on a failure below —
+        # only a file we just wrote is ours to roll back.
+        file_preexisted = abs_path.exists()
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         abs_path.write_bytes(data)
-        async with session_scope(self._session_factory) as session:
-            row = await self._get(session, source_kind, source_id, kind, params)
-            if row is not None:
-                if row.file_path is not None and row.file_path != rel_path:
-                    self._unlink(row.file_path)
-                row.content_hash = h
-                row.file_path = rel_path
-                row.text_value = None
-                row.meta = meta
-                await session.flush()
-                return self._to_asset(row)
-            row = AssetRow(
-                source_kind=source_kind,
-                source_id=source_id,
-                kind=kind,
-                params=params,
-                content_hash=h,
-                file_path=rel_path,
-                meta=meta,
-            )
-            try:
-                async with session.begin_nested():
-                    session.add(row)
-                    await session.flush()
-            except IntegrityError:
+        # The file is written BEFORE the row so a row always implies a file. If the
+        # row write fails with a NON-IntegrityError (IntegrityError is handled below
+        # as a concurrent-insert adopt), unlink the just-written file so a failure
+        # does not orphan it on disk — but only when this call created it.
+        try:
+            async with session_scope(self._session_factory) as session:
                 row = await self._get(session, source_kind, source_id, kind, params)
-                if row is None:
-                    raise
-                if row.file_path is not None and row.file_path != rel_path:
-                    self._unlink(row.file_path)
-                row.content_hash = h
-                row.file_path = rel_path
-                row.text_value = None
-                row.meta = meta
-                await session.flush()
-            return self._to_asset(row)
+                if row is not None:
+                    if row.file_path is not None and row.file_path != rel_path:
+                        self._unlink(row.file_path)
+                    row.content_hash = h
+                    row.file_path = rel_path
+                    row.text_value = None
+                    row.meta = meta
+                    await session.flush()
+                    return self._to_asset(row)
+                row = AssetRow(
+                    source_kind=source_kind,
+                    source_id=source_id,
+                    kind=kind,
+                    params=params,
+                    content_hash=h,
+                    file_path=rel_path,
+                    meta=meta,
+                )
+                try:
+                    async with session.begin_nested():
+                        session.add(row)
+                        await session.flush()
+                except IntegrityError:
+                    row = await self._get(session, source_kind, source_id, kind, params)
+                    if row is None:
+                        raise
+                    if row.file_path is not None and row.file_path != rel_path:
+                        self._unlink(row.file_path)
+                    row.content_hash = h
+                    row.file_path = rel_path
+                    row.text_value = None
+                    row.meta = meta
+                    await session.flush()
+                return self._to_asset(row)
+        except IntegrityError:
+            # Handled-then-reraised concurrent race (adopt found no row): leave the
+            # file — the winning row's put owns an identical content-addressed path.
+            raise
+        except Exception:
+            if not file_preexisted:
+                self._unlink(rel_path)
+            raise
 
     async def _get(
         self, session: AsyncSession, source_kind: str, source_id: int, kind: str, params: str

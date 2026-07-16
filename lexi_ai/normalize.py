@@ -139,7 +139,13 @@ def match_key(s: str) -> str:
     s = _drop_format_chars(s)
     s = _fold_placeholders(s)
     s = _WS_RE.sub(" ", s).strip()
-    return s
+    # Cap to the words.match_key / word_aliases.alias_match_key String(512) width.
+    # NFKD diacritic-stripping can EXPAND length (ligatures/compat chars decompose
+    # to multiple code points), so a schema-legal input (<=128) can overflow 512.
+    # Postgres enforces VARCHAR(512) (INSERT fails -> word to status="error");
+    # SQLite ignores the declared width and would silently store the over-length
+    # key, diverging the two backends. Cap here so both behave identically.
+    return s[:512]
 
 
 def render(norm: str) -> str:

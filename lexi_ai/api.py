@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from lexi_ai.assets.repository import AssetRepository, normalize_asset_params
+from lexi_ai.assets.repository import AssetRepository, content_hash, normalize_asset_params
 from lexi_ai.config import Settings, get_settings
 from lexi_ai.constants import TIER_ORDER, canonical_cambridge_ref
 from lexi_ai.db import create_engine, create_session_factory, init_models, session_scope
@@ -326,16 +326,22 @@ class Lexicon:
         """
         if theme is None:
             return await self._to_entry(word_id)
-        if isinstance(theme, int):
-            resolved = await self._repo.resolve_theme(theme)
-        else:
-            resolved = await self._repo.resolve_theme(theme)
-            if resolved is None:
-                resolved = await self._repo.resolve_theme(_norm_theme_key(theme))
+        theme_id, _style = await self._resolve_theme_or_raise(theme)
+        return await self._to_entry(word_id, theme_id=theme_id)
+
+    async def _resolve_theme_or_raise(self, theme: str | int) -> tuple[int, str]:
+        """Resolve a theme key/id to ``(theme_id, style_prompt)`` or raise (3.6).
+
+        Single home for the resolve-or-raise the three themed call sites shared.
+        ``resolve_theme`` is key-first-then-id for a ``str`` (2.4), so a raw pass
+        suffices; the ``_norm_theme_key`` retry is kept as a defensive fallback for
+        a caller that passes an already-un-normalized display name."""
+        resolved = await self._repo.resolve_theme(theme)
+        if resolved is None and isinstance(theme, str):
+            resolved = await self._repo.resolve_theme(_norm_theme_key(theme))
         if resolved is None:
             raise ValueError(f"unknown theme: {theme!r}")
-        theme_id, _style = resolved
-        return await self._to_entry(word_id, theme_id=theme_id)
+        return resolved
 
     async def get_senses(self, sense_ids: list[int]) -> list[SenseView]:
         """Batch-resolve senses by their DB ids. Never generates (FREE).
@@ -355,6 +361,13 @@ class Lexicon:
                         selectinload(Sense.examples),
                         selectinload(Sense.collocations),
                         selectinload(Sense.forms),
+                        # Sense-level relations (3.7 fix): get_senses previously
+                        # returned senses with EMPTY relations even when the sense
+                        # had some — a latent read-model bug vs _build_entry. Load
+                        # the edge + target word/sense nested so the view is
+                        # hermetic after the session closes (no MissingGreenlet).
+                        selectinload(Sense.relations_out).selectinload(SenseRelation.to_word),
+                        selectinload(Sense.relations_out).selectinload(SenseRelation.to_sense),
                     )
                     .where(Sense.id.in_(sense_ids))
                 )
@@ -366,11 +379,11 @@ class Lexicon:
     def _build_sense_view(s: Sense) -> SenseView:
         """Build a :class:`SenseView` from the ORM ``Sense`` row.
 
-        Intentionally omits ``relations`` (3.7 owner decision): ``get_senses()``
-        is a lightweight bulk read path — loading WSD-resolved sense relations
-        requires joining ``SenseRelation`` and is reserved for the full
-        ``_build_entry`` path (which populates ``relations``). If ``get_senses``
-        ever needs relations, add the selectinload and pass them here.
+        Populates ``relations`` from ``relations_out`` (3.7 fix), matching
+        ``_build_entry`` — the caller (``get_senses``) selectinloads the edge +
+        its target word/sense so this stays hermetic after the session closes.
+        Previously this omitted ``relations``, so ``get_senses`` returned senses
+        with empty relations even when the sense had some (a latent read bug).
         """
         return SenseView(
             definition=s.definition,
@@ -397,6 +410,7 @@ class Lexicon:
             domain=s.domain,
             usage_note=s.usage_note,
             sense_id=s.id,
+            relations=[_build_sense_relation(rel) for rel in s.relations_out],
         )
 
     async def add_examples(
@@ -448,12 +462,7 @@ class Lexicon:
         ``theme=``): a missing theme or a sense without a themed row for that
         theme raises ``ValueError`` — never silently themes the whole word.
         """
-        resolved = await self._repo.resolve_theme(theme)
-        if resolved is None and isinstance(theme, str):
-            resolved = await self._repo.resolve_theme(_norm_theme_key(theme))
-        if resolved is None:
-            raise ValueError(f"unknown theme: {theme!r}")
-        theme_id, style_prompt = resolved
+        theme_id, style_prompt = await self._resolve_theme_or_raise(theme)
         ctx = await self._repo.sense_context_for_examples(sense_id)
         if ctx is None:
             raise ValueError(f"unknown sense_id: {sense_id}")
@@ -761,6 +770,15 @@ class Lexicon:
 
     # --- cached assets ----------------------------------------------------
 
+    async def source_hash(self, source_kind: str, source_id: int) -> str | None:
+        """Return the current content fingerprint for a translatable source.
+
+        Service workers use this narrow read to fence delayed translation jobs
+        before they call a provider. ``None`` means the source no longer exists.
+        """
+        text = await self._require_assets().resolve_source_text(source_kind, source_id)
+        return None if text is None else content_hash(text)
+
     async def translate_field(self, source_kind: str, source_id: int, lang: str) -> str:
         """Translate the source text at ``(source_kind, source_id)`` into ``lang``,
         cache-first over the reference store (hash-verified).
@@ -983,15 +1001,7 @@ class Lexicon:
                 )
 
         if theme is not None:
-            if isinstance(theme, int):
-                resolved = await self._repo.resolve_theme(theme)
-            else:
-                resolved = await self._repo.resolve_theme(theme)
-                if resolved is None:
-                    resolved = await self._repo.resolve_theme(_norm_theme_key(theme))
-            if resolved is None:
-                raise ValueError(f"unknown theme: {theme!r}")
-            theme_id, style_prompt = resolved
+            theme_id, style_prompt = await self._resolve_theme_or_raise(theme)
 
             # Single-flight the overlay step (2.6): the LLM call in
             # _run_themed_generation runs BEFORE persist_themed, so an unguarded
@@ -1049,6 +1059,36 @@ class Lexicon:
             self._evict_lock(key, lock)
         return await self._entry_for_key(key, result)
 
+    async def generate_fenced(self, source: SearchResult | str) -> Entry:
+        """Generate once under a database fence for independently deployed workers.
+
+        This service-facing seam deliberately has no ``force`` flag: remote
+        callers cannot use a delayed job to replace an entry that a newer claim
+        owns. Library callers retain :meth:`generate` and its local single-flight
+        semantics.
+        """
+        if isinstance(source, str):
+            key, word, cambridge_id = match_key(source), source, None
+        elif source.lexi_word_id is not None:
+            norm, cambridge_id = await self._word_norm_and_cambridge(source.lexi_word_id)
+            key, word = match_key(norm), norm
+        elif source.cambridge_id is not None:
+            key, word, cambridge_id = match_key(source.display), source.display, source.cambridge_id
+        else:
+            raise ValueError("SearchResult has neither lexi_word_id nor cambridge_id")
+
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        try:
+            async with lock:
+                done = await self._done_ids(key)
+                if done:
+                    return await self._to_entry(done[0])
+                fence = await self._repo.claim_generation(word)
+                result = await self._run_generation(word, cambridge_id, fence=fence)
+        finally:
+            self._evict_lock(key, lock)
+        return await self._entry_for_key(key, result)
+
     async def _word_norm_and_cambridge(self, lexi_word_id: int) -> tuple[str, int | None]:
         async with session_scope(self._session_factory) as session:
             row = (
@@ -1100,7 +1140,7 @@ class Lexicon:
 
     # --- generation path --------------------------------------------------
 
-    async def _run_generation(self, word: str, cambridge_id: int | None):
+    async def _run_generation(self, word: str, cambridge_id: int | None, *, fence=None):
         """Build the bundle (Cambridge-anchored or custom), generate, persist.
 
         After persistence, embed the new senses best-effort: an embedding failure
@@ -1121,7 +1161,7 @@ class Lexicon:
             existing_tags = []
         result = await self._generator.generate(bundle, existing_tags=existing_tags)
         words = await self._repo.persist_result(
-            result, cambridge_word_id=cambridge_id, cambridge_cefr=cefr_map
+            result, cambridge_word_id=cambridge_id, cambridge_cefr=cefr_map, fence=fence
         )
         await self._embed_words([w.id for w in words])
         # [F11] Inbound-resolve hook: these words just flipped to ``done``, so any

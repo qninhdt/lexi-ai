@@ -204,6 +204,10 @@ async def ainvoke_structured(
     ``parse`` should already return an ``expect`` instance; we still
     ``model_validate`` defensively in case a fake/provider returns a dict. Raises
     the last exception after ``max_retries`` attempts.
+
+    ``max_retries`` MUST be ``>= 1`` (the default is 3, and every in-scope caller
+    uses ``>= 1``); with ``0`` the loop never runs and the trailing assert would
+    fire a bare ``AssertionError`` (3.9 — dead branch, documented not guarded).
     """
     last_exc: Exception | None = None
     for attempt in range(max_retries):

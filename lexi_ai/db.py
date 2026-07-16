@@ -74,13 +74,36 @@ async def migrate_relations(engine: AsyncEngine) -> None:
             await conn.exec_driver_sql("ALTER TABLE entry_links RENAME TO word_relation")
 
 
+async def migrate_generation_epoch(engine: AsyncEngine) -> None:
+    """Add the additive generation fence column to existing dictionary DBs.
+
+    Library bootstrap remains the compatibility path for SQLite users. Service
+    deployments use the equivalent Alembic revision instead and never call this
+    function from API or worker startup.
+    """
+    async with engine.begin() as conn:
+        has_words = await conn.run_sync(
+            lambda sync_conn: engine.dialect.has_table(sync_conn, "words")
+        )
+        if not has_words:
+            return
+
+        def column_names(sync_conn):
+            return {column["name"] for column in engine.dialect.get_columns(sync_conn, "words")}
+
+        columns = await conn.run_sync(column_names)
+        if "generation_epoch" not in columns:
+            await conn.exec_driver_sql(
+                "ALTER TABLE words ADD COLUMN generation_epoch INTEGER NOT NULL DEFAULT 0"
+            )
+
+
 async def init_models(engine: AsyncEngine) -> None:
     """Create all tables on a fresh generated-dictionary DB (additive only).
 
-    This is ``create_all``: it NEVER drops a table or adds a column to an
-    existing one. Structural changes to a table that already exists need
-    :func:`reset_assets_table` (or, once real data must survive, a migration
-    tool — deferred, see the roadmap).
+    This is largely ``create_all``: it never drops data. The two explicitly
+    compatible migrations rename the legacy relation table and add the
+    generation-fence column before metadata creation.
 
     [RED TEAM F1] :func:`migrate_relations` runs FIRST (before ``create_all``) so
     the legacy ``entry_links`` table is renamed to ``word_relation`` in place —
@@ -88,6 +111,7 @@ async def init_models(engine: AsyncEngine) -> None:
     one. ``init()`` is the only bootstrap path, so wiring it here guarantees no
     caller can skip the migration."""
     await migrate_relations(engine)
+    await migrate_generation_epoch(engine)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -107,7 +131,11 @@ async def reset_assets_table(
     destructive migration is explicitly allowed (``allow_destructive`` arg, or the
     ``LEXI_ALLOW_DESTRUCTIVE_MIGRATION`` env flag). An empty table recreates freely.
 
-    On reset the whole cache dir is ``rmtree``d so orphaned binaries do not leak.
+    On reset the whole ``cache_dir`` is ``rmtree``d so orphaned binaries do not
+    leak (3.8): this is safe ONLY because ``cache_dir`` is the assets-EXCLUSIVE
+    shard (``config.asset_cache_dir`` = ``./lexi-assets``), never a shared dir —
+    every file under it is a cached TTS/translation binary this table owns. Pass a
+    dedicated assets dir; never point ``cache_dir`` at a path holding other data.
     """
     if allow_destructive is None:
         flag = os.environ.get("LEXI_ALLOW_DESTRUCTIVE_MIGRATION", "").strip().lower()

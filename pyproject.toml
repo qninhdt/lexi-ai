@@ -32,9 +32,19 @@ embeddings = [
 postgres = [
     "asyncpg>=0.29",
 ]
+service = [
+    "alembic>=1.18.5",
+    "asyncpg>=0.29",
+    "fastapi>=0.139.0",
+    "grpcio>=1.82.1",
+    "protobuf>=7.35.1",
+    "redis>=8.0.1",
+    "uvicorn[standard]>=0.51.0",
+]
 
 [dependency-groups]
 dev = [
+    "grpcio-tools>=1.82.1",
     "pytest>=8",
     "pytest-asyncio>=0.26",
     "ruff>=0.9",
@@ -45,7 +55,10 @@ requires = ["uv_build>=0.10.7,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = "lexi_ai"
+# The library and the future service boundary ship together, but the service
+# package keeps its transport dependencies optional and never imports from
+# ``lexi_ai`` at package import time.
+module-name = ["lexi_ai", "lexi_service"]
 module-root = ""
 
 [tool.pytest.ini_options]
@@ -55,6 +68,7 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+extend-exclude = ["lexi_service/proto"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

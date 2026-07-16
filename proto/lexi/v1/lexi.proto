@@ -1,0 +1,127 @@
+syntax = "proto3";
+
+package lexi.v1;
+
+service LexiService {
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc Lookup(LookupRequest) returns (EntryResponse);
+  rpc SubmitGenerate(SubmitGenerateRequest) returns (JobResponse);
+  rpc GetJob(GetJobRequest) returns (JobResponse);
+  rpc SubmitTranslation(SubmitTranslationRequest) returns (JobResponse);
+  rpc Stats(StatsRequest) returns (StatsResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Readiness(HealthRequest) returns (HealthResponse);
+}
+
+message ResponseMeta {
+  string request_id = 1;
+}
+
+message SearchRequest {
+  string query = 1;
+  reserved 2 to 9;
+}
+
+message SearchTarget {
+  string display = 1;
+  string entry_type = 2;
+  double score = 3;
+  int64 lexi_word_id = 4;
+  int64 cambridge_id = 5;
+  string gloss = 6;
+  reserved 7 to 9;
+}
+
+message SearchResponse {
+  ResponseMeta meta = 1;
+  repeated SearchTarget results = 2;
+  reserved 3 to 9;
+}
+
+message LookupRequest {
+  int64 word_id = 1;
+  reserved 2 to 9;
+}
+
+message Sense {
+  string definition = 1;
+  string tier = 2;
+  string pos = 3;
+  string cefr_level = 4;
+  repeated string examples = 5;
+  reserved 6 to 9;
+}
+
+message Entry {
+  int64 word_id = 1;
+  string display = 2;
+  string norm = 3;
+  string status = 4;
+  string entry_type = 5;
+  repeated Sense senses = 6;
+  reserved 7 to 9;
+}
+
+message EntryResponse {
+  ResponseMeta meta = 1;
+  Entry entry = 2;
+  reserved 3 to 9;
+}
+
+message SubmitGenerateRequest {
+  SearchTarget target = 1;
+  string reference_dataset_fingerprint = 2;
+  uint32 payload_version = 3;
+  reserved 4 to 9;
+}
+
+message SubmitTranslationRequest {
+  string source_kind = 1;
+  int64 source_id = 2;
+  string language = 3;
+  string source_hash = 4;
+  string reference_dataset_fingerprint = 5;
+  uint32 payload_version = 6;
+  reserved 7 to 9;
+}
+
+message GetJobRequest {
+  string job_id = 1;
+  reserved 2 to 9;
+}
+
+message Job {
+  string job_id = 1;
+  string status = 2;
+  bool deduplicated = 3;
+  string operation = 4;
+  reserved 5 to 9;
+}
+
+message JobResponse {
+  ResponseMeta meta = 1;
+  Job job = 2;
+  reserved 3 to 9;
+}
+
+message StatsRequest {
+  reserved 1 to 9;
+}
+
+message StatsResponse {
+  ResponseMeta meta = 1;
+  map<string, int64> words_by_status = 2;
+  int64 senses = 3;
+  int64 examples = 4;
+  int64 tags = 5;
+  reserved 6 to 9;
+}
+
+message HealthRequest {
+  reserved 1 to 9;
+}
+
+message HealthResponse {
+  string status = 1;
+  reserved 2 to 9;
+}

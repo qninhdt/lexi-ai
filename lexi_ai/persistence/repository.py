@@ -16,6 +16,7 @@ re-fetch (decision #18 — single-process library, so this is a rare edge).
 
 import hashlib
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, cast
 
 from sqlalchemy import CursorResult, delete, func, select, update
@@ -133,6 +134,18 @@ class ResolveOutcome(NamedTuple):
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class GenerationFence:
+    """Database-issued ownership token for one destructive word replacement."""
+
+    match_key: str
+    epoch: int
+
+
+class StaleGenerationError(RuntimeError):
+    """A newer generation claim superseded this worker before it could publish."""
+
+
 class Repository:
     def __init__(
         self,
@@ -149,6 +162,24 @@ class Repository:
         """Transactional session scope (commit on success, rollback on error)."""
         return session_scope(self._session_factory)
 
+    async def claim_generation(self, norm: str) -> GenerationFence:
+        """Claim the next epoch for a normalized word before provider work starts."""
+        key = match_key(norm)
+        async with session_scope(self._session_factory) as session:
+            word = await self._get_or_create_word(session, key, norm)
+            await session.execute(
+                update(Word)
+                .where(Word.id == word.id)
+                .values(
+                    generation_epoch=Word.generation_epoch + 1,
+                    status="pending",
+                    error_msg=None,
+                )
+            )
+            await session.flush()
+            await session.refresh(word)
+            return GenerationFence(key, word.generation_epoch)
+
     # --- public API -------------------------------------------------------
 
     async def persist_result(
@@ -156,6 +187,7 @@ class Repository:
         result: GeneratedResult,
         cambridge_word_id: int | None = None,
         cambridge_cefr: dict[str, str] | None = None,
+        fence: GenerationFence | None = None,
     ) -> list[Word]:
         """Persist every unit of one generation call in a single transaction.
 
@@ -166,6 +198,17 @@ class Repository:
         cefr_map = cambridge_cefr or {}
         try:
             async with session_scope(self._session_factory) as session:
+                if fence is not None:
+                    claimed = await session.execute(
+                        select(Word.id)
+                        .where(
+                            Word.match_key == fence.match_key,
+                            Word.generation_epoch == fence.epoch,
+                        )
+                        .with_for_update()
+                    )
+                    if claimed.scalar_one_or_none() is None:
+                        raise StaleGenerationError("generation claim was superseded")
                 words: list[Word] = []
                 # Pass 1: upsert each unit word + its aliases/senses.
                 for entry in result.units:
@@ -181,7 +224,8 @@ class Repository:
                 ids = [w.id for w in words]
             return await self._reload(ids)
         except Exception as exc:  # noqa: BLE001 - recorded then re-raised
-            await self._record_error(result, str(exc))
+            if not isinstance(exc, StaleGenerationError):
+                await self._record_error(result, str(exc), fence=fence)
             raise
 
     async def get_done_keys(self) -> set[str]:
@@ -727,6 +771,13 @@ class Repository:
             rows = (await session.execute(stmt)).all()
             tasks: list[ResolveTask] = []
             for edge_id, rel_type, gloss, to_word_id, src_pos, src_def in rows:
+                # N+1 by design (accepted tradeoff): one bounded, LIMIT-capped
+                # candidate query per task. Batch sizes are small and clamped by
+                # WSD_BATCH_CEIL=50, so at worst 50 short SELECTs per resolve pass.
+                # A windowed/in_() rewrite risks the deterministic (sense_order, id)
+                # ordering + per-word _WSD_CANDIDATE_CAP that apply-time bounds
+                # validation relies on, so it is deferred unless resolve latency
+                # becomes a measured concern — correctness over a micro-optimization.
                 cand_rows = (
                     await session.execute(
                         select(Sense.id, Sense.pos, Sense.definition)
@@ -1504,7 +1555,11 @@ class Repository:
         return result.scalar_one_or_none()
 
     async def _insert_word(self, session: AsyncSession, key: str, norm: str, status: str) -> Word:
-        word = Word(norm=norm, match_key=key, status=status)
+        # norm is untrusted LM text (stub/related/relation lemmas flow here) landing
+        # in a Text column: a NUL crashes the Postgres INSERT. Clean it like the main
+        # headword path (_upsert_entry). key already strips NUL/control via match_key,
+        # so cleaning norm cannot desync key from norm.
+        word = Word(norm=self._clean(norm, self._MAX_NORM), match_key=key, status=status)
         # Add the object INSIDE the savepoint: if the flush trips the UNIQUE
         # constraint (a concurrent tx inserted the same key first), the savepoint
         # rollback discards this pending object cleanly. Adding it before the
@@ -1524,7 +1579,9 @@ class Repository:
 
     # --- error path + reload ---------------------------------------------
 
-    async def _record_error(self, result: GeneratedResult, message: str) -> None:
+    async def _record_error(
+        self, result: GeneratedResult, message: str, *, fence: GenerationFence | None = None
+    ) -> None:
         """Stamp every unit in a failed generation with ``status='error'``.
 
         PRODUCT DECISION (3.10): this unconditionally sets ``status='error'`` even
@@ -1542,8 +1599,23 @@ class Repository:
                 for entry in result.units:
                     key = match_key(entry.norm)
                     word = await self._get_word(session, key)
+                    if fence is not None and key == fence.match_key:
+                        changed = await session.execute(
+                            update(Word)
+                            .where(Word.id == word.id if word is not None else False)
+                            .where(Word.generation_epoch == fence.epoch)
+                            .values(status="error", error_msg=message[:2000])
+                        )
+                        if changed.rowcount == 1:
+                            continue
+                        # A newer claim owns this word; it must remain untouched.
+                        continue
                     if word is None:
-                        word = Word(norm=entry.norm, match_key=key, status="error")
+                        word = Word(
+                            norm=self._clean(entry.norm, self._MAX_NORM),
+                            match_key=key,
+                            status="error",
+                        )
                         session.add(word)
                     word.status = "error"
                     word.error_msg = message[:2000]
