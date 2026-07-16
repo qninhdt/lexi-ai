@@ -215,6 +215,46 @@ async def test_stale_hash_treated_unresolved(engine):
     assert r.to_word_id is not None  # sense->word still trusted
 
 
+async def test_get_senses_carries_relations(engine):
+    # 3.7 (owner: fix it): get_senses() is a bulk read path that used to omit
+    # SenseView.relations (only get_entry populated them), so a caller batch-reading
+    # senses got empty relations even when the sense had some. Now get_senses
+    # eager-loads relations_out and builds them exactly like _build_entry.
+    sf = create_session_factory(engine)
+    repo = Repository(sf)
+    await repo.persist_result(
+        GeneratedResult(
+            units=[
+                _entry(
+                    "bright",
+                    [
+                        _sense(
+                            "full of light",
+                            "adjective",
+                            relations=[
+                                GeneratedSenseRelation(
+                                    rel_type="antonym", norm="dark", gloss="lacking light"
+                                )
+                            ],
+                        )
+                    ],
+                )
+            ]
+        )
+    )
+    async with sf() as s:
+        sense_id = (await s.execute(select(Sense.id))).scalars().first()
+    lex = await _reading_lexicon(engine, repo)
+    views = await lex.get_senses([sense_id])
+
+    assert len(views) == 1
+    rels = views[0].relations
+    assert len(rels) == 1
+    assert rels[0].rel_type == "antonym"
+    assert rels[0].to_word_display == "dark"
+    assert rels[0].wsd_state == "pending"
+
+
 async def test_entry_links_still_word_level(engine):
     # A word-level relation (word_family) must still surface via Entry.links with
     # its original shape — no regression for consumers reading the flat list.

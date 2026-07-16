@@ -285,6 +285,50 @@ async def test_get_missing_file_is_miss(session_factory, assets, tmp_path):
     assert await assets.get("sense_def", sid, "tts", params, text) is None
 
 
+async def test_put_file_unlinks_orphan_on_non_integrity_failure(session_factory, assets, tmp_path):
+    # The file is written BEFORE the row. If the row write fails with a
+    # NON-IntegrityError, the just-written file (created by THIS call) must be
+    # unlinked so it is not orphaned on disk with no backing row.
+    sid = await _make_sense(session_factory)
+    text = "a small domestic cat"
+    params = normalize_asset_params("tts", voice="alloy", fmt="mp3")
+    h = content_hash(text)
+    rel_path = f"{h[:2]}/{h}.alloy-mp3.mp3"
+
+    # Force a non-IntegrityError once the file is on disk (row-write phase).
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("row write failed")
+
+    assets._get = _boom  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="row write failed"):
+        await assets.put_file("sense_def", sid, "tts", params, text, b"\x01\x02", ext="mp3")
+    # The orphan file this call wrote is gone.
+    assert not (tmp_path / rel_path).exists()
+
+
+async def test_put_file_keeps_preexisting_file_on_failure(session_factory, assets, tmp_path):
+    # A file that PRE-EXISTED this call (same content-addressed path from an
+    # earlier put) must NEVER be unlinked on a failure — only a file this call
+    # created is ours to roll back.
+    sid = await _make_sense(session_factory)
+    text = "a small domestic cat"
+    params = normalize_asset_params("tts", voice="alloy", fmt="mp3")
+    h = content_hash(text)
+    rel_path = f"{h[:2]}/{h}.alloy-mp3.mp3"
+    # Seed the file on disk so this call sees it as pre-existing.
+    (tmp_path / rel_path).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel_path).write_bytes(b"PRE")
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("row write failed")
+
+    assets._get = _boom  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="row write failed"):
+        await assets.put_file("sense_def", sid, "tts", params, text, b"\x99", ext="mp3")
+    # The pre-existing file is untouched (not unlinked by the failure path).
+    assert (tmp_path / rel_path).exists()
+
+
 async def test_put_file_path_traversal_is_contained(session_factory, assets, tmp_path):
     # A params token with path separators must NOT escape the shard dir. The 2.3
     # allow-list now rejects "../evil" at normalize_asset_params, so that upstream

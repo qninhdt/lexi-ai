@@ -17,7 +17,7 @@ from lexi_ai.generation.schemas import (
 )
 from lexi_ai.models import Example, Sense, SenseReference, Word, WordAlias, WordRelation
 from lexi_ai.normalize import match_key
-from lexi_ai.persistence.repository import Repository
+from lexi_ai.persistence.repository import Repository, StaleGenerationError
 
 
 @pytest.fixture
@@ -276,6 +276,32 @@ async def test_error_path_sets_status_error(session_factory):
         assert "boom" in (word.error_msg or "")
 
 
+async def test_stale_generation_fence_cannot_publish_or_mark_newer_claim_as_error(
+    repo, session_factory
+):
+    first = await repo.claim_generation("color")
+    second = await repo.claim_generation("color")
+
+    with pytest.raises(StaleGenerationError):
+        await repo.persist_result(_color_result(), fence=first)
+
+    async with session_scope(session_factory) as session:
+        word = (
+            await session.execute(select(Word).where(Word.match_key == match_key("color")))
+        ).scalar_one()
+        assert word.generation_epoch == second.epoch
+        assert word.status == "pending"
+        assert word.error_msg is None
+
+    await repo.persist_result(_color_result(), fence=second)
+    async with session_scope(session_factory) as session:
+        word = (
+            await session.execute(select(Word).where(Word.match_key == match_key("color")))
+        ).scalar_one()
+        assert word.status == "done"
+        assert word.generation_epoch == second.epoch
+
+
 async def test_get_done_keys(repo, session_factory):
     await repo.persist_result(_color_result())
     keys = await repo.get_done_keys()
@@ -348,6 +374,8 @@ async def test_insert_word_recovers_from_concurrent_duplicate(repo, session_fact
         word = await repo._insert_word(session, key, "dup", status="pending")
         # Adopted the pre-existing row (status stays 'done'), no new row.
         assert word.status == "done"
+
+    assert await _count(session_factory, Word) == 1
 
 
 # --- 1.3 untrusted-column NUL sanitation (dual-DB) ------------------------
