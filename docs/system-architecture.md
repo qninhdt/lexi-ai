@@ -333,6 +333,43 @@ Postgres dialects (`tests/test_models.py::test_schema_compiles_on_both_dialects`
   children are cleared with Core `delete()` and re-inserted with explicit FK ids.
   Read models are built inside the session via `selectinload`.
 
+## Planned service boundary
+
+The library remains the dictionary implementation. Phase 2 adds a
+transport-neutral `lexi_service` application boundary: typed commands/queries,
+application services, ports, service settings, verified-identity context, and a
+process-scoped runtime graph. Library users continue to call `Lexicon` directly;
+the service core delegates to its existing seams rather than routing local calls
+through a wrapper.
+
+The core keeps submission distinct from execution. API-facing submission services
+validate a verified mTLS-derived principal, limits, request deadline, payload
+version, reference-dataset fingerprint, and idempotency input before publishing a
+job through a port. Worker-only execution services have no publisher dependency,
+so they cannot enqueue recursively; they bind the job payload to the requested
+generation target or translation source/hash, recheck the dataset fingerprint,
+and enforce server-owned maximum job age, retry cap, provider concurrency, and
+per-attempt timeout. Public failures use stable safe codes, messages,
+retryability, and incident IDs; provider, database, and filesystem diagnostics
+remain private.
+
+`ServiceRuntime` composes one reusable graph per process and exposes idempotent
+async shutdown for its owned resources. Phase 3 adds a versioned `lexi.v1` gRPC
+contract and a FastAPI compatibility adapter over those same services. Both
+adapters default-deny all but liveness, preserve correlation IDs, return safe
+errors, impose request deadlines and body/message limits, and expose protected
+readiness. gRPC startup is mTLS-only with a required client CA; HTTP accepts only
+a certificate verified by the hosting ASGI TLS integration and never trusts
+identity headers. Proto stubs are regenerated with `scripts/generate-proto.sh`.
+
+Redis or worker implementation, durable job/outbox persistence,
+PostgreSQL/Alembic service schema, and deployment-specific TLS termination remain
+outside the core. Those adapters remain separate so `import lexi_ai` does not
+import gRPC, HTTP, Redis, worker, or mTLS libraries. The full service contract remains recorded in the
+[service foundations plan note](../plans/260716-1141-lexi-library-and-service-architecture/design-foundations.md);
+[Phase 2 service seams](../plans/260716-1141-lexi-library-and-service-architecture/phase-02-core-contracts-and-service-seams.md)
+tracks this implemented core and the remaining adapter work.
+
 ## Configuration
 
 Env vars (prefix `LEXI_`): `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`,
@@ -354,14 +391,15 @@ recreate (the DB is pre-production and regenerable). A portable migration tool
 
 ## Testing
 
-326 tests, `uv run pytest`. No live LLM calls (fake runnables). Reference and
+456 tests, `uv run pytest`. No live LLM calls (fake runnables). Reference and
 phrase-overlap tests run against the real Cambridge `./data` and skip if absent.
 Themes and cached assets add `tests/test_themes.py` (theme_key folding, dedup,
 schema compile), `tests/test_theming.py` (themed generation + read overlay with a
-fake generator, count-mismatch guard, per-sense fallback), and
-`tests/test_assets.py` (reference addressing with read-time `content_hash` verify,
-param normalization, resolve-or-create, translation cache hits, TTS stub-raises +
-real-provider round-trip).
+fake generator, count-mismatch guard, per-sense fallback, concurrent overlay
+single-flight), and `tests/test_assets.py` (reference addressing with read-time
+`content_hash` verify, param normalization, TTS allow-list validation, resolve-or-
+create, translation cache hits, TTS stub-raises + real-provider round-trip).
+
 The suite includes regression tests for a multi-agent review pass: Postgres
 NUL-safety of `match_key`, concurrent-insert savepoint recovery, the
 Cambridge-first CEFR contract (`sense#42` vs bare `42`), per-key lock eviction,
@@ -371,3 +409,25 @@ The question engine is covered end-to-end: each format's generate + grade, the
 two cross-axis proofs, plugin-owned persistence (the engine stays blind to it),
 the registry coupling guard, a one-line new-format extensibility proof, and
 payload round-trip (unicode + NUL rejection).
+
+### Dual-DB tier (opt-in, `LEXI_TEST_PG_URL`)
+
+An opt-in Postgres tier (`tests/test_postgres_integration.py`) exercises the
+defect class invisible to SQLite: NUL rejection, `VARCHAR(n)` length enforcement,
+and tz-aware datetime binding on `TIMESTAMP WITHOUT TIME ZONE`. asyncpg is strict
+where SQLite is lax; the SQLite-only CI could not catch these.
+
+The tier requires the `asyncpg` driver and a disposable Postgres database:
+
+```
+uv sync --extra postgres
+LEXI_TEST_PG_URL=postgresql+asyncpg://user:pass@localhost/lexi_test uv run pytest
+```
+
+Phase 4 regressions cover **all five untrusted write columns** (`norm`,
+`alias_norm`, `source_ref`, `definition`, `example`) and the H2 tz-aware datetime
+bind that caused an unbounded WSD re-judge loop. Each regression was confirmed to
+FAIL against pre-fix code (Phase 0 red-before-green discipline) and passes after.
+
+The tier skips cleanly when the driver or URL is absent — the default
+`uv run pytest` stays hermetic and network-free.
