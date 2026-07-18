@@ -7,10 +7,13 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
+from lexi_ai.constants import QUESTION_FORMATS
 from lexi_ai.read_models import Entry
 from lexi_service.application.commands import (
     ExecuteGenerate,
     ExecuteTranslation,
+    GenerateQuestions,
+    GradeQuestion,
     JobReference,
     JobSubmission,
     SubmitGenerate,
@@ -23,7 +26,15 @@ from lexi_service.application.errors import (
     to_public_error,
 )
 from lexi_service.application.policies import ServicePolicy
-from lexi_service.application.queries import GetJobQuery, LookupEntryQuery, SearchQuery, StatsQuery
+from lexi_service.application.queries import (
+    GetJobQuery,
+    GetQuestionQuery,
+    GetSensesQuery,
+    ListQuestionsQuery,
+    LookupEntryQuery,
+    SearchQuery,
+    StatsQuery,
+)
 from lexi_service.identity import Principal
 from lexi_service.observability.logging import log_event
 from lexi_service.ports import (
@@ -37,6 +48,10 @@ from lexi_service.ports import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Pycil schedules reviews per sense.  A matching question spans an entry's senses
+# and therefore cannot be bound to one FSRS card; keep it library-only for now.
+SERVICE_QUESTION_FORMATS = frozenset(QUESTION_FORMATS - {"matching"})
 
 
 def _require_principal(principal: Principal | None) -> Principal:
@@ -79,6 +94,75 @@ class QueryService:
             raise public_error(ErrorCode.NOT_FOUND, "Entry was not found.")
         return entry
 
+    async def get_senses(self, query: GetSensesQuery):
+        _require_principal(query.context.principal)
+        if not query.sense_ids or len(query.sense_ids) > self._policy.max_batch_size:
+            raise public_error(ErrorCode.VALIDATION, "sense_ids is invalid.")
+        if any(sense_id <= 0 for sense_id in query.sense_ids):
+            raise public_error(ErrorCode.VALIDATION, "sense_ids is invalid.")
+        return await _safe_call(lambda: self._lexicon.get_senses(query.sense_ids))
+
+    async def get_question(self, query: GetQuestionQuery):
+        _require_principal(query.context.principal)
+        if query.question_id <= 0:
+            raise public_error(ErrorCode.VALIDATION, "question_id is invalid.")
+        question = await _safe_call(lambda: self._lexicon.get_question(query.question_id))
+        if question is None or question.id is None or question.sense_id is None:
+            raise public_error(ErrorCode.NOT_FOUND, "Question was not found.")
+        return question
+
+    async def list_questions(self, query: ListQuestionsQuery):
+        _require_principal(query.context.principal)
+        if query.sense_id <= 0 or (
+            query.format is not None and query.format not in SERVICE_QUESTION_FORMATS
+        ):
+            raise public_error(ErrorCode.VALIDATION, "question query is invalid.")
+        return await _safe_call(
+            lambda: self._lexicon.list_questions_for_sense(query.sense_id, query.format)
+        )
+
+    async def generate_questions(self, command: GenerateQuestions):
+        _require_principal(command.context.principal)
+        if command.word_id <= 0 or command.sense_id <= 0:
+            raise public_error(ErrorCode.VALIDATION, "question target is invalid.")
+        if (
+            not command.formats
+            or len(command.formats) > self._policy.max_batch_size
+            or command.count < 1
+            or command.count > self._policy.max_batch_size
+            or any(fmt not in SERVICE_QUESTION_FORMATS for fmt in command.formats)
+        ):
+            raise public_error(ErrorCode.VALIDATION, "question generation is invalid.")
+        questions = await _safe_call(
+            lambda: self._lexicon.generate_questions_for_sense(
+                command.word_id, command.sense_id, list(command.formats), command.count
+            )
+        )
+        # Defend the service contract even if a plugin regresses: only durable
+        # questions for the requested sense can become learner-facing.
+        return [
+            question
+            for question in questions
+            if question.id is not None and question.sense_id == command.sense_id
+        ]
+
+    async def grade_question(self, command: GradeQuestion):
+        _require_principal(command.context.principal)
+        if command.question_id <= 0:
+            raise public_error(ErrorCode.VALIDATION, "question_id is invalid.")
+        question = await _safe_call(lambda: self._lexicon.get_question(command.question_id))
+        if question is None or question.id is None or question.sense_id is None:
+            raise public_error(ErrorCode.NOT_FOUND, "Question was not found.")
+        _validate_answer(question.answer_kind, command.answer, self._policy.max_query_chars)
+        # The raw payload remains inside Lexi.  The only service result is its
+        # verdict; callers never send answer keys back for grading.
+        score = await _safe_call(
+            lambda: self._lexicon.grade_question(command.question_id, command.answer)
+        )
+        if score is None:
+            raise public_error(ErrorCode.NOT_FOUND, "Question was not found.")
+        return score
+
     async def stats(self, query: StatsQuery):
         _require_principal(query.context.principal)
         return await _safe_call(self._lexicon.stats)
@@ -89,6 +173,22 @@ class QueryService:
         if record is None or record.owner.ownership_key != principal.ownership_key:
             raise public_error(ErrorCode.NOT_FOUND, "Job was not found.")
         return record
+
+
+def _validate_answer(answer_kind: str, answer: object, max_chars: int) -> None:
+    """Reject malformed/oversized answers before an LLM grader sees them."""
+    if answer_kind == "single_choice":
+        valid = isinstance(answer, (int, str)) and not isinstance(answer, bool)
+    elif answer_kind in {"text_span", "free_text"}:
+        valid = isinstance(answer, str) and 0 < len(answer) <= max_chars
+    elif answer_kind == "matching":
+        valid = isinstance(answer, list) and len(answer) <= 64 and all(
+            isinstance(item, int) and not isinstance(item, bool) for item in answer
+        )
+    else:
+        valid = False
+    if not valid:
+        raise public_error(ErrorCode.VALIDATION, "answer is invalid.")
 
 
 class SubmissionService:

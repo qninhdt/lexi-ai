@@ -1,18 +1,33 @@
 """FastAPI compatibility adapter over the transport-neutral application core."""
 
 import asyncio
+import hmac
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from lexi_ai.read_models import SearchResult
-from lexi_service.application.commands import RequestContext, SubmitGenerate, SubmitTranslation
+from lexi_service.application.commands import (
+    GenerateQuestions,
+    GradeQuestion,
+    RequestContext,
+    SubmitGenerate,
+    SubmitTranslation,
+)
 from lexi_service.application.errors import ApplicationError, ErrorCode, public_error
-from lexi_service.application.queries import GetJobQuery, LookupEntryQuery, SearchQuery, StatsQuery
+from lexi_service.application.queries import (
+    GetJobQuery,
+    GetQuestionQuery,
+    GetSensesQuery,
+    ListQuestionsQuery,
+    LookupEntryQuery,
+    SearchQuery,
+    StatsQuery,
+)
 from lexi_service.identity import Principal
 from lexi_service.observability.metrics import ServiceMetrics
 from lexi_service.runtime import ServiceRuntime
@@ -23,7 +38,9 @@ from lexi_service.transport.mapping import (
     entry,
     error_body,
     json_message,
+    question_presentation,
     search_target,
+    sense,
 )
 
 CertificateVerifier = Callable[[bytes], Awaitable[Principal | None]]
@@ -53,12 +70,27 @@ class TranslationBody(BaseModel):
     payload_version: int = Field(1, ge=1)
 
 
+class QuestionGenerationBody(BaseModel):
+    word_id: int = Field(gt=0)
+    sense_id: int = Field(gt=0)
+    formats: list[str] = Field(min_length=1, max_length=32)
+    count: int = Field(1, ge=1, le=32)
+
+
+class GradeQuestionBody(BaseModel):
+    """Opaque answer; application code validates it against stored answer_kind."""
+
+    answer: object
+
+
 def create_http_app(
     runtime: ServiceRuntime,
     health: HealthChecks,
     *,
     certificate_verifier: CertificateVerifier | None = None,
     metrics: ServiceMetrics | None = None,
+    internal_service_token: str = "",
+    internal_service_subject: str = "pycil",
 ) -> FastAPI:
     app = FastAPI(title="Lexi Service", version="1.0.0")
     metrics = metrics or ServiceMetrics()
@@ -99,6 +131,14 @@ def create_http_app(
             return await call_next(request)
 
         principal = principal_from_asgi_scope(request.scope)
+        provided_token = request.headers.get("x-lexi-service-token", "")
+        if (
+            principal is None
+            and internal_service_token
+            and hmac.compare_digest(provided_token, internal_service_token)
+        ):
+            principal = Principal(internal_service_subject)
+            request.scope["lexi.verified_principal"] = principal
         certificate = request.scope.get("ssl_client_cert")
         has_certificate = isinstance(certificate, bytes)
         should_verify = principal is None and certificate_verifier is not None and has_certificate
@@ -176,6 +216,53 @@ def create_http_app(
         value = await runtime.queries.lookup(LookupEntryQuery(ctx, word_id))
         return {"request_id": ctx.request_id, "entry": json_message(entry(value))}
 
+    @app.get("/v1/senses")
+    async def get_senses(request: Request, ids: list[int] = Query(alias="id")):  # noqa: B008
+        ctx = context(request)
+        values = await runtime.queries.get_senses(GetSensesQuery(ctx, ids))
+        return {
+            "request_id": ctx.request_id,
+            "senses": [json_message(sense(value)) for value in values],
+        }
+
+    @app.get("/v1/questions/{question_id}")
+    async def get_question(request: Request, question_id: int):
+        ctx = context(request)
+        value = await runtime.queries.get_question(GetQuestionQuery(ctx, question_id))
+        return {"request_id": ctx.request_id, "question": question_presentation(value)}
+
+    @app.get("/v1/questions")
+    async def list_questions(request: Request, sense_id: int, format: str | None = None):
+        ctx = context(request)
+        values = await runtime.queries.list_questions(ListQuestionsQuery(ctx, sense_id, format))
+        return {
+            "request_id": ctx.request_id,
+            "questions": [question_presentation(value) for value in values],
+        }
+
+    @app.post("/v1/questions/generations")
+    async def generate_questions(request: Request, body: QuestionGenerationBody):
+        ctx = context(request)
+        values = await runtime.queries.generate_questions(
+            GenerateQuestions(ctx, body.word_id, body.sense_id, tuple(body.formats), body.count)
+        )
+        return {
+            "request_id": ctx.request_id,
+            "questions": [question_presentation(value) for value in values],
+        }
+
+    @app.post("/v1/questions/{question_id}/grade")
+    async def grade_question(request: Request, question_id: int, body: GradeQuestionBody):
+        ctx = context(request)
+        value = await runtime.queries.grade_question(GradeQuestion(ctx, question_id, body.answer))
+        return {
+            "request_id": ctx.request_id,
+            "correct": value.correct,
+            "score": value.score,
+            "kind": value.kind,
+            "feedback": value.feedback,
+        }
+
     @app.post("/v1/generations", status_code=202)
     async def submit_generate(
         request: Request,
@@ -236,6 +323,13 @@ def create_http_app(
             "status": job.reference.status,
             "deduplicated": job.reference.deduplicated,
             "operation": job.operation,
+            "result": job.result if job.reference.status == "succeeded" else None,
+            "error": (
+                {"code": job.error_code}
+                if job.reference.status in {"failed", "expired", "superseded", "dead_letter"}
+                and job.error_code is not None
+                else None
+            ),
         }
 
     @app.get("/v1/stats")

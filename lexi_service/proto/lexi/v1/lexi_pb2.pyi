@@ -49,18 +49,20 @@ class LookupRequest(_message.Message):
     def __init__(self, word_id: _Optional[int] = ...) -> None: ...
 
 class Sense(_message.Message):
-    __slots__ = ("definition", "tier", "pos", "cefr_level", "examples")
+    __slots__ = ("definition", "tier", "pos", "cefr_level", "examples", "sense_id")
     DEFINITION_FIELD_NUMBER: _ClassVar[int]
     TIER_FIELD_NUMBER: _ClassVar[int]
     POS_FIELD_NUMBER: _ClassVar[int]
     CEFR_LEVEL_FIELD_NUMBER: _ClassVar[int]
     EXAMPLES_FIELD_NUMBER: _ClassVar[int]
+    SENSE_ID_FIELD_NUMBER: _ClassVar[int]
     definition: str
     tier: str
     pos: str
     cefr_level: str
     examples: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, definition: _Optional[str] = ..., tier: _Optional[str] = ..., pos: _Optional[str] = ..., cefr_level: _Optional[str] = ..., examples: _Optional[_Iterable[str]] = ...) -> None: ...
+    sense_id: int
+    def __init__(self, definition: _Optional[str] = ..., tier: _Optional[str] = ..., pos: _Optional[str] = ..., cefr_level: _Optional[str] = ..., examples: _Optional[_Iterable[str]] = ..., sense_id: _Optional[int] = ...) -> None: ...
 
 class Entry(_message.Message):
     __slots__ = ("word_id", "display", "norm", "status", "entry_type", "senses")
@@ -85,6 +87,20 @@ class EntryResponse(_message.Message):
     meta: ResponseMeta
     entry: Entry
     def __init__(self, meta: _Optional[_Union[ResponseMeta, _Mapping]] = ..., entry: _Optional[_Union[Entry, _Mapping]] = ...) -> None: ...
+
+class GetSensesRequest(_message.Message):
+    __slots__ = ("sense_ids",)
+    SENSE_IDS_FIELD_NUMBER: _ClassVar[int]
+    sense_ids: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, sense_ids: _Optional[_Iterable[int]] = ...) -> None: ...
+
+class SensesResponse(_message.Message):
+    __slots__ = ("meta", "senses")
+    META_FIELD_NUMBER: _ClassVar[int]
+    SENSES_FIELD_NUMBER: _ClassVar[int]
+    meta: ResponseMeta
+    senses: _containers.RepeatedCompositeFieldContainer[Sense]
+    def __init__(self, meta: _Optional[_Union[ResponseMeta, _Mapping]] = ..., senses: _Optional[_Iterable[_Union[Sense, _Mapping]]] = ...) -> None: ...
 
 class SubmitGenerateRequest(_message.Message):
     __slots__ = ("target", "reference_dataset_fingerprint", "payload_version")
@@ -119,16 +135,20 @@ class GetJobRequest(_message.Message):
     def __init__(self, job_id: _Optional[str] = ...) -> None: ...
 
 class Job(_message.Message):
-    __slots__ = ("job_id", "status", "deduplicated", "operation")
+    __slots__ = ("job_id", "status", "deduplicated", "operation", "result_json", "error_code")
     JOB_ID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     DEDUPLICATED_FIELD_NUMBER: _ClassVar[int]
     OPERATION_FIELD_NUMBER: _ClassVar[int]
+    RESULT_JSON_FIELD_NUMBER: _ClassVar[int]
+    ERROR_CODE_FIELD_NUMBER: _ClassVar[int]
     job_id: str
     status: str
     deduplicated: bool
     operation: str
-    def __init__(self, job_id: _Optional[str] = ..., status: _Optional[str] = ..., deduplicated: _Optional[bool] = ..., operation: _Optional[str] = ...) -> None: ...
+    result_json: str
+    error_code: str
+    def __init__(self, job_id: _Optional[str] = ..., status: _Optional[str] = ..., deduplicated: _Optional[bool] = ..., operation: _Optional[str] = ..., result_json: _Optional[str] = ..., error_code: _Optional[str] = ...) -> None: ...
 
 class JobResponse(_message.Message):
     __slots__ = ("meta", "job")

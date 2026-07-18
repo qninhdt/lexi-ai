@@ -4,33 +4,53 @@ services:
     environment:
       POSTGRES_DB: lexi
       POSTGRES_USER: lexi
-      POSTGRES_PASSWORD: lexi-dev-only
+      POSTGRES_PASSWORD: ${LEXI_POSTGRES_PASSWORD:-lexi-dev-only}
+    volumes: [lexi-pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lexi -d lexi"]
       interval: 5s
       timeout: 3s
       retries: 20
+    networks: [lexi-private]
+
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
+    volumes: [lexi-redisdata:/data]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 20
+    networks: [lexi-private]
 
-  migrate:
+  reference-bootstrap:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    profiles: ["migrate"]
-    command: ["/app/.venv/bin/alembic", "upgrade", "head"]
+    command: ["/app/.venv/bin/python", "deploy/reference-bootstrap.py"]
+    environment:
+      # Default synthetic/open-source-derived reference artifact. Operators may
+      # override both values together to pin a newer approved dataset.
+      LEXI_REFERENCE_DATASET_URL: ${LEXI_REFERENCE_DATASET_URL:-https://github.com/qninhdt/lexi-ai/releases/download/reference-data-v1/data}
+      LEXI_REFERENCE_DATASET_SHA256: ${LEXI_REFERENCE_DATASET_SHA256:-147a99e1d723671a6488100d7742783c45fb1e254a515d834709442cb963b3a4}
+      LEXI_REFERENCE_DATASET_PATH: /reference/cambridge.db
+    volumes: [lexi-reference:/reference]
+    networks: [lexi-private, lexi-egress]
+
+  library-bootstrap:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["/app/.venv/bin/python", "-c", "import asyncio; from lexi_ai.config import Settings; from lexi_ai.db import create_engine, init_models; asyncio.run(init_models(create_engine(Settings())))"]
     environment: &service-environment
-      LEXI_DB_URL: postgresql+asyncpg://lexi:lexi-dev-only@postgres:5432/lexi
+      LEXI_DB_URL: postgresql+asyncpg://lexi:${LEXI_POSTGRES_PASSWORD:-lexi-dev-only}@postgres:5432/lexi
       LEXI_CAMBRIDGE_DB_PATH: /reference/cambridge.db
-      LEXI_SERVICE_DATABASE_URL: postgresql+asyncpg://lexi:lexi-dev-only@postgres:5432/lexi
+      LEXI_SERVICE_DATABASE_URL: postgresql+asyncpg://lexi:${LEXI_POSTGRES_PASSWORD:-lexi-dev-only}@postgres:5432/lexi
       LEXI_SERVICE_REDIS_URL: redis://redis:6379/0
-      LEXI_SERVICE_REFERENCE_DATASET_FINGERPRINT: ${LEXI_SERVICE_REFERENCE_DATASET_FINGERPRINT:-}
+      LEXI_SERVICE_REFERENCE_DATASET_FINGERPRINT: ${LEXI_REFERENCE_DATASET_SHA256:-}
+      LEXI_SERVICE_INTERNAL_SERVICE_TOKEN: ${LEXI_SERVICE_INTERNAL_SERVICE_TOKEN:?LEXI_SERVICE_INTERNAL_SERVICE_TOKEN is required}
+      LEXI_SERVICE_INTERNAL_SERVICE_SUBJECT: ${LEXI_SERVICE_INTERNAL_SERVICE_SUBJECT:-pycil}
       LEXI_SERVICE_MAX_REQUEST_BYTES: ${LEXI_SERVICE_MAX_REQUEST_BYTES:-65536}
       LEXI_SERVICE_MAX_QUERY_CHARS: ${LEXI_SERVICE_MAX_QUERY_CHARS:-256}
       LEXI_SERVICE_MAX_IDEMPOTENCY_KEY_CHARS: ${LEXI_SERVICE_MAX_IDEMPOTENCY_KEY_CHARS:-128}
@@ -42,38 +62,36 @@ services:
       LEXI_SERVICE_PROVIDER_ATTEMPT_TIMEOUT_SECONDS: ${LEXI_SERVICE_PROVIDER_ATTEMPT_TIMEOUT_SECONDS:-60}
       LEXI_SERVICE_MAX_RETRIES: ${LEXI_SERVICE_MAX_RETRIES:-2}
       LEXI_SERVICE_MAX_OUTSTANDING_JOBS_PER_OWNER: ${LEXI_SERVICE_MAX_OUTSTANDING_JOBS_PER_OWNER:-100}
-    volumes:
-      - ../data:/reference/cambridge.db:ro
     depends_on:
       postgres: {condition: service_healthy}
+      reference-bootstrap: {condition: service_completed_successfully}
+    volumes: [lexi-reference:/reference:ro]
+    networks: [lexi-private]
 
-  library-bootstrap:
+  migrate:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    profiles: ["bootstrap"]
-    command:
-      [
-        "/app/.venv/bin/python",
-        "-c",
-        "import asyncio; from lexi_ai.config import Settings; from lexi_ai.db import create_engine, init_models; asyncio.run(init_models(create_engine(Settings())))",
-      ]
-    environment:
-      LEXI_DB_URL: postgresql+asyncpg://lexi:lexi-dev-only@postgres:5432/lexi
+    command: ["/app/.venv/bin/alembic", "upgrade", "head"]
+    environment: *service-environment
     depends_on:
-      postgres: {condition: service_healthy}
+      library-bootstrap: {condition: service_completed_successfully}
+    volumes: [lexi-reference:/reference:ro]
+    networks: [lexi-private]
 
   api:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
     environment: *service-environment
-    ports: ["8443:8443"]
-    volumes:
-      - ../data:/reference/cambridge.db:ro
     depends_on:
-      postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
+    volumes: [lexi-reference:/reference:ro]
+    networks:
+      lexi-private:
+      pycil-backend:
+        aliases: [lexi-service]
 
   worker:
     build:
@@ -81,8 +99,20 @@ services:
       dockerfile: deploy/Dockerfile
     command: ["/app/.venv/bin/python", "-m", "lexi_service.worker.runner"]
     environment: *service-environment
-    volumes:
-      - ../data:/reference/cambridge.db:ro
     depends_on:
-      postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
+    volumes: [lexi-reference:/reference:ro]
+    networks: [lexi-private]
+
+volumes:
+  lexi-pgdata:
+  lexi-redisdata:
+  lexi-reference:
+
+networks:
+  lexi-private:
+    internal: true
+  lexi-egress:
+  pycil-backend:
+    external: true

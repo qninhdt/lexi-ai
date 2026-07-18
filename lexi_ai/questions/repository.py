@@ -65,6 +65,21 @@ class QuestionRepository:
             rows = (await session.execute(stmt)).scalars().all()
             return [_to_read_model(r) for r in rows]
 
+    async def list_for_sense(self, sense_id: int, fmt: str | None = None) -> list[Question]:
+        """Persisted questions for one sense, newest first.
+
+        A learner session is scoped to a sense, not merely its owning word.  This
+        query deliberately excludes whole-word questions (``sense_id IS NULL``),
+        such as matching, because they cannot be safely bound to one FSRS item.
+        """
+        async with session_scope(self._session_factory) as session:
+            stmt = select(QuestionRow).where(QuestionRow.sense_id == sense_id)
+            if fmt is not None:
+                stmt = stmt.where(QuestionRow.format == fmt)
+            stmt = stmt.order_by(QuestionRow.id.desc())
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_to_read_model(r) for r in rows]
+
     async def get(self, question_id: int) -> Question | None:
         """A single persisted question by id, or ``None`` if absent."""
         async with session_scope(self._session_factory) as session:

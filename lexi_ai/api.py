@@ -188,6 +188,33 @@ class Lexicon:
             )
         return self._questions
 
+    # Service-facing question facade -------------------------------------------------
+    # These methods intentionally accept opaque database ids.  They let the service
+    # own question lookup/grading without exporting the engine's private repository
+    # or requiring a second connection to the generated-dictionary database.
+
+    async def generate_questions_for_sense(
+        self, word_id: int, sense_id: int, formats: list[str], count: int
+    ):
+        entry = await self.get_entry(word_id)
+        if entry.status != "done":
+            return []
+        return await self.questions.generate_for_sense(
+            entry, sense_id, formats=formats, n=count, persist=True
+        )
+
+    async def get_question(self, question_id: int):
+        return await self.questions.get(question_id)
+
+    async def list_questions_for_sense(self, sense_id: int, fmt: str | None = None):
+        return await self.questions.list_for_sense(sense_id, fmt)
+
+    async def grade_question(self, question_id: int, answer: object):
+        question = await self.questions.get(question_id)
+        if question is None:
+            return None
+        return await self.questions.grade(question, answer)
+
     def _build_questions_llm(self) -> StructuredLLM | None:
         """Structured LLM for the contextual-MCQ plugin (bound to ``GeneratedMCQ``
         at the call site via :func:`ainvoke_structured`)."""

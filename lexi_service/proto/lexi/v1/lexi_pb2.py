@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n%lexi_service/proto/lexi/v1/lexi.proto\x12\x07lexi.v1\"\"\n\x0cResponseMeta\x12\x12\n\nrequest_id\x18\x01 \x01(\t\"$\n\rSearchRequest\x12\r\n\x05query\x18\x01 \x01(\tJ\x04\x08\x02\x10\n\"\x83\x01\n\x0cSearchTarget\x12\x0f\n\x07\x64isplay\x18\x01 \x01(\t\x12\x12\n\nentry_type\x18\x02 \x01(\t\x12\r\n\x05score\x18\x03 \x01(\x01\x12\x14\n\x0clexi_word_id\x18\x04 \x01(\x03\x12\x14\n\x0c\x63\x61mbridge_id\x18\x05 \x01(\x03\x12\r\n\x05gloss\x18\x06 \x01(\tJ\x04\x08\x07\x10\n\"c\n\x0eSearchResponse\x12#\n\x04meta\x18\x01 \x01(\x0b\x32\x15.lexi.v1.ResponseMeta\x12&\n\x07results\x18\x02 \x03(\x0b\x32\x15.lexi.v1.SearchTargetJ\x04\x08\x03\x10\n\"&\n\rLookupRequest\x12\x0f\n\x07word_id\x18\x01 \x01(\x03J\x04\x08\x02\x10\n\"b\n\x05Sense\x12\x12\n\ndefinition\x18\x01 \x01(\t\x12\x0c\n\x04tier\x18\x02 \x01(\t\x12\x0b\n\x03pos\x18\x03 \x01(\t\x12\x12\n\ncefr_level\x18\x04 \x01(\t\x12\x10\n\x08\x65xamples\x18\x05 \x03(\tJ\x04\x08\x06\x10\n\"\x81\x01\n\x05\x45ntry\x12\x0f\n\x07word_id\x18\x01 \x01(\x03\x12\x0f\n\x07\x64isplay\x18\x02 \x01(\t\x12\x0c\n\x04norm\x18\x03 \x01(\t\x12\x0e\n\x06status\x18\x04 \x01(\t\x12\x12\n\nentry_type\x18\x05 \x01(\t\x12\x1e\n\x06senses\x18\x06 \x03(\x0b\x32\x0e.lexi.v1.SenseJ\x04\x08\x07\x10\n\"Y\n\rEntryResponse\x12#\n\x04meta\x18\x01 \x01(\x0b\x32\x15.lexi.v1.ResponseMeta\x12\x1d\n\x05\x65ntry\x18\x02 \x01(\x0b\x32\x0e.lexi.v1.EntryJ\x04\x08\x03\x10\n\"\x84\x01\n\x15SubmitGenerateRequest\x12%\n\x06target\x18\x01 \x01(\x0b\x32\x15.lexi.v1.SearchTarget\x12%\n\x1dreference_dataset_fingerprint\x18\x02 \x01(\t\x12\x17\n\x0fpayload_version\x18\x03 \x01(\rJ\x04\x08\x04\x10\n\"\xaf\x01\n\x18SubmitTranslationRequest\x12\x13\n\x0bsource_kind\x18\x01 \x01(\t\x12\x11\n\tsource_id\x18\x02 \x01(\x03\x12\x10\n\x08language\x18\x03 \x01(\t\x12\x13\n\x0bsource_hash\x18\x04 \x01(\t\x12%\n\x1dreference_dataset_fingerprint\x18\x05 \x01(\t\x12\x17\n\x0fpayload_version\x18\x06 \x01(\rJ\x04\x08\x07\x10\n\"%\n\rGetJobRequest\x12\x0e\n\x06job_id\x18\x01 \x01(\tJ\x04\x08\x02\x10\n\"T\n\x03Job\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x0e\n\x06status\x18\x02 \x01(\t\x12\x14\n\x0c\x64\x65\x64uplicated\x18\x03 \x01(\x08\x12\x11\n\toperation\x18\x04 \x01(\tJ\x04\x08\x05\x10\n\"S\n\x0bJobResponse\x12#\n\x04meta\x18\x01 \x01(\x0b\x32\x15.lexi.v1.ResponseMeta\x12\x19\n\x03job\x18\x02 \x01(\x0b\x32\x0c.lexi.v1.JobJ\x04\x08\x03\x10\n\"\x14\n\x0cStatsRequestJ\x04\x08\x01\x10\n\"\xe4\x01\n\rStatsResponse\x12#\n\x04meta\x18\x01 \x01(\x0b\x32\x15.lexi.v1.ResponseMeta\x12\x42\n\x0fwords_by_status\x18\x02 \x03(\x0b\x32).lexi.v1.StatsResponse.WordsByStatusEntry\x12\x0e\n\x06senses\x18\x03 \x01(\x03\x12\x10\n\x08\x65xamples\x18\x04 \x01(\x03\x12\x0c\n\x04tags\x18\x05 \x01(\x03\x1a\x34\n\x12WordsByStatusEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x03:\x02\x38\x01J\x04\x08\x06\x10\n\"\x15\n\rHealthRequestJ\x04\x08\x01\x10\n\"&\n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\tJ\x04\x08\x02\x10\n2\x81\x04\n\x0bLexiService\x12\x39\n\x06Search\x12\x16.lexi.v1.SearchRequest\x1a\x17.lexi.v1.SearchResponse\x12\x38\n\x06Lookup\x12\x16.lexi.v1.LookupRequest\x1a\x16.lexi.v1.EntryResponse\x12\x46\n\x0eSubmitGenerate\x12\x1e.lexi.v1.SubmitGenerateRequest\x1a\x14.lexi.v1.JobResponse\x12\x36\n\x06GetJob\x12\x16.lexi.v1.GetJobRequest\x1a\x14.lexi.v1.JobResponse\x12L\n\x11SubmitTranslation\x12!.lexi.v1.SubmitTranslationRequest\x1a\x14.lexi.v1.JobResponse\x12\x36\n\x05Stats\x12\x15.lexi.v1.StatsRequest\x1a\x16.lexi.v1.StatsResponse\x12\x39\n\x06Health\x12\x16.lexi.v1.HealthRequest\x1a\x17.lexi.v1.HealthResponse\x12<\n\tReadiness\x12\x16.lexi.v1.HealthRequest\x1a\x17.lexi.v1.HealthResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n%lexi_service/proto/lexi/v1/lexi.proto\x12\x07lexi.v1\"\"\n\x0cResponseMeta\x12\x12\n\nrequest_id\x18\x01 \x01(\t\"$\n\rSearchRequest\x12\r\n\x05query\x18\x01 \x01(\tJ\x04\x08\x02\x10\n\"\x83\x01\n\x0cSearchTarget\x12\x0f\n\x07\x64isplay\x18\x01 \x01(\t\x12\x12\n\nentry_type\x18\x02 \x01(\t\x12\r\n\x05score\x18\x03 \x01(\x01\x12\x14\n\x0clexi_word_id\x18\x04 \x01(\x03\x12\x14\n\x0c\x63\x61mbridge_id\x18\x05 \x01(\x03\x12\r\n\x05gloss\x18\x06 \x01(\tJ\x04\x08\x07\x10\n\"c\n\x0eSearchResponse\x12#\n\x04meta\x18\x01 \x01(\x0b\x32\x15.lexi.v1.ResponseMeta\x12&\n\x07results\x18\x02 \x03(\x0b\x32\x15.lexi.v1.SearchTargetJ\x04\x08\x03\x10\n\"&\n\rLookupRequest\x12\x0f\n\x07word_id\x18\x01 \x01(\x03J\x04\x08\x02\x10\n\"t\n\x05Sense\x12\x12\n\ndefinition\x18\x01 \x01(\t\x12\x0c\n\x04tier\x18\x02 \x01(\t\x12\x0b\n\x03pos\x18\x03 \x01(\t\x12\x12\n\ncefr_level\x18\x04 \x01(\t\x12\x10\n\x08\x65xamples\x18\x05 \x03(\t\x12\x10\n\x08sense_id\x18\n \x01(\x03J\x04\x08\x06\x10\n\"\x81\x01\n\x05\x45ntry\x12\x0f\n\x07word_id\x18\x01 \x01(\x03\x12\x0f\n\x07\x64isplay\x18\x02 \x01(\t\x12\x0c\n\x04norm\x18\x03 \x01(\t\x12\x0e\n\x06status\x18\x04 \x01(\t\x12\x12\n\nentry_type\x18\x05 \x01(\t\x12\x1e\n\x06senses\x18\x06 \x03(\x0b\x32\x0e.lexi.v1.SenseJ\x04\x08\x07\x10\n\"Y\n\rEntryResponse\x12#\n\x04meta\x18\x01 \x01(\x0b\x32\x15.lexi.v1.ResponseMeta\x12\x1d\n\x05\x65ntry\x18\x02 \x01(\x0b\x32\x0e.lexi.v1.EntryJ\x04\x08\x03\x10\n\"+\n\x10GetSensesRequest\x12\x11\n\tsense_ids\x18\x01 \x03(\x03J\x04\x08\x02\x10\n\"[\n\x0eSensesResponse\x12#\n\x04meta\x18\x01 \x01(\x0b\x32\x15.lexi.v1.ResponseMeta\x12\x1e\n\x06senses\x18\x02 \x03(\x0b\x32\x0e.lexi.v1.SenseJ\x04\x08\x03\x10\n\"\x84\x01\n\x15SubmitGenerateRequest\x12%\n\x06target\x18\x01 \x01(\x0b\x32\x15.lexi.v1.SearchTarget\x12%\n\x1dreference_dataset_fingerprint\x18\x02 \x01(\t\x12\x17\n\x0fpayload_version\x18\x03 \x01(\rJ\x04\x08\x04\x10\n\"\xaf\x01\n\x18SubmitTranslationRequest\x12\x13\n\x0bsource_kind\x18\x01 \x01(\t\x12\x11\n\tsource_id\x18\x02 \x01(\x03\x12\x10\n\x08language\x18\x03 \x01(\t\x12\x13\n\x0bsource_hash\x18\x04 \x01(\t\x12%\n\x1dreference_dataset_fingerprint\x18\x05 \x01(\t\x12\x17\n\x0fpayload_version\x18\x06 \x01(\rJ\x04\x08\x07\x10\n\"%\n\rGetJobRequest\x12\x0e\n\x06job_id\x18\x01 \x01(\tJ\x04\x08\x02\x10\n\"}\n\x03Job\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x0e\n\x06status\x18\x02 \x01(\t\x12\x14\n\x0c\x64\x65\x64uplicated\x18\x03 \x01(\x08\x12\x11\n\toperation\x18\x04 \x01(\t\x12\x13\n\x0bresult_json\x18\n \x01(\t\x12\x12\n\nerror_code\x18\x0b \x01(\tJ\x04\x08\x05\x10\n\"S\n\x0bJobResponse\x12#\n\x04meta\x18\x01 \x01(\x0b\x32\x15.lexi.v1.ResponseMeta\x12\x19\n\x03job\x18\x02 \x01(\x0b\x32\x0c.lexi.v1.JobJ\x04\x08\x03\x10\n\"\x14\n\x0cStatsRequestJ\x04\x08\x01\x10\n\"\xe4\x01\n\rStatsResponse\x12#\n\x04meta\x18\x01 \x01(\x0b\x32\x15.lexi.v1.ResponseMeta\x12\x42\n\x0fwords_by_status\x18\x02 \x03(\x0b\x32).lexi.v1.StatsResponse.WordsByStatusEntry\x12\x0e\n\x06senses\x18\x03 \x01(\x03\x12\x10\n\x08\x65xamples\x18\x04 \x01(\x03\x12\x0c\n\x04tags\x18\x05 \x01(\x03\x1a\x34\n\x12WordsByStatusEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x03:\x02\x38\x01J\x04\x08\x06\x10\n\"\x15\n\rHealthRequestJ\x04\x08\x01\x10\n\"&\n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\tJ\x04\x08\x02\x10\n2\xc2\x04\n\x0bLexiService\x12\x39\n\x06Search\x12\x16.lexi.v1.SearchRequest\x1a\x17.lexi.v1.SearchResponse\x12\x38\n\x06Lookup\x12\x16.lexi.v1.LookupRequest\x1a\x16.lexi.v1.EntryResponse\x12?\n\tGetSenses\x12\x19.lexi.v1.GetSensesRequest\x1a\x17.lexi.v1.SensesResponse\x12\x46\n\x0eSubmitGenerate\x12\x1e.lexi.v1.SubmitGenerateRequest\x1a\x14.lexi.v1.JobResponse\x12\x36\n\x06GetJob\x12\x16.lexi.v1.GetJobRequest\x1a\x14.lexi.v1.JobResponse\x12L\n\x11SubmitTranslation\x12!.lexi.v1.SubmitTranslationRequest\x1a\x14.lexi.v1.JobResponse\x12\x36\n\x05Stats\x12\x15.lexi.v1.StatsRequest\x1a\x16.lexi.v1.StatsResponse\x12\x39\n\x06Health\x12\x16.lexi.v1.HealthRequest\x1a\x17.lexi.v1.HealthResponse\x12<\n\tReadiness\x12\x16.lexi.v1.HealthRequest\x1a\x17.lexi.v1.HealthResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -44,31 +44,35 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_LOOKUPREQUEST']._serialized_start=359
   _globals['_LOOKUPREQUEST']._serialized_end=397
   _globals['_SENSE']._serialized_start=399
-  _globals['_SENSE']._serialized_end=497
-  _globals['_ENTRY']._serialized_start=500
-  _globals['_ENTRY']._serialized_end=629
-  _globals['_ENTRYRESPONSE']._serialized_start=631
-  _globals['_ENTRYRESPONSE']._serialized_end=720
-  _globals['_SUBMITGENERATEREQUEST']._serialized_start=723
-  _globals['_SUBMITGENERATEREQUEST']._serialized_end=855
-  _globals['_SUBMITTRANSLATIONREQUEST']._serialized_start=858
-  _globals['_SUBMITTRANSLATIONREQUEST']._serialized_end=1033
-  _globals['_GETJOBREQUEST']._serialized_start=1035
-  _globals['_GETJOBREQUEST']._serialized_end=1072
-  _globals['_JOB']._serialized_start=1074
-  _globals['_JOB']._serialized_end=1158
-  _globals['_JOBRESPONSE']._serialized_start=1160
-  _globals['_JOBRESPONSE']._serialized_end=1243
-  _globals['_STATSREQUEST']._serialized_start=1245
-  _globals['_STATSREQUEST']._serialized_end=1265
-  _globals['_STATSRESPONSE']._serialized_start=1268
-  _globals['_STATSRESPONSE']._serialized_end=1496
-  _globals['_STATSRESPONSE_WORDSBYSTATUSENTRY']._serialized_start=1438
-  _globals['_STATSRESPONSE_WORDSBYSTATUSENTRY']._serialized_end=1490
-  _globals['_HEALTHREQUEST']._serialized_start=1498
-  _globals['_HEALTHREQUEST']._serialized_end=1519
-  _globals['_HEALTHRESPONSE']._serialized_start=1521
-  _globals['_HEALTHRESPONSE']._serialized_end=1559
-  _globals['_LEXISERVICE']._serialized_start=1562
-  _globals['_LEXISERVICE']._serialized_end=2075
+  _globals['_SENSE']._serialized_end=515
+  _globals['_ENTRY']._serialized_start=518
+  _globals['_ENTRY']._serialized_end=647
+  _globals['_ENTRYRESPONSE']._serialized_start=649
+  _globals['_ENTRYRESPONSE']._serialized_end=738
+  _globals['_GETSENSESREQUEST']._serialized_start=740
+  _globals['_GETSENSESREQUEST']._serialized_end=783
+  _globals['_SENSESRESPONSE']._serialized_start=785
+  _globals['_SENSESRESPONSE']._serialized_end=876
+  _globals['_SUBMITGENERATEREQUEST']._serialized_start=879
+  _globals['_SUBMITGENERATEREQUEST']._serialized_end=1011
+  _globals['_SUBMITTRANSLATIONREQUEST']._serialized_start=1014
+  _globals['_SUBMITTRANSLATIONREQUEST']._serialized_end=1189
+  _globals['_GETJOBREQUEST']._serialized_start=1191
+  _globals['_GETJOBREQUEST']._serialized_end=1228
+  _globals['_JOB']._serialized_start=1230
+  _globals['_JOB']._serialized_end=1355
+  _globals['_JOBRESPONSE']._serialized_start=1357
+  _globals['_JOBRESPONSE']._serialized_end=1440
+  _globals['_STATSREQUEST']._serialized_start=1442
+  _globals['_STATSREQUEST']._serialized_end=1462
+  _globals['_STATSRESPONSE']._serialized_start=1465
+  _globals['_STATSRESPONSE']._serialized_end=1693
+  _globals['_STATSRESPONSE_WORDSBYSTATUSENTRY']._serialized_start=1635
+  _globals['_STATSRESPONSE_WORDSBYSTATUSENTRY']._serialized_end=1687
+  _globals['_HEALTHREQUEST']._serialized_start=1695
+  _globals['_HEALTHREQUEST']._serialized_end=1716
+  _globals['_HEALTHRESPONSE']._serialized_start=1718
+  _globals['_HEALTHRESPONSE']._serialized_end=1756
+  _globals['_LEXISERVICE']._serialized_start=1759
+  _globals['_LEXISERVICE']._serialized_end=2337
 # @@protoc_insertion_point(module_scope)

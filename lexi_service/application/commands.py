@@ -68,6 +68,26 @@ class SubmitTranslation:
 
 
 @dataclass(frozen=True)
+class GenerateQuestions:
+    """A bounded, synchronous service command for persisted learner questions."""
+
+    context: RequestContext
+    word_id: int
+    sense_id: int
+    formats: tuple[str, ...]
+    count: int = 1
+
+
+@dataclass(frozen=True)
+class GradeQuestion:
+    """Grade by question id; answer keys never cross this command boundary."""
+
+    context: RequestContext
+    question_id: int
+    answer: object
+
+
+@dataclass(frozen=True)
 class ExecuteTranslation:
     job: JobSubmission
     source_kind: str

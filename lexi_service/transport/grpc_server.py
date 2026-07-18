@@ -1,5 +1,6 @@
 """Async gRPC adapter for the canonical `lexi.v1` contract."""
 
+import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -8,12 +9,18 @@ import grpc
 from lexi_ai.read_models import SearchResult
 from lexi_service.application.commands import RequestContext, SubmitGenerate, SubmitTranslation
 from lexi_service.application.errors import ApplicationError
-from lexi_service.application.queries import GetJobQuery, LookupEntryQuery, SearchQuery, StatsQuery
+from lexi_service.application.queries import (
+    GetJobQuery,
+    GetSensesQuery,
+    LookupEntryQuery,
+    SearchQuery,
+    StatsQuery,
+)
 from lexi_service.proto.lexi.v1 import lexi_pb2, lexi_pb2_grpc
 from lexi_service.runtime import ServiceRuntime
 from lexi_service.security.auth import principal_from_grpc_auth_context
 from lexi_service.transport.health import HealthChecks
-from lexi_service.transport.mapping import entry, search_target
+from lexi_service.transport.mapping import entry, search_target, sense
 
 _STATUS = {
     "unauthenticated": grpc.StatusCode.UNAUTHENTICATED,
@@ -75,6 +82,18 @@ class LexiGrpcServicer(lexi_pb2_grpc.LexiServiceServicer):
             entry=entry(result),
         )
 
+    async def GetSenses(self, request, context):
+        result = await self._call(
+            context,
+            lambda: self._runtime.queries.get_senses(
+                GetSensesQuery(self._context(context), list(request.sense_ids))
+            ),
+        )
+        return lexi_pb2.SensesResponse(
+            meta=lexi_pb2.ResponseMeta(request_id=self._context(context).request_id),
+            senses=[sense(value) for value in result],
+        )
+
     async def SubmitGenerate(self, request, context):
         meta = dict(context.invocation_metadata())
         target = SearchResult(
@@ -121,6 +140,15 @@ class LexiGrpcServicer(lexi_pb2_grpc.LexiServiceServicer):
                 status=result.reference.status,
                 deduplicated=result.reference.deduplicated,
                 operation=result.operation,
+                result_json=(
+                    "" if result.result is None else json.dumps(result.result, sort_keys=True)
+                ),
+                error_code=(
+                    result.error_code
+                    if result.reference.status in {"failed", "expired", "superseded", "dead_letter"}
+                    and result.error_code is not None
+                    else ""
+                ),
             ),
         )
 

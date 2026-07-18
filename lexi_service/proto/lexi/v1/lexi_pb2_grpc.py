@@ -44,6 +44,11 @@ class LexiServiceStub:
                 request_serializer=lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.LookupRequest.SerializeToString,
                 response_deserializer=lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.EntryResponse.FromString,
                 _registered_method=True)
+        self.GetSenses = channel.unary_unary(
+                '/lexi.v1.LexiService/GetSenses',
+                request_serializer=lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.GetSensesRequest.SerializeToString,
+                response_deserializer=lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.SensesResponse.FromString,
+                _registered_method=True)
         self.SubmitGenerate = channel.unary_unary(
                 '/lexi.v1.LexiService/SubmitGenerate',
                 request_serializer=lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.SubmitGenerateRequest.SerializeToString,
@@ -86,6 +91,12 @@ class LexiServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def Lookup(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetSenses(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -139,6 +150,11 @@ def add_LexiServiceServicer_to_server(servicer, server):
                     servicer.Lookup,
                     request_deserializer=lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.LookupRequest.FromString,
                     response_serializer=lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.EntryResponse.SerializeToString,
+            ),
+            'GetSenses': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetSenses,
+                    request_deserializer=lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.GetSensesRequest.FromString,
+                    response_serializer=lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.SensesResponse.SerializeToString,
             ),
             'SubmitGenerate': grpc.unary_unary_rpc_method_handler(
                     servicer.SubmitGenerate,
@@ -225,6 +241,33 @@ class LexiService:
             '/lexi.v1.LexiService/Lookup',
             lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.LookupRequest.SerializeToString,
             lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.EntryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetSenses(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/lexi.v1.LexiService/GetSenses',
+            lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.GetSensesRequest.SerializeToString,
+            lexi__service_dot_proto_dot_lexi_dot_v1_dot_lexi__pb2.SensesResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -19,6 +19,7 @@ def settings(**overrides):
         "maximum_job_age_seconds": 3600,
         "provider_attempt_timeout_seconds": 30,
         "max_retries": 2,
+        "internal_service_token": "test-internal-token",
     }
     values.update(overrides)
     return ServiceSettings(**values)
@@ -36,6 +37,16 @@ def test_service_startup_accepts_valid_service_config():
 def test_service_startup_requires_redis():
     with pytest.raises(ValueError, match="Redis"):
         settings(redis_url="http://redis").validate_startup()
+
+
+def test_service_startup_requires_internal_service_token():
+    with pytest.raises(ValueError, match="internal service token"):
+        settings(internal_service_token="").validate_startup()
+
+
+def test_service_startup_requires_internal_service_subject():
+    with pytest.raises(ValueError, match="internal service subject"):
+        settings(internal_service_subject="").validate_startup()
 
 
 def test_service_startup_rejects_a_plaintext_llm_url_with_an_api_key():

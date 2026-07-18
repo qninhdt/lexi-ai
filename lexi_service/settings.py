@@ -23,6 +23,8 @@ class ServiceSettings(BaseSettings):
     provider_attempt_timeout_seconds: int
     max_retries: int
     max_outstanding_jobs_per_owner: int = 100
+    internal_service_token: str = ""
+    internal_service_subject: str = "pycil"
 
     def validate_startup(self) -> None:
         if not self.database_url.startswith("postgresql+asyncpg://"):
@@ -31,6 +33,10 @@ class ServiceSettings(BaseSettings):
             raise ValueError("service mode requires a Redis URL")
         if not self.reference_dataset_fingerprint:
             raise ValueError("service mode requires a reference dataset fingerprint")
+        if not self.internal_service_token:
+            raise ValueError("service mode requires an internal service token")
+        if not self.internal_service_subject:
+            raise ValueError("service mode requires an internal service subject")
         if (
             min(
                 self.max_request_bytes,

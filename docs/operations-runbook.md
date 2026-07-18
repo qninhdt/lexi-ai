@@ -76,17 +76,22 @@ LEXI_TEST_REDIS_URL=redis://localhost:6379/0 \
 
 ## Local Compose
 
-Compose starts Postgres, Redis, the HTTP compatibility API, and worker. First
-bootstrap the generated dictionary schema with the library workflow, calculate
-the immutable dataset digest, then run the service migration profile before the
-API/worker:
+Compose starts the reference bootstrap, generated-dictionary bootstrap and
+Alembic migration gates before the HTTP compatibility API and worker. The
+default artifact is the project's synthetic/open-source-derived reference
+dataset, downloaded from the public `reference-data-v1` release, cached in the
+named volume, and mounted read-only at `/reference/cambridge.db`. It is not
+Cambridge Dictionary data. Set both URL and SHA-256 only when pinning an
+approved replacement artifact; always supply the internal token:
 
 ```bash
-export LEXI_SERVICE_REFERENCE_DATASET_FINGERPRINT="$(sha256sum data | awk '{print $1}')"
-docker compose -f deploy/docker-compose.yml --profile bootstrap run --rm library-bootstrap
-docker compose -f deploy/docker-compose.yml --profile migrate run --rm migrate
+export LEXI_SERVICE_INTERNAL_SERVICE_TOKEN="$(openssl rand -hex 32)"
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-`data` is mounted read-only; Compose does not copy it into an image or invent a
-fingerprint. Supply `LEXI_LLM_*` only when exercising provider-backed jobs.
+To use a different artifact, set `LEXI_REFERENCE_DATASET_URL` and
+`LEXI_REFERENCE_DATASET_SHA256` together before starting Compose.
+
+The Lexi API has no host port. Pycil joins the pre-created external
+`pycil-backend` network and sends the internal token only over that network.
+Supply `LEXI_LLM_*` only when exercising provider-backed jobs.

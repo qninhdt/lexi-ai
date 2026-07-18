@@ -95,7 +95,12 @@ async def run() -> None:
                 )
             finally:
                 await lock.release()
-            return {"word_id": entry.word_id}
+            return {
+                "word_id": entry.word_id,
+                "sense_ids": [
+                    sense.sense_id for sense in entry.senses if sense.sense_id is not None
+                ],
+            }
         if job.operation == "translate":
             translated = await runtime.executions.execute_translation(
                 ExecuteTranslation(

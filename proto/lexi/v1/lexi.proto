@@ -5,6 +5,7 @@ package lexi.v1;
 service LexiService {
   rpc Search(SearchRequest) returns (SearchResponse);
   rpc Lookup(LookupRequest) returns (EntryResponse);
+  rpc GetSenses(GetSensesRequest) returns (SensesResponse);
   rpc SubmitGenerate(SubmitGenerateRequest) returns (JobResponse);
   rpc GetJob(GetJobRequest) returns (JobResponse);
   rpc SubmitTranslation(SubmitTranslationRequest) returns (JobResponse);
@@ -50,6 +51,7 @@ message Sense {
   string cefr_level = 4;
   repeated string examples = 5;
   reserved 6 to 9;
+  int64 sense_id = 10;
 }
 
 message Entry {
@@ -65,6 +67,17 @@ message Entry {
 message EntryResponse {
   ResponseMeta meta = 1;
   Entry entry = 2;
+  reserved 3 to 9;
+}
+
+message GetSensesRequest {
+  repeated int64 sense_ids = 1;
+  reserved 2 to 9;
+}
+
+message SensesResponse {
+  ResponseMeta meta = 1;
+  repeated Sense senses = 2;
   reserved 3 to 9;
 }
 
@@ -96,6 +109,8 @@ message Job {
   bool deduplicated = 3;
   string operation = 4;
   reserved 5 to 9;
+  string result_json = 10;
+  string error_code = 11;
 }
 
 message JobResponse {

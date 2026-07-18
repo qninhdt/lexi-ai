@@ -42,7 +42,12 @@ def create_app():
             return False
         return True
 
-    app = create_http_app(runtime, HealthChecks(ready))
+    app = create_http_app(
+        runtime,
+        HealthChecks(ready),
+        internal_service_token=settings.internal_service_token,
+        internal_service_subject=settings.internal_service_subject,
+    )
 
     @app.on_event("shutdown")
     async def close_runtime() -> None:

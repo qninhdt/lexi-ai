@@ -18,6 +18,25 @@ class LookupEntryQuery:
 
 
 @dataclass(frozen=True)
+class GetSensesQuery:
+    context: RequestContext
+    sense_ids: list[int]
+
+
+@dataclass(frozen=True)
+class GetQuestionQuery:
+    context: RequestContext
+    question_id: int
+
+
+@dataclass(frozen=True)
+class ListQuestionsQuery:
+    context: RequestContext
+    sense_id: int
+    format: str | None = None
+
+
+@dataclass(frozen=True)
 class GetJobQuery:
     context: RequestContext
     job_id: str

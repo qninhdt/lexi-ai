@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from lexi_service.application.commands import JobReference, JobSubmission
 from lexi_service.application.errors import ErrorCode, public_error
 from lexi_service.identity import Principal
-from lexi_service.jobs.models import JobRow, OutboxEventRow
+from lexi_service.jobs.models import JobEffectRow, JobRow, OutboxEventRow
 from lexi_service.ports import JobRecord
 
 
@@ -119,10 +119,17 @@ class SqlJobRepository:
             row = await session.get(JobRow, job_id)
             if row is None:
                 return None
+            effect = await session.scalar(
+                select(JobEffectRow)
+                .where(JobEffectRow.job_id == job_id, JobEffectRow.effect_kind == row.operation)
+                .order_by(JobEffectRow.ordinal)
+            )
             return JobRecord(
                 JobReference(row.job_id, row.status),
                 Principal(row.owner_subject, row.owner_tenant or None),
                 row.operation,
+                None if effect is None else json.loads(effect.result_json),
+                row.public_error_code,
             )
 
     async def load_submission(self, job_id: str) -> tuple[JobSubmission, int] | None:

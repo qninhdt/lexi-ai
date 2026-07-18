@@ -80,7 +80,12 @@ class JobLeaseRepository:
                         JobRow.generation_epoch == epoch,
                     )
                 )
-                .values(status=JobStatus.SUCCEEDED.value, lease_token=None, lease_expires_at=None)
+                .values(
+                    status=JobStatus.SUCCEEDED.value,
+                    public_error_code=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                )
             )
         return changed.rowcount == 1
 
@@ -147,7 +152,9 @@ class JobLeaseRepository:
                         (JobRow.attempt <= JobRow.max_retries, JobStatus.QUEUED.value),
                         else_=JobStatus.DEAD_LETTER.value,
                     ),
-                    public_error_code=error_code,
+                    public_error_code=case(
+                        (JobRow.attempt <= JobRow.max_retries, None), else_=error_code
+                    ),
                     lease_token=None,
                     lease_expires_at=None,
                 )
