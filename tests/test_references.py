@@ -62,6 +62,7 @@ async def test_wordnet_direct_lookup_counts():
 async def test_cambridge_read_only(loader):
     # Attempting to write through a mode=ro connection must raise.
     src = CambridgeSource(CAMBRIDGE_PATH)
+    assert "mode=ro&immutable=1" in src._uri
     conn = sqlite3.connect(src._uri, uri=True)
     try:
         with pytest.raises(sqlite3.OperationalError):

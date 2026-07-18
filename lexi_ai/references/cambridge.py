@@ -110,7 +110,10 @@ class CambridgeSource:
 
     def __init__(self, db_path: str):
         self._db_path = db_path
-        self._uri = f"file:{db_path}?mode=ro"
+        # Deployment mounts one checksum-verified artifact without SQLite WAL/
+        # SHM sidecars. ``immutable=1`` avoids looking for or mutating those
+        # sidecars; service readiness has already verified this file's SHA-256.
+        self._uri = f"file:{db_path}?mode=ro&immutable=1"
         # Lazily-built {match_key: word_id} index for the fallback lookup, so a
         # direct-miss fetch is O(1) instead of a full-table Python scan. Built
         # once per process; guarded because _fetch_sync runs in worker threads.
