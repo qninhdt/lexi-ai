@@ -112,15 +112,16 @@ def create_http_app(
     async def body_limit(request: Request, call_next):
         policy = getattr(runtime, "policy", None)
         if policy is not None:
-            body = bytearray()
-            async for chunk in request.stream():
-                if len(body) + len(chunk) > policy.max_request_bytes:
-                    error = public_error(ErrorCode.VALIDATION, "Request body is too large.").error
-                    return JSONResponse(error_body(error), status_code=413)
-                body.extend(chunk)
+            # Cache through Request.body() so Starlette retains the payload for
+            # FastAPI's later Pydantic parsing. Iterating request.stream()
+            # directly marks it consumed and made every JSON POST look empty.
+            body = await request.body()
+            if len(body) > policy.max_request_bytes:
+                error = public_error(ErrorCode.VALIDATION, "Request body is too large.").error
+                return JSONResponse(error_body(error), status_code=413)
 
             async def replay_body():
-                return {"type": "http.request", "body": bytes(body), "more_body": False}
+                return {"type": "http.request", "body": body, "more_body": False}
 
             request._receive = replay_body
         return await call_next(request)

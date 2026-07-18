@@ -143,7 +143,13 @@ async def test_application_errors_are_safe_structured_json():
 @pytest.mark.asyncio
 async def test_generate_returns_accepted_job_and_propagates_request_id():
     submissions = GuardedSubmissions()
-    app = create_http_app(runtime(submissions=submissions), HealthChecks(lambda: _ready()))
+    # Production composition always enables a request-size policy. Keep it on
+    # here so this endpoint test catches accidental body consumption in the
+    # transport middleware.
+    app = create_http_app(
+        runtime(submissions=submissions, policy=SimpleNamespace(max_request_bytes=65_536)),
+        HealthChecks(lambda: _ready()),
+    )
 
     add_verified_principal(app)
 
