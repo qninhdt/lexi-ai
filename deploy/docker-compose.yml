@@ -98,6 +98,7 @@ services:
     volumes: [lexi-reference:/reference:ro]
     networks:
       lexi-private:
+      lexi-egress:
       pycil-backend:
         aliases: [lexi-service]
 
@@ -111,7 +112,7 @@ services:
       migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
     volumes: [lexi-reference:/reference:ro]
-    networks: [lexi-private]
+    networks: [lexi-private, lexi-egress]
 
 volumes:
   lexi-pgdata:
