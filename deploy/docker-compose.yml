@@ -46,6 +46,12 @@ services:
     environment: &service-environment
       LEXI_DB_URL: postgresql+asyncpg://lexi:${LEXI_POSTGRES_PASSWORD:-lexi-dev-only}@postgres:5432/lexi
       LEXI_CAMBRIDGE_DB_PATH: /reference/cambridge.db
+      LEXI_LLM_BASE_URL: ${LEXI_LLM_BASE_URL:-https://api.openai.com/v1}
+      LEXI_LLM_API_KEY: ${LEXI_LLM_API_KEY:-}
+      LEXI_LLM_MODEL: ${LEXI_LLM_MODEL:-gpt-4o-mini}
+      LEXI_LLM_TEMPERATURE: ${LEXI_LLM_TEMPERATURE:-0.1}
+      LEXI_LLM_STRUCTURED_METHOD: ${LEXI_LLM_STRUCTURED_METHOD:-}
+      LEXI_LLM_REASONING_EFFORT: ${LEXI_LLM_REASONING_EFFORT:-}
       LEXI_SERVICE_DATABASE_URL: postgresql+asyncpg://lexi:${LEXI_POSTGRES_PASSWORD:-lexi-dev-only}@postgres:5432/lexi
       LEXI_SERVICE_REDIS_URL: redis://redis:6379/0
       # Compose interpolates this before service-level environment exists, so
