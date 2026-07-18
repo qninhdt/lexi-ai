@@ -46,6 +46,51 @@ from lexi_service.transport.mapping import (
 CertificateVerifier = Callable[[bytes], Awaitable[Principal | None]]
 
 
+class RequestBodyLimitMiddleware:
+    """Bound request bodies without consuming the downstream ASGI stream."""
+
+    def __init__(self, app, max_request_bytes: int):
+        self.app = app
+        self.max_request_bytes = max_request_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        content_length = scope.get("headers", ())
+        for name, value in content_length:
+            if name.lower() != b"content-length":
+                continue
+            try:
+                if int(value) <= self.max_request_bytes:
+                    break
+            except ValueError:
+                pass
+            await self._too_large(scope, receive, send)
+            return
+
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                return
+            body.extend(message.get("body", b""))
+            if len(body) > self.max_request_bytes:
+                await self._too_large(scope, receive, send)
+                return
+            if not message.get("more_body", False):
+                break
+
+        async def replay_body():
+            return {"type": "http.request", "body": bytes(body), "more_body": False}
+
+        await self.app(scope, replay_body, send)
+
+    async def _too_large(self, scope, receive, send) -> None:
+        error = public_error(ErrorCode.VALIDATION, "Request body is too large.").error
+        await JSONResponse(error_body(error), status_code=413)(scope, receive, send)
+
 class SearchTargetBody(BaseModel):
     display: str
     entry_type: str | None = None
@@ -94,6 +139,9 @@ def create_http_app(
 ) -> FastAPI:
     app = FastAPI(title="Lexi Service", version="1.0.0")
     metrics = metrics or ServiceMetrics()
+    policy = getattr(runtime, "policy", None)
+    if policy is not None:
+        app.add_middleware(RequestBodyLimitMiddleware, max_request_bytes=policy.max_request_bytes)
 
     def context(request: Request) -> RequestContext:
         deadline = None
@@ -107,24 +155,6 @@ def create_http_app(
             principal_from_asgi_scope(request.scope),
             deadline,
         )
-
-    @app.middleware("http")
-    async def body_limit(request: Request, call_next):
-        policy = getattr(runtime, "policy", None)
-        if policy is not None:
-            # Cache through Request.body() so Starlette retains the payload for
-            # FastAPI's later Pydantic parsing. Iterating request.stream()
-            # directly marks it consumed and made every JSON POST look empty.
-            body = await request.body()
-            if len(body) > policy.max_request_bytes:
-                error = public_error(ErrorCode.VALIDATION, "Request body is too large.").error
-                return JSONResponse(error_body(error), status_code=413)
-
-            async def replay_body():
-                return {"type": "http.request", "body": body, "more_body": False}
-
-            request._receive = replay_body
-        return await call_next(request)
 
     @app.middleware("http")
     async def require_verified_client_certificate(request: Request, call_next):
