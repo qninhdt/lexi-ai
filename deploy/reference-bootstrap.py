@@ -22,6 +22,7 @@ def main() -> None:
         raise ValueError("LEXI_REFERENCE_DATASET_SHA256 must be a lowercase SHA-256 digest")
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_file() and digest(target) == expected:
+        target.chmod(0o444)
         return
 
     with urlopen(url, timeout=60) as response, tempfile.NamedTemporaryFile(
@@ -38,6 +39,10 @@ def main() -> None:
         if digest(temporary_path) != expected:
             raise ValueError("reference dataset checksum mismatch")
         temporary_path.replace(target)
+        # The bootstrap runs as root while API/worker containers deliberately do
+        # not. The verified immutable artifact must therefore be readable by
+        # those unprivileged readers but never writable through the mount.
+        target.chmod(0o444)
     finally:
         temporary_path.unlink(missing_ok=True)
 

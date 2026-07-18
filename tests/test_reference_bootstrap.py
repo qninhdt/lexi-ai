@@ -51,6 +51,7 @@ def test_reference_bootstrap_downloads_and_verifies_the_artifact(
     bootstrap_module.main()
 
     assert target.read_bytes() == payload
+    assert target.stat().st_mode & 0o777 == 0o444
 
 
 def test_reference_bootstrap_reuses_a_matching_cached_artifact(
@@ -59,6 +60,7 @@ def test_reference_bootstrap_reuses_a_matching_cached_artifact(
     payload = b"already cached"
     target = tmp_path / "cambridge.db"
     target.write_bytes(payload)
+    target.chmod(0o600)
     _configure(monkeypatch, target, payload)
     monkeypatch.setattr(
         bootstrap_module,
@@ -67,6 +69,8 @@ def test_reference_bootstrap_reuses_a_matching_cached_artifact(
     )
 
     bootstrap_module.main()
+
+    assert target.stat().st_mode & 0o777 == 0o444
 
 
 def test_reference_bootstrap_refuses_non_https_artifact_urls(
