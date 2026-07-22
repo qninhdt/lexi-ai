@@ -76,6 +76,9 @@ ck.md
 !/.claude/rules/
 
 .agent
+.agents
+.kiro
+.codex
 
 # Local-only state inside tracked claude source
 claude/agent-memory/
