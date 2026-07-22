@@ -73,10 +73,6 @@ filterwarnings(
 
 class GeneratedReference(BaseModel):
     source: _SourceLit
-    # Bounded to the Sense.source_ref String(255) column: an unbounded value
-    # (a hallucinated giant ref) is the same over-length dual-DB class as the
-    # keys — it lands fine on SQLite but raises "value too long" on Postgres.
-    # Reject it at the model boundary, not at the DB.
     source_ref: str = Field(
         max_length=255,
         description=(
@@ -293,6 +289,7 @@ class GeneratedEntry(BaseModel):
     entry_type: _EntryTypeLit
     # Word-level POS stays nullable: a headword may span several POS across its
     # senses, and it is NOT used for WSD (only per-sense pos is). Closed vocab.
+
     pos: _PosLit | None = None
     senses: list[GeneratedSense] = Field(min_length=1)
     aliases: list[GeneratedAlias] = Field(default_factory=list)

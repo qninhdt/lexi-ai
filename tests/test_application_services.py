@@ -78,8 +78,8 @@ class FakeLexicon:
         self.calls.append(("get_entry", word_id))
         return self.entry
 
-    async def generate(self, target):
-        self.calls.append(("generate", target))
+    async def generate(self, target, *, structured_method=None):
+        self.calls.append(("generate", target, structured_method))
         return self.entry
 
     async def translate_field(self, source_kind, source_id, lang):
@@ -215,6 +215,7 @@ async def test_worker_execution_has_no_publisher_and_uses_provider_gate():
     assert result is lexicon.entry
     assert gate.entered == 1
     assert not hasattr(service, "_publisher")
+    assert lexicon.calls == [("generate", SearchResult("cat", None, cambridge_id=1), "json_schema")]
 
 
 @pytest.mark.asyncio
@@ -231,6 +232,42 @@ async def test_worker_execution_passes_a_string_scope_to_provider_gate():
 
     assert result is lexicon.entry
     assert gate.entered == 1
+
+
+@pytest.mark.asyncio
+async def test_generation_strategy_is_persisted_and_selects_the_single_function_mode():
+    publisher = FakePublisher()
+    submission_service = SubmissionService(publisher, FakeDataset(), POLICY, FakeClock())
+    await submission_service.submit_generate(
+        SubmitGenerate(
+            CONTEXT,
+            SearchResult("cat", None, cambridge_id=1),
+            "request-key",
+            "dataset-v1",
+            generation_strategy="function_calling",
+        )
+    )
+    assert publisher.submissions[0].payload["generation_strategy"] == "function_calling"
+
+    lexicon = FakeLexicon()
+    execution_service = ExecutionService(
+        lexicon, FakeDataset(), FakeGate(), POLICY, FakeClock(), FakeSourcePreconditions()
+    )
+    job = replace(
+        job_submission(),
+        payload={
+            "display": "cat",
+            "cambridge_id": 1,
+            "lexi_word_id": None,
+            "generation_strategy": "function_calling",
+        },
+    )
+    await execution_service.execute_generate(
+        ExecuteGenerate(job, SearchResult("cat", None, cambridge_id=1), 1, 1)
+    )
+    assert lexicon.calls == [
+        ("generate", SearchResult("cat", None, cambridge_id=1), "function_calling")
+    ]
 
 
 @pytest.mark.asyncio

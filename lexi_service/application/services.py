@@ -49,6 +49,8 @@ from lexi_service.ports import (
 
 logger = logging.getLogger(__name__)
 
+_GENERATION_STRATEGIES = {"structured_output", "function_calling"}
+
 # Pycil schedules reviews per sense.  A matching question spans an entry's senses
 # and therefore cannot be bound to one FSRS card; keep it library-only for now.
 SERVICE_QUESTION_FORMATS = frozenset(QUESTION_FORMATS - {"matching"})
@@ -182,8 +184,10 @@ def _validate_answer(answer_kind: str, answer: object, max_chars: int) -> None:
     elif answer_kind in {"text_span", "free_text"}:
         valid = isinstance(answer, str) and 0 < len(answer) <= max_chars
     elif answer_kind == "matching":
-        valid = isinstance(answer, list) and len(answer) <= 64 and all(
-            isinstance(item, int) and not isinstance(item, bool) for item in answer
+        valid = (
+            isinstance(answer, list)
+            and len(answer) <= 64
+            and all(isinstance(item, int) and not isinstance(item, bool) for item in answer)
         )
     else:
         valid = False
@@ -215,6 +219,8 @@ class SubmissionService:
             command.payload_version,
         )
         _validate_text(command.target.display, self._policy.max_query_chars, "generation target")
+        if command.generation_strategy not in _GENERATION_STRATEGIES:
+            raise public_error(ErrorCode.VALIDATION, "Generation strategy is not supported.")
         reference = await _safe_call(
             lambda: self._publisher.publish(
                 JobSubmission(
@@ -229,6 +235,7 @@ class SubmissionService:
                         "display": command.target.display,
                         "cambridge_id": command.target.cambridge_id,
                         "lexi_word_id": command.target.lexi_word_id,
+                        "generation_strategy": command.generation_strategy,
                     },
                     maximum_age_seconds=int(self._policy.maximum_job_age.total_seconds()),
                     max_retries=self._policy.max_retries,
@@ -328,9 +335,16 @@ class ExecutionService:
             or command.job.payload.get("lexi_word_id") != command.target.lexi_word_id
         ):
             raise public_error(ErrorCode.PRECONDITION_FAILED, "Job payload does not match.")
+        strategy = command.job.payload.get("generation_strategy", "structured_output")
+        if strategy not in _GENERATION_STRATEGIES:
+            raise public_error(
+                ErrorCode.PRECONDITION_FAILED, "Generation strategy is not supported."
+            )
+        structured_method = "json_schema" if strategy == "structured_output" else "function_calling"
         generate = getattr(self._lexicon, "generate_fenced", self._lexicon.generate)
         return await self._run_provider(
-            lambda: generate(command.target), command.job.owner.provider_scope
+            lambda: generate(command.target, structured_method=structured_method),
+            command.job.owner.provider_scope,
         )
 
     async def execute_translation(self, command: ExecuteTranslation) -> str:

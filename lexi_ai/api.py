@@ -986,6 +986,7 @@ class Lexicon:
         *,
         force: bool = False,
         theme: str | int | None = None,
+        structured_method: str | None = None,
     ) -> Entry:
         """Generate (or return) the entry for a search result or a custom string.
 
@@ -1002,14 +1003,18 @@ class Lexicon:
         """
         # Custom string: anchor to WordNet only, dedup by the string's match_key.
         if isinstance(source, str):
-            entry = await self._generate_locked(match_key(source), source, None, force)
+            entry = await self._generate_locked(
+                match_key(source), source, None, force, structured_method=structured_method
+            )
         # Already-generated hit: return it, or re-anchor to its Cambridge id on force.
         elif source.lexi_word_id is not None:
             if not force:
                 entry = await self._to_entry(source.lexi_word_id)
             else:
                 norm, cam_id = await self._word_norm_and_cambridge(source.lexi_word_id)
-                entry = await self._generate_locked(match_key(norm), norm, cam_id, True)
+                entry = await self._generate_locked(
+                    match_key(norm), norm, cam_id, True, structured_method=structured_method
+                )
         # Suggestion: cache-check by Cambridge provenance, then generate.
         else:
             if source.cambridge_id is None:
@@ -1020,11 +1025,19 @@ class Lexicon:
                     entry = await self._to_entry(hit[source.cambridge_id][0])
                 else:
                     entry = await self._generate_locked(
-                        match_key(source.display), source.display, source.cambridge_id, force
+                        match_key(source.display),
+                        source.display,
+                        source.cambridge_id,
+                        force,
+                        structured_method=structured_method,
                     )
             else:
                 entry = await self._generate_locked(
-                    match_key(source.display), source.display, source.cambridge_id, force
+                    match_key(source.display),
+                    source.display,
+                    source.cambridge_id,
+                    force,
+                    structured_method=structured_method,
                 )
 
         if theme is not None:
@@ -1071,7 +1084,13 @@ class Lexicon:
         return await self._gather_batch(sources, _one, concurrency=concurrency)
 
     async def _generate_locked(
-        self, key: str, word: str, cambridge_id: int | None, force: bool
+        self,
+        key: str,
+        word: str,
+        cambridge_id: int | None,
+        force: bool,
+        *,
+        structured_method: str | None = None,
     ) -> Entry:
         """Locked generate-and-persist for one word key (double-checked)."""
         lock = self._locks.setdefault(key, asyncio.Lock())
@@ -1081,12 +1100,16 @@ class Lexicon:
                     done = await self._done_ids(key)
                     if done:
                         return await self._to_entry(done[0])
-                result = await self._run_generation(word, cambridge_id)
+                result = await self._run_generation(
+                    word, cambridge_id, structured_method=structured_method
+                )
         finally:
             self._evict_lock(key, lock)
         return await self._entry_for_key(key, result)
 
-    async def generate_fenced(self, source: SearchResult | str) -> Entry:
+    async def generate_fenced(
+        self, source: SearchResult | str, *, structured_method: str | None = None
+    ) -> Entry:
         """Generate once under a database fence for independently deployed workers.
 
         This service-facing seam deliberately has no ``force`` flag: remote
@@ -1111,7 +1134,9 @@ class Lexicon:
                 if done:
                     return await self._to_entry(done[0])
                 fence = await self._repo.claim_generation(word)
-                result = await self._run_generation(word, cambridge_id, fence=fence)
+                result = await self._run_generation(
+                    word, cambridge_id, fence=fence, structured_method=structured_method
+                )
         finally:
             self._evict_lock(key, lock)
         return await self._entry_for_key(key, result)
@@ -1167,7 +1192,14 @@ class Lexicon:
 
     # --- generation path --------------------------------------------------
 
-    async def _run_generation(self, word: str, cambridge_id: int | None, *, fence=None):
+    async def _run_generation(
+        self,
+        word: str,
+        cambridge_id: int | None,
+        *,
+        fence=None,
+        structured_method: str | None = None,
+    ):
         """Build the bundle (Cambridge-anchored or custom), generate, persist.
 
         After persistence, embed the new senses best-effort: an embedding failure
@@ -1186,7 +1218,12 @@ class Lexicon:
             existing_tags = await self._repo.all_tags()
         except Exception:  # noqa: BLE001 - vocab is best-effort; empty on failure
             existing_tags = []
-        result = await self._generator.generate(bundle, existing_tags=existing_tags)
+        if structured_method is None:
+            result = await self._generator.generate(bundle, existing_tags=existing_tags)
+        else:
+            result = await self._generator.generate(
+                bundle, existing_tags=existing_tags, structured_method=structured_method
+            )
         words = await self._repo.persist_result(
             result, cambridge_word_id=cambridge_id, cambridge_cefr=cefr_map, fence=fence
         )

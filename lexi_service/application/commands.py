@@ -45,6 +45,7 @@ class SubmitGenerate:
     idempotency_key: str
     reference_dataset_fingerprint: str
     payload_version: int = 1
+    generation_strategy: str = "structured_output"
 
 
 @dataclass(frozen=True)

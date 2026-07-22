@@ -45,6 +45,7 @@ async def test_http_and_grpc_submit_generate_create_the_same_application_command
             target=lexi_pb2.SearchTarget(display="cat", cambridge_id=7),
             reference_dataset_fingerprint="dataset-v1",
             payload_version=1,
+            generation_strategy="function_calling",
         ),
         RpcContext(),
     )
@@ -68,6 +69,7 @@ async def test_http_and_grpc_submit_generate_create_the_same_application_command
                 "target": {"display": "cat", "cambridge_id": 7},
                 "reference_dataset_fingerprint": "dataset-v1",
                 "payload_version": 1,
+                "generation_strategy": "function_calling",
             },
         )
 
@@ -79,3 +81,5 @@ async def test_http_and_grpc_submit_generate_create_the_same_application_command
     assert grpc_command.idempotency_key == http_command.idempotency_key
     assert grpc_command.reference_dataset_fingerprint == http_command.reference_dataset_fingerprint
     assert grpc_command.payload_version == http_command.payload_version
+    assert grpc_command.generation_strategy == "function_calling"
+    assert http_command.generation_strategy == "function_calling"

@@ -113,6 +113,7 @@ class LexiGrpcServicer(lexi_pb2_grpc.LexiServiceServicer):
                     meta.get("idempotency-key", ""),
                     request.reference_dataset_fingerprint,
                     request.payload_version or 1,
+                    request.generation_strategy or "structured_output",
                 )
             ),
         )

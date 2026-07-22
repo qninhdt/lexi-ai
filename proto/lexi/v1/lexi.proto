@@ -85,7 +85,8 @@ message SubmitGenerateRequest {
   SearchTarget target = 1;
   string reference_dataset_fingerprint = 2;
   uint32 payload_version = 3;
-  reserved 4 to 9;
+  string generation_strategy = 4;
+  reserved 5 to 9;
 }
 
 message SubmitTranslationRequest {

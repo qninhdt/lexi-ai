@@ -32,8 +32,7 @@ class GuardedQueries:
                 ErrorCode.UNAUTHENTICATED, "Authenticated service identity is required."
             )
         return [
-            SenseView("definition", "a1", "noun", None, sense_id=value)
-            for value in query.sense_ids
+            SenseView("definition", "a1", "noun", None, sense_id=value) for value in query.sense_ids
         ]
 
 
@@ -172,6 +171,28 @@ async def test_generate_returns_accepted_job_and_propagates_request_id():
     }
     assert submissions.calls[0].context.request_id == "request-123"
     assert submissions.calls[0].context.principal == Principal("service-a", "tenant-a")
+    assert submissions.calls[0].generation_strategy == "structured_output"
+
+
+@pytest.mark.asyncio
+async def test_generate_accepts_the_internal_function_calling_strategy():
+    submissions = GuardedSubmissions()
+    app = create_http_app(runtime(submissions=submissions), HealthChecks(lambda: _ready()))
+    add_verified_principal(app)
+
+    async with client(app) as api:
+        response = await api.post(
+            "/v1/generations",
+            headers={"Idempotency-Key": "idem-123"},
+            json={
+                "target": {"display": "cat", "cambridge_id": 7},
+                "reference_dataset_fingerprint": "dataset-v1",
+                "generation_strategy": "function_calling",
+            },
+        )
+
+    assert response.status_code == 202
+    assert submissions.calls[0].generation_strategy == "function_calling"
 
 
 @pytest.mark.asyncio

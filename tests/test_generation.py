@@ -12,9 +12,11 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from lexi_ai.config import Settings
 from lexi_ai.generation.generator import Generator
 from lexi_ai.generation.schemas import (
     GeneratedEntry,
+    GeneratedReference,
     GeneratedResult,
     GeneratedSense,
 )
@@ -187,6 +189,29 @@ def test_invalid_tier_rejected():
         )
 
 
+def test_reference_source_rejects_invalid_labels():
+    assert GeneratedReference(source="cambridge", source_ref="42").source == "cambridge"
+    with pytest.raises(ValidationError):
+        GeneratedReference(source=" Cambridge ", source_ref="42")
+
+
+def test_invalid_entry_type_rejected():
+    with pytest.raises(ValidationError):
+        GeneratedEntry(
+            norm="x",
+            entry_type="not-an-entry-type",
+            senses=[{"definition": "d", "tier": "core", "pos": "noun"}],
+        )
+
+
+def test_entry_type_is_required():
+    with pytest.raises(ValidationError):
+        GeneratedEntry(
+            norm="x",
+            senses=[{"definition": "d", "tier": "core", "pos": "noun"}],
+        )
+
+
 def test_invalid_alias_type_rejected():
     with pytest.raises(ValidationError):
         GeneratedEntry(
@@ -328,3 +353,33 @@ async def test_generate_raises_after_exhausting_retries():
     gen = Generator(structured_llm=_FakeLLM(_always_fail), max_retries=2, base_delay=0.0)
     with pytest.raises(RuntimeError, match="permanent"):
         await gen.generate(_bundle_book())
+
+
+def test_structured_method_overrides_an_initialized_default_llm(monkeypatch):
+    created: list[object] = []
+
+    def _build(_settings):
+        llm = object()
+        created.append(llm)
+        return llm
+
+    monkeypatch.setattr("lexi_ai.generation.generator.build_structured_llm", _build)
+    gen = Generator(settings=Settings(llm_structured_method="json_schema"))
+
+    default_llm = gen.llm
+    function_llm = gen._llm_for_method("function_calling")
+
+    assert function_llm is not default_llm
+    assert len(created) == 2
+
+
+def test_injected_llm_is_not_replaced_for_a_requested_method(monkeypatch):
+    injected = object()
+    monkeypatch.setattr(
+        "lexi_ai.generation.generator.build_structured_llm",
+        lambda _settings: pytest.fail("injected LLM must not be replaced"),
+    )
+
+    gen = Generator(structured_llm=injected)  # type: ignore[arg-type]
+
+    assert gen._llm_for_method("function_calling") is injected

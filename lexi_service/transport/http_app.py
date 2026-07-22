@@ -4,6 +4,7 @@ import asyncio
 import hmac
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, Query, Request
@@ -91,6 +92,7 @@ class RequestBodyLimitMiddleware:
         error = public_error(ErrorCode.VALIDATION, "Request body is too large.").error
         await JSONResponse(error_body(error), status_code=413)(scope, receive, send)
 
+
 class SearchTargetBody(BaseModel):
     display: str
     entry_type: str | None = None
@@ -104,6 +106,7 @@ class GenerateBody(BaseModel):
     target: SearchTargetBody
     reference_dataset_fingerprint: str
     payload_version: int = Field(1, ge=1)
+    generation_strategy: Literal["structured_output", "function_calling"] = "structured_output"
 
 
 class TranslationBody(BaseModel):
@@ -309,6 +312,7 @@ def create_http_app(
                 idempotency_key or "",
                 body.reference_dataset_fingerprint,
                 body.payload_version,
+                body.generation_strategy,
             )
         )
         return {

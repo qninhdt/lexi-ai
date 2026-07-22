@@ -103,14 +103,16 @@ class SensesResponse(_message.Message):
     def __init__(self, meta: _Optional[_Union[ResponseMeta, _Mapping]] = ..., senses: _Optional[_Iterable[_Union[Sense, _Mapping]]] = ...) -> None: ...
 
 class SubmitGenerateRequest(_message.Message):
-    __slots__ = ("target", "reference_dataset_fingerprint", "payload_version")
+    __slots__ = ("target", "reference_dataset_fingerprint", "payload_version", "generation_strategy")
     TARGET_FIELD_NUMBER: _ClassVar[int]
     REFERENCE_DATASET_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
     PAYLOAD_VERSION_FIELD_NUMBER: _ClassVar[int]
+    GENERATION_STRATEGY_FIELD_NUMBER: _ClassVar[int]
     target: SearchTarget
     reference_dataset_fingerprint: str
     payload_version: int
-    def __init__(self, target: _Optional[_Union[SearchTarget, _Mapping]] = ..., reference_dataset_fingerprint: _Optional[str] = ..., payload_version: _Optional[int] = ...) -> None: ...
+    generation_strategy: str
+    def __init__(self, target: _Optional[_Union[SearchTarget, _Mapping]] = ..., reference_dataset_fingerprint: _Optional[str] = ..., payload_version: _Optional[int] = ..., generation_strategy: _Optional[str] = ...) -> None: ...
 
 class SubmitTranslationRequest(_message.Message):
     __slots__ = ("source_kind", "source_id", "language", "source_hash", "reference_dataset_fingerprint", "payload_version")
