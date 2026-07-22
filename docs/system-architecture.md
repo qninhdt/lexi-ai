@@ -333,42 +333,31 @@ Postgres dialects (`tests/test_models.py::test_schema_compiles_on_both_dialects`
   children are cleared with Core `delete()` and re-inserted with explicit FK ids.
   Read models are built inside the session via `selectinload`.
 
-## Planned service boundary
+## Adopted embedding boundary
 
-The library remains the dictionary implementation. Phase 2 adds a
-transport-neutral `lexi_service` application boundary: typed commands/queries,
-application services, ports, service settings, verified-identity context, and a
-process-scoped runtime graph. Library users continue to call `Lexicon` directly;
-the service core delegates to its existing seams rather than routing local calls
-through a wrapper.
+`lexi_ai` is the dictionary domain library. It owns transport-agnostic models,
+repositories, generation, questions, grading, translation, and TTS; consumers
+construct a read-only or provider-enabled `Lexicon` according to their process.
+It must not own HTTP/gRPC adapters, Redis queues, task/outbox orchestration, or
+service deployment credentials.
 
-The core keeps submission distinct from execution. API-facing submission services
-validate a verified mTLS-derived principal, limits, request deadline, payload
-version, reference-dataset fingerprint, and idempotency input before publishing a
-job through a port. Worker-only execution services have no publisher dependency,
-so they cannot enqueue recursively; they bind the job payload to the requested
-generation target or translation source/hash, recheck the dataset fingerprint,
-and enforce server-owned maximum job age, retry cap, provider concurrency, and
-per-attempt timeout. Public failures use stable safe codes, messages,
-retryability, and incident IDs; provider, database, and filesystem diagnostics
-remain private.
+Pycil is adopting the library as its only Lexi execution dependency. The target
+uses a single PostgreSQL cluster with Lexi tables isolated in the `lexi` schema,
+separate Alembic versioning, schema owner/migrator roles, and least-privilege
+runtime roles. Pycil owns commands, global task identity, durable task interests,
+outbox delivery, and provider-worker execution. This is an accepted migration
+target; the existing service remains available only until Pycil's cutover and
+compatibility-observation gates complete.
 
-`ServiceRuntime` composes one reusable graph per process and exposes idempotent
-async shutdown for its owned resources. Phase 3 adds a versioned `lexi.v1` gRPC
-contract and a FastAPI compatibility adapter over those same services. Both
-adapters default-deny all but liveness, preserve correlation IDs, return safe
-errors, impose request deadlines and body/message limits, and expose protected
-readiness. gRPC startup is mTLS-only with a required client CA; HTTP accepts only
-a certificate verified by the hosting ASGI TLS integration and never trusts
-identity headers. Proto stubs are regenerated with `scripts/generate-proto.sh`.
+The migration preserves word, sense, question, and asset IDs. It supports an
+explicit fresh-create path and a verified copy-and-stamp path that checks counts,
+constraints, hashes, and sequence positions before embedded writes begin. No
+process may operate both the legacy service and embedded library as writers.
 
-Redis or worker implementation, durable job/outbox persistence,
-PostgreSQL/Alembic service schema, and deployment-specific TLS termination remain
-outside the core. Those adapters remain separate so `import lexi_ai` does not
-import gRPC, HTTP, Redis, worker, or mTLS libraries. The full service contract remains recorded in the
-[service foundations plan note](../plans/260716-1141-lexi-library-and-service-architecture/design-foundations.md);
-[Phase 2 service seams](../plans/260716-1141-lexi-library-and-service-architecture/phase-02-core-contracts-and-service-seams.md)
-tracks this implemented core and the remaining adapter work.
+The companion contract is
+[Pycil's SSE task orchestration ADR](../../pycil/docs/decisions/sse-task-orchestration-boundary.md).
+Its task/outbox lifecycle remains outside `lexi_ai`, which keeps importing the
+library free of transport and worker dependencies.
 
 ## Configuration
 
