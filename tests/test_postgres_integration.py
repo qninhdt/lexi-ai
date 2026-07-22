@@ -40,9 +40,8 @@ pytestmark = requires_postgres
 
 
 async def test_harness_connects_and_roundtrips_a_word(pg_session_factory):
-    """The fixture connects, ``init_models`` builds the schema on Postgres, and a
-    trivial ``Word`` round-trips — proving the harness itself before any
-    regression leans on it."""
+    """The fixture applies the domain Alembic baseline and a trivial ``Word``
+    round-trips, proving the harness before any regression leans on it."""
     async with session_scope(pg_session_factory) as session:
         session.add(Word(norm="book", match_key=match_key("book"), status="done"))
 

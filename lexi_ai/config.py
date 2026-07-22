@@ -36,6 +36,9 @@ class Settings(BaseSettings):
 
     # Generated dictionary DB (read/write). Async SQLite by default.
     db_url: str = "sqlite+aiosqlite:///./lexi.db"
+    # PostgreSQL deployments isolate dictionary tables in this schema. SQLite
+    # ignores it and continues to use its default namespace.
+    db_schema: str = "lexi"
 
     # Read-only Cambridge source (plain filesystem path to the SQLite file).
     cambridge_db_path: str = "./data"

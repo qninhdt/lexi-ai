@@ -19,14 +19,20 @@ Install + run the tier:
 
 import importlib.util
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import text
 
-from lexi_ai.db import create_session_factory, init_models
-from lexi_ai.models import Base
+from lexi_ai.config import Settings
+from lexi_ai.db import create_engine, create_session_factory
 
 PG_URL = os.environ.get("LEXI_TEST_PG_URL")
+ROOT = Path(__file__).resolve().parents[1]
+DOMAIN_ALEMBIC_CONFIG = ROOT / "lexi_ai" / "migrations" / "alembic.ini"
+PG_SCHEMA = "lexi_test"
 
 _HAS_ASYNCPG = importlib.util.find_spec("asyncpg") is not None
 
@@ -44,20 +50,31 @@ requires_postgres = pytest.mark.skipif(
 
 @pytest.fixture
 async def pg_session_factory():
-    """A session factory over a real Postgres with a freshly built schema.
+    """A session factory over a real Postgres with a fresh Alembic schema.
 
-    Function-scoped and self-cleaning: drop everything, ``init_models``, yield,
-    then drop again — so each test starts on a clean schema and a crashed run
-    leaves no tables behind (Phase 0 teardown risk note). ``PG_URL`` is
-    guaranteed present here because callers gate on ``requires_postgres``.
+    Function-scoped and self-cleaning. ``PG_URL`` is guaranteed present here
+    because callers gate on ``requires_postgres``.
     """
-    engine = create_async_engine(PG_URL, future=True)
+    subprocess.run(
+        [
+            str(Path(sys.executable).with_name("alembic")),
+            "-c",
+            str(DOMAIN_ALEMBIC_CONFIG),
+            "-x",
+            f"schema={PG_SCHEMA}",
+            "upgrade",
+            "head",
+        ],
+        cwd=ROOT,
+        check=True,
+        env={**os.environ, "LEXI_DB_URL": PG_URL},
+    )
+    engine = create_engine(Settings(db_url=PG_URL, db_schema=PG_SCHEMA))
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await init_models(engine)
+        await conn.execute(text("TRUNCATE TABLE lexi_test.words CASCADE"))
     try:
         yield create_session_factory(engine)
     finally:
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
+            await conn.execute(text("DROP SCHEMA IF EXISTS lexi_test CASCADE"))
         await engine.dispose()

@@ -65,7 +65,6 @@ The demos 01–07 use a `lookup(lex, raw)` helper in `_common.py` that wraps
 | `10_topic_tags.py` | open-vocabulary **topic tags** per word; browse via `list_tags` / `list_entries_by_tag` |
 | `11_word_enrichment.py [word]` | learner-dictionary **enrichments**: guideword, grammar, register, connotation, collocations + word-family / confused-with links |
 | `12_question_engine.py [word]` | **question engine**: generate + grade questions across 4 formats; llm questions persist for 0-token reuse |
-| `14_service_grpc_client.py [query]` | mTLS request through the generated `lexi.v1` gRPC client |
 
 ```bash
 uv run python examples/08_resolve_and_pick.py serendipity
@@ -76,20 +75,6 @@ uv run python examples/04_concurrent_lookups.py ephemeral 5
 uv run python examples/05_related_graph.py happy
 uv run python examples/07_inspect_matching.py happy
 uv run python examples/06_interactive_repl.py
-```
-
-## Service gRPC client (example 14)
-
-Install service dependencies (`uv sync --extra service`) and provide the target
-and mTLS files. This sample uses the generated `lexi.v1` stub, not an ad-hoc
-HTTP schema:
-
-```bash
-export LEXI_GRPC_TARGET=lexi-grpc.example.internal:9443
-export LEXI_GRPC_CA_FILE=./certs/service-ca.crt
-export LEXI_GRPC_CERT_FILE=./certs/client.crt
-export LEXI_GRPC_KEY_FILE=./certs/client.key
-uv run python examples/14_service_grpc_client.py cat
 ```
 
 ## Semantic search (example 09)
@@ -131,7 +116,7 @@ Cambridge/WordNet — the model **synthesizes** them, it does not copy the sourc
 They split by one test — does the field NAME a lemma or LABEL this sense?
 
 - **word-references** (`word_family`, `confused_with`) NAME a lemma, so they are
-  **normalized** like synonyms: they ride `related[]` → `entry_links` and surface
+   **normalized** like synonyms: they ride `related[]` → `word_relation` and surface
   in `entry.links` by `rel_type`, deduped to one real `words` row per lemma
   (`"Happiness"` and `"happiness"` fold to one).
 - **sense labels** LABEL this sense: `guideword` (homograph disambiguator),

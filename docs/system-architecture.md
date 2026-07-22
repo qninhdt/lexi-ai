@@ -24,7 +24,7 @@ is always rendered at read time; there is **no** `display` column.
 lexi_ai/
   normalize.py      match_key / render (pure, zero-I/O; THE invariant)
   constants.py      controlled vocabularies (single source: ORM + LLM schema)
-  config.py         pydantic-settings (LLM creds, two DB locations)
+   config.py         pydantic-settings (LLM credentials and database location)
   db.py             async engine + session_scope; SQLite FK pragma
   models.py         SQLAlchemy 2.0 async ORM (portable types only)
   read_models.py    dataclass views returned to callers
@@ -87,7 +87,7 @@ cross-DB FK — decision #14):
   (pending/done/error/not_found), `pos`, `cambridge_word_id`.
 - `word_aliases` — same-entry surface variants; `alias_match_key` indexed;
   UNIQUE(word_id, alias_match_key).
-- `entry_links` — cross-entry relations; `to_word_id` is **always a real FK id**
+- `word_relation` — cross-entry relations; `to_word_id` is **always a real FK id**
   (stub-row pattern #11); UNIQUE(from, to, rel_type). `rel_type` includes the
   word-reference relations `word_family` / `confused_with` and the taxonomic
   relations `hypernym` / `hyponym` (all normalized like synonyms — see below).
@@ -175,7 +175,7 @@ word gets a set of enrichments emitted in the same LLM call as senses —
 synthesized by the LLM (semantic relations are NOT anchored — Cambridge/WordNet
 feed sense content only). Two kinds: **word-references** (`word_family`,
 `confused_with`, `hypernym`, `hyponym`) NAME a lemma, so they are normalized
-through the existing `related[]` → `entry_links` path (match_key stub-rows +
+through the existing `related[]` → `word_relation` path (match_key stub-rows +
 dedup) and appear in `Entry.links` as a flat list by `rel_type`; **sense labels**
 (`guideword`, `grammar`, `register`, `connotation`, `domain`, `usage_note`,
 `collocations`, `forms`) LABEL a sense and live on `senses` / the `collocations`
@@ -341,18 +341,10 @@ construct a read-only or provider-enabled `Lexicon` according to their process.
 It must not own HTTP/gRPC adapters, Redis queues, task/outbox orchestration, or
 service deployment credentials.
 
-Pycil is adopting the library as its only Lexi execution dependency. The target
-uses a single PostgreSQL cluster with Lexi tables isolated in the `lexi` schema,
-separate Alembic versioning, schema owner/migrator roles, and least-privilege
-runtime roles. Pycil owns commands, global task identity, durable task interests,
-outbox delivery, and provider-worker execution. This is an accepted migration
-target; the existing service remains available only until Pycil's cutover and
-compatibility-observation gates complete.
-
-The migration preserves word, sense, question, and asset IDs. It supports an
-explicit fresh-create path and a verified copy-and-stamp path that checks counts,
-constraints, hashes, and sequence positions before embedded writes begin. No
-process may operate both the legacy service and embedded library as writers.
+Pycil uses the library as its only Lexi execution dependency. It runs against a
+single PostgreSQL cluster with Lexi tables isolated in the `lexi` schema and
+separate Alembic versioning. Pycil owns commands, global task identity, durable
+task interests, outbox delivery, and provider-worker execution.
 
 The companion contract is
 [Pycil's SSE task orchestration ADR](../../pycil/docs/decisions/sse-task-orchestration-boundary.md).
@@ -371,12 +363,10 @@ OpenAI-compatible TTS provider. When a `TTS_API_KEY` is set, `TTS_BASE_URL` must
 cleartext. With none configured, TTS falls back to the stub (raises, never caches
 fake audio).
 
-**Schema versioning:** `init_models` runs a pure additive `create_all` — it never
-drops a table or adds a column to an existing one. A NEW table (`sense_forms`)
-reaches a fresh DB automatically; NEW columns on an existing table (`senses.domain`,
-`senses.usage_note`) do NOT, so a schema change today requires an explicit drop +
-recreate (the DB is pre-production and regenerable). A portable migration tool
-(Alembic) is deferred until lexi-ai holds real data that can't be regenerated.
+**Schema versioning:** SQLite local development uses `init_models` to create a
+fresh disposable database. PostgreSQL deployments run the Lexi domain Alembic
+chain, which owns the `lexi` schema and `lexi.alembic_version`; runtime processes
+never perform DDL. The initial pre-release baseline assumes an empty database.
 
 ## Testing
 
@@ -399,7 +389,7 @@ two cross-axis proofs, plugin-owned persistence (the engine stays blind to it),
 the registry coupling guard, a one-line new-format extensibility proof, and
 payload round-trip (unicode + NUL rejection).
 
-### Dual-DB tier (opt-in, `LEXI_TEST_PG_URL`)
+### PostgreSQL tier (opt-in, `LEXI_TEST_PG_URL`)
 
 An opt-in Postgres tier (`tests/test_postgres_integration.py`) exercises the
 defect class invisible to SQLite: NUL rejection, `VARCHAR(n)` length enforcement,

@@ -5,15 +5,6 @@ entries with an LLM **on demand**, anchored to Cambridge and WordNet for
 hallucination control, and caches results in a local database so repeat lookups
 cost zero tokens.
 
-## Service mode
-
-The optional service boundary exposes the versioned `lexi.v1` gRPC contract and
-an HTTP compatibility API. Service deployments use mTLS, PostgreSQL-backed jobs,
-Redis Streams delivery, and Alembic migrations; local library consumers remain
-unchanged. See [service integration](docs/service-integration.md),
-[service architecture](docs/service-architecture.md), and the
-[operations runbook](docs/operations-runbook.md).
-
 ## Features
 
 - **Lazy lookup** — the first lookup of a word spends tokens to synthesize a full

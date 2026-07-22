@@ -37,7 +37,10 @@ def _enable_sqlite_fk(engine: AsyncEngine) -> None:
 
 def create_engine(settings: Settings | None = None) -> AsyncEngine:
     settings = settings or get_settings()
-    engine = create_async_engine(settings.db_url, future=True)
+    engine_options = {}
+    if settings.db_url.startswith("postgresql"):
+        engine_options = {"execution_options": {"schema_translate_map": {None: settings.db_schema}}}
+    engine = create_async_engine(settings.db_url, future=True, **engine_options)
     _enable_sqlite_fk(engine)
     return engine
 
@@ -48,70 +51,10 @@ def create_session_factory(
     return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
-async def migrate_relations(engine: AsyncEngine) -> None:
-    """Rename the legacy ``entry_links`` table to ``word_relation`` (Phase 2).
-
-    ``init_models`` is ``create_all`` — additive only, it never renames. On the
-    real 149MB DB the old ``entry_links`` table already exists; a plain
-    ``create_all`` would leave it orphaned and build an EMPTY ``word_relation``
-    alongside it, so every ``Entry.links`` would read blank. This migration runs
-    BEFORE ``create_all`` (wired into :func:`init_models`, [RED TEAM F1]) so the
-    populated table is carried over by a metadata-only ``ALTER TABLE ... RENAME``
-    (fast on both SQLite and Postgres, no row copy).
-
-    Idempotent: it acts only when ``entry_links`` exists AND ``word_relation``
-    does not, so re-running (or a fresh DB that never had ``entry_links``) is a
-    no-op. ``create_all`` then adds the new ``sense_relation`` table.
-    """
-    async with engine.begin() as conn:
-        has_old = await conn.run_sync(
-            lambda sync_conn: engine.dialect.has_table(sync_conn, "entry_links")
-        )
-        has_new = await conn.run_sync(
-            lambda sync_conn: engine.dialect.has_table(sync_conn, "word_relation")
-        )
-        if has_old and not has_new:
-            await conn.exec_driver_sql("ALTER TABLE entry_links RENAME TO word_relation")
-
-
-async def migrate_generation_epoch(engine: AsyncEngine) -> None:
-    """Add the additive generation fence column to existing dictionary DBs.
-
-    Library bootstrap remains the compatibility path for SQLite users. Service
-    deployments use the equivalent Alembic revision instead and never call this
-    function from API or worker startup.
-    """
-    async with engine.begin() as conn:
-        has_words = await conn.run_sync(
-            lambda sync_conn: engine.dialect.has_table(sync_conn, "words")
-        )
-        if not has_words:
-            return
-
-        def column_names(sync_conn):
-            return {column["name"] for column in engine.dialect.get_columns(sync_conn, "words")}
-
-        columns = await conn.run_sync(column_names)
-        if "generation_epoch" not in columns:
-            await conn.exec_driver_sql(
-                "ALTER TABLE words ADD COLUMN generation_epoch INTEGER NOT NULL DEFAULT 0"
-            )
-
-
 async def init_models(engine: AsyncEngine) -> None:
-    """Create all tables on a fresh generated-dictionary DB (additive only).
-
-    This is largely ``create_all``: it never drops data. The two explicitly
-    compatible migrations rename the legacy relation table and add the
-    generation-fence column before metadata creation.
-
-    [RED TEAM F1] :func:`migrate_relations` runs FIRST (before ``create_all``) so
-    the legacy ``entry_links`` table is renamed to ``word_relation`` in place —
-    otherwise ``create_all`` would orphan the populated table and build an empty
-    one. ``init()`` is the only bootstrap path, so wiring it here guarantees no
-    caller can skip the migration."""
-    await migrate_relations(engine)
-    await migrate_generation_epoch(engine)
+    """Create a fresh local SQLite database from the current ORM schema."""
+    if engine.url.get_backend_name() != "sqlite":
+        raise RuntimeError("library bootstrap DDL is supported only for SQLite")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -137,6 +80,8 @@ async def reset_assets_table(
     every file under it is a cached TTS/translation binary this table owns. Pass a
     dedicated assets dir; never point ``cache_dir`` at a path holding other data.
     """
+    if engine.url.get_backend_name() != "sqlite":
+        raise RuntimeError("library bootstrap DDL is supported only for SQLite")
     if allow_destructive is None:
         flag = os.environ.get("LEXI_ALLOW_DESTRUCTIVE_MIGRATION", "").strip().lower()
         allow_destructive = flag in ("1", "true", "yes")

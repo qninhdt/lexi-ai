@@ -160,6 +160,18 @@ class Lexicon:
             assets=assets,
         )
 
+    def reader(self):
+        """Return the provider-free public read facade for this dictionary."""
+        from lexi_ai.facades import LexiconReader
+
+        return LexiconReader(self)
+
+    def engine(self):
+        """Return the provider-enabled public work facade for this dictionary."""
+        from lexi_ai.facades import LexiconEngine
+
+        return LexiconEngine(self)
+
     async def init(self) -> None:
         """Create the generated-DB schema (idempotent)."""
         engine = self._engine or self._session_factory.kw["bind"]

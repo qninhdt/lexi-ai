@@ -115,7 +115,6 @@ reconciliation also fires as a best-effort hook whenever a target word is
 generated, so coverage grows with traffic without a scheduler. Requires an LLM to
 be configured (degrades to a no-op otherwise).
 
-**Migration:** `init_models` is additive `create_all`; a one-time
-`migrate_relations()` (in `db.py`, wired into `init_models`) renames the legacy
-`entry_links` table to `word_relation` before `create_all` so existing DBs keep
-their word-level data. `sense_relation` is created fresh.
+**Migration:** this pre-release project starts from an empty database. SQLite
+local development uses `init_models`; PostgreSQL deployments use the Lexi domain
+Alembic baseline, which creates `word_relation` and `sense_relation` fresh.

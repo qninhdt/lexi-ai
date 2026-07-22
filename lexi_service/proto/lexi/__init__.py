@@ -1,1 +1,0 @@
-"""Lexi protobuf namespace."""
