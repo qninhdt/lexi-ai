@@ -330,7 +330,7 @@ class ExecutionService:
             raise public_error(ErrorCode.PRECONDITION_FAILED, "Job payload does not match.")
         generate = getattr(self._lexicon, "generate_fenced", self._lexicon.generate)
         return await self._run_provider(
-            lambda: generate(command.target), command.job.owner.ownership_key
+            lambda: generate(command.target), command.job.owner.provider_scope
         )
 
     async def execute_translation(self, command: ExecuteTranslation) -> str:
@@ -354,7 +354,7 @@ class ExecutionService:
             lambda: self._lexicon.translate_field(
                 command.source_kind, command.source_id, command.language
             ),
-            command.job.owner.ownership_key,
+            command.job.owner.provider_scope,
         )
 
     def _validate_job(self, job: JobSubmission, operation: str, attempt: int) -> None:

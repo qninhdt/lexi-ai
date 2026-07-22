@@ -114,6 +114,19 @@ services:
     volumes: [lexi-reference:/reference:ro]
     networks: [lexi-private, lexi-egress]
 
+  backup:
+    image: lexi-backup:latest
+    build:
+      context: ../infra/backup
+    profiles: ["backup"]
+    environment:
+      DATABASE_URL: postgresql://lexi:${LEXI_POSTGRES_PASSWORD:-lexi-dev-only}@postgres:5432/lexi
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:?RESTIC_REPOSITORY is required}
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+    secrets: [restic_password]
+    depends_on:
+      postgres: {condition: service_healthy}
+
 volumes:
   lexi-pgdata:
   lexi-redisdata:
@@ -125,3 +138,7 @@ networks:
   lexi-egress:
   pycil-backend:
     external: true
+
+secrets:
+  restic_password:
+    file: ../infra/backup/restic.password

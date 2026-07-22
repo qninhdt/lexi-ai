@@ -101,6 +101,15 @@ class FakeGate:
         yield
 
 
+class StringScopeGate(FakeGate):
+    @asynccontextmanager
+    async def acquire(self, tenant):
+        assert isinstance(tenant, str)
+        assert tenant
+        self.entered += 1
+        yield
+
+
 class FakeSourcePreconditions:
     def __init__(self, matches=True):
         self.matches_value = matches
@@ -206,6 +215,22 @@ async def test_worker_execution_has_no_publisher_and_uses_provider_gate():
     assert result is lexicon.entry
     assert gate.entered == 1
     assert not hasattr(service, "_publisher")
+
+
+@pytest.mark.asyncio
+async def test_worker_execution_passes_a_string_scope_to_provider_gate():
+    lexicon = FakeLexicon()
+    gate = StringScopeGate()
+    service = ExecutionService(
+        lexicon, FakeDataset(), gate, POLICY, FakeClock(), FakeSourcePreconditions()
+    )
+
+    result = await service.execute_generate(
+        ExecuteGenerate(job_submission(), SearchResult("cat", None, cambridge_id=1), 1, 1)
+    )
+
+    assert result is lexicon.entry
+    assert gate.entered == 1
 
 
 @pytest.mark.asyncio

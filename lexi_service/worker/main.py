@@ -56,6 +56,10 @@ class Worker:
                 await self._effects.adopt_or_record(envelope.job_id, envelope.operation, result)
         except Exception as exc:
             error = to_public_error(exc)
+            logger.exception(
+                "job_execution_failed",
+                extra={"job_id": envelope.job_id, "operation": envelope.operation},
+            )
             if error.retryable:
                 status = await self._leases.retry_or_dead_letter(
                     envelope.job_id, token, epoch, error.code.value

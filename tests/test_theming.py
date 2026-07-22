@@ -249,7 +249,18 @@ async def test_generate_theme_end_to_end(session_factory):
             ]
         )
     )
-    lex = _lexicon(session_factory, gen)
+    lex = _lexicon(
+        session_factory,
+        gen,
+        FakeThemeMetadataGenerator(
+            GeneratedTheme(
+                name="Bard",
+                description="Bardic theme.",
+                style_prompt="speak like a bard",
+                tone=["bardic"],
+            )
+        ),
+    )
     await lex.create_theme("Bard", "speak like a bard", description="poetic", tone="bardic")
 
     source = SearchResult(display="dragon", entry_type="word", lexi_word_id=word_id)
@@ -293,7 +304,18 @@ async def test_concurrent_same_word_theming_runs_llm_once(session_factory):
             ]
         )
     )
-    lex = _lexicon(session_factory, gen)
+    lex = _lexicon(
+        session_factory,
+        gen,
+        FakeThemeMetadataGenerator(
+            GeneratedTheme(
+                name="Bard",
+                description="Bardic theme.",
+                style_prompt="speak like a bard",
+                tone=["bardic"],
+            )
+        ),
+    )
     await lex.create_theme("Bard", "speak like a bard")
 
     source = SearchResult(display="dragon", entry_type="word", lexi_word_id=word_id)

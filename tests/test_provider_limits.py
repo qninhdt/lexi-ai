@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from lexi_service.coordination.limits import ProviderLimits, RedisProviderGate
+from lexi_service.coordination.redis_locks import RedisLock
 
 
 async def test_tenant_limit_serializes_same_tenant_provider_work():
@@ -54,3 +55,15 @@ async def test_redis_gate_enforces_global_slots_across_gate_instances():
                 pass
     async with second.acquire("tenant-b"):
         pass
+
+
+class ScriptCheckingRedis:
+    async def eval(self, script, _numkeys, *_args):
+        assert "ARGV[1] then" in script
+        return 1
+
+
+async def test_redis_lock_release_uses_valid_lua_index_syntax():
+    lock = RedisLock(ScriptCheckingRedis(), "test-lock", 1000)
+
+    assert await lock.release()
