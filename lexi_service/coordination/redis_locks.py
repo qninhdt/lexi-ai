@@ -20,7 +20,7 @@ class RedisLock:
     async def renew(self) -> bool:
         """Extend this lock only when this instance still owns its token."""
         script = (
-            "if redis.call('get', KEYS[1]) == ARGV[1 "
+            "if redis.call('get', KEYS[1]) == ARGV[1] "
             "then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end"
         )
         return bool(await self._client.eval(script, 1, self._key, self.token, self._ttl))

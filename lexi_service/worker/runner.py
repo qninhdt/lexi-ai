@@ -83,7 +83,7 @@ async def run() -> None:
             lock = RedisLock(
                 redis,
                 f"lexi:generation:{match_key(target.display)}",
-                int(runtime.policy.provider_attempt_timeout.total_seconds() * 2_000) + 1_000,
+                int(runtime.policy.provider_attempt_timeout.total_seconds() * 1_000) + 10_000,
             )
             if not await lock.acquire():
                 raise public_error(
@@ -119,6 +119,7 @@ async def run() -> None:
         JobLeaseRepository(sessions), execute, timedelta(seconds=60), effects=JobEffects(sessions)
     )
     try:
+        await consumer.ensure_group()
         while True:
             await dispatcher.dispatch_once()
             await worker.reclaim_once(consumer, min_idle_ms=60_000)
