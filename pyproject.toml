@@ -39,6 +39,7 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=0.26",
     "ruff>=0.9",
+    "import-linter>=2.0",
 ]
 
 [build-system]
@@ -59,3 +60,40 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+
+# Boundary enforcement. The public contract surface must stay dependency-free so
+# it can never drag ORM/infrastructure across a consumer boundary. Stricter
+# contracts (no deep-internal imports from consumers, no answer on the wire) are
+# added in later phases once the producers and pycil ACL are rewritten.
+[tool.importlinter]
+root_package = "lexi_ai"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "contracts package is dependency-free (no domain/app/infra/orm)"
+type = "forbidden"
+source_modules = ["lexi_ai.contracts"]
+forbidden_modules = [
+    "lexi_ai.domain",
+    "lexi_ai.application",
+    "lexi_ai.infrastructure",
+    "lexi_ai.persistence",
+    "lexi_ai.api",
+    "lexi_ai.facades",
+    "lexi_ai.db",
+    "lexi_ai.models",
+    "sqlalchemy",
+]
+
+[[tool.importlinter.contracts]]
+name = "domain must not import infrastructure or ORM"
+type = "forbidden"
+source_modules = ["lexi_ai.domain"]
+forbidden_modules = [
+    "lexi_ai.infrastructure",
+    "lexi_ai.persistence",
+    "lexi_ai.api",
+    "lexi_ai.models",
+    "sqlalchemy",
+]
