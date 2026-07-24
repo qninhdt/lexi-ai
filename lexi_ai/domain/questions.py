@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from lexi_ai.contracts.questions import PresentedQuestion
+from lexi_ai.contracts.questions import PresentedQuestion, RenderKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,3 +48,27 @@ class StoredQuestion:
 
     presentation: PresentedQuestion
     grading: GradingSpec | None
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedQuestion:
+    """Internal carrier bridging the flat stored ``payload`` and the typed public
+    boundary.
+
+    Plugins build one as a DRAFT (``question_id=None``) and hand it to the store;
+    the store returns one stamped with the real row id. ``payload`` is the SAME
+    flat dict persisted in the single ``payload`` column (so ``content_hash`` and
+    dedup identity never change); it stays internal and NEVER crosses the consumer
+    boundary — the projection layer (:mod:`lexi_ai.questions.render`) turns it into
+    the answer-free :class:`~lexi_ai.contracts.questions.PresentedQuestion`, a
+    :class:`GradingSpec`, or a post-grading ``Reveal``.
+    """
+
+    question_id: int | None
+    word_id: int
+    sense_id: int | None
+    type_id: str
+    render_kind: RenderKind
+    difficulty_level: int
+    interaction: str
+    payload: dict

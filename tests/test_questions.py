@@ -1,9 +1,18 @@
-"""Phase 3 acceptance tests for the five MVP question types."""
+"""Acceptance tests for the five MVP question types (unified plugin model)."""
 
 from dataclasses import replace
 
 import pytest
 
+from lexi_ai.contracts.questions import (
+    AnswerSubmission,
+    ChoiceResponse,
+    ChoiceReveal,
+    RenderKind,
+    SpanReveal,
+    TextResponse,
+)
+from lexi_ai.domain.questions import PersistedQuestion
 from lexi_ai.questions.base import (
     REGISTRY,
     PrepareReport,
@@ -11,15 +20,15 @@ from lexi_ai.questions.base import (
     QuestionDemand,
     QuestionQuery,
 )
-from lexi_ai.questions.formats import (
+from lexi_ai.questions.schemas import GeneratedMCQ, Judgment
+from lexi_ai.questions.types import (
     Cloze,
     ContextualMCQ,
     DefinitionMCQ,
     Flashcard,
     UseInSentence,
 )
-from lexi_ai.questions.schemas import GeneratedMCQ, Judgment
-from lexi_ai.read_models import Entry, Question, SenseView
+from lexi_ai.read_models import Entry, SenseView
 
 
 class FakeDistractors:
@@ -39,34 +48,31 @@ class FakeLLM:
 
 
 class FakeStore:
-    """Content-deduplicating store with exact-level retrieval."""
+    """Content-deduplicating store with exact-level retrieval (PersistedQuestion)."""
 
     def __init__(self):
-        self.questions: list[Question] = []
+        self.questions: list[PersistedQuestion] = []
 
-    async def insert(self, question: Question) -> Question:
-        identity = (
+    @staticmethod
+    def _identity(question: PersistedQuestion):
+        return (
             question.sense_id,
             question.type_id,
             question.difficulty_level,
             repr(sorted(question.payload.items())),
         )
+
+    async def insert(self, draft: PersistedQuestion) -> PersistedQuestion:
         for existing in self.questions:
-            existing_identity = (
-                existing.sense_id,
-                existing.type_id,
-                existing.difficulty_level,
-                repr(sorted(existing.payload.items())),
-            )
-            if existing_identity == identity:
+            if self._identity(existing) == self._identity(draft):
                 return existing
-        stored = replace(question, question_id=len(self.questions) + 1)
+        stored = replace(draft, question_id=len(self.questions) + 1)
         self.questions.append(stored)
         return stored
 
     async def retrieve_one(
         self, sense_id, difficulty_level, type_id, excluded_ids
-    ) -> Question | None:
+    ) -> PersistedQuestion | None:
         return next(
             (
                 question
@@ -149,24 +155,24 @@ def _demand(level: int, expected_count: int = 1) -> list[QuestionDemand]:
     return [QuestionDemand(sense_id=7, difficulty_level=level, expected_count=expected_count)]
 
 
-EXPECTED_DESCRIPTORS = {
-    "flashcard": ("flashcard", frozenset({0}), "exposure"),
-    "definition_mcq": ("single_choice", frozenset({1}), "assessment"),
-    "contextual_mcq": ("single_choice", frozenset({1, 2}), "assessment"),
-    "cloze": ("text_span", frozenset({2, 3}), "assessment"),
-    "use_in_sentence": ("free_text", frozenset({3, 4}), "assessment"),
+def _submit(question: PersistedQuestion, response) -> AnswerSubmission:
+    return AnswerSubmission(question_id=str(question.question_id), response=response)
+
+
+EXPECTED_INFO = {
+    "flashcard": (RenderKind.FLASHCARD, frozenset({0}), "exposure"),
+    "definition_mcq": (RenderKind.SINGLE_CHOICE, frozenset({1}), "assessment"),
+    "contextual_mcq": (RenderKind.SINGLE_CHOICE, frozenset({1, 2}), "assessment"),
+    "cloze": (RenderKind.TEXT_SPAN, frozenset({2, 3}), "assessment"),
+    "use_in_sentence": (RenderKind.FREE_TEXT, frozenset({3, 4}), "assessment"),
 }
 
 
 def test_registry_contains_exactly_five_mvp_types():
-    assert set(REGISTRY) == set(EXPECTED_DESCRIPTORS)
-    for type_id, expected in EXPECTED_DESCRIPTORS.items():
-        descriptor = REGISTRY[type_id].descriptor
-        assert (
-            descriptor.render_format,
-            descriptor.supported_levels,
-            descriptor.interaction_mode,
-        ) == expected
+    assert set(REGISTRY) == set(EXPECTED_INFO)
+    for type_id, expected in EXPECTED_INFO.items():
+        info = REGISTRY[type_id].info
+        assert (info.render_kind, info.difficulty_levels, info.interaction) == expected
 
 
 @pytest.mark.parametrize(
@@ -244,6 +250,7 @@ async def test_retrieve_is_store_only_exact_level_and_honors_exclusion():
 
     found = await plugin.retrieve(ctx, QuestionQuery(7, 1))
     assert found is not None and found.difficulty_level == 1
+    assert isinstance(found, PersistedQuestion)
     assert await plugin.retrieve(ctx, QuestionQuery(7, 2)) is None
     assert await plugin.retrieve(
         ctx, QuestionQuery(7, 1, frozenset({found.question_id}))
@@ -261,25 +268,41 @@ async def test_cloze_level_controls_word_bank(level, has_bank):
         assert "eloquent" in bank
 
 
-@pytest.mark.parametrize(
-    ("plugin", "level", "right_answer", "wrong_answer"),
-    [
-        (DefinitionMCQ(), 1, None, "wrong"),
-        (Cloze(), 3, "ELOQUENT", "wrong"),
-    ],
-)
-async def test_rule_evaluation_returns_graded(plugin, level, right_answer, wrong_answer):
+async def test_definition_mcq_grading_returns_typed_choice_reveal():
     store = FakeStore()
     ctx = _ctx(store=store)
-    await plugin.prepare(ctx, _demand(level))
+    await DefinitionMCQ().prepare(ctx, _demand(1))
     question = store.questions[0]
-    right = question.payload.get("correct_index") if right_answer is None else right_answer
+    correct_index = question.payload["correct_index"]
 
-    correct = await plugin.evaluate(ctx, question, right)
-    incorrect = await plugin.evaluate(ctx, question, wrong_answer)
+    correct = await DefinitionMCQ().grade(
+        ctx, question, _submit(question, ChoiceResponse(selected_index=correct_index))
+    )
+    incorrect = await DefinitionMCQ().grade(
+        ctx, question, _submit(question, TextResponse(text="wrong"))
+    )
 
-    assert (correct.status, correct.verdict, correct.score) == ("graded", True, 1.0)
-    assert (incorrect.status, incorrect.verdict, incorrect.score) == ("graded", False, 0.0)
+    assert (correct.status, correct.correct, correct.score) == ("graded", True, 1.0)
+    assert (incorrect.status, incorrect.correct, incorrect.score) == ("graded", False, 0.0)
+    # The correct answer is disclosed ONLY through the typed reveal.
+    assert isinstance(correct.reveal, ChoiceReveal)
+    assert correct.reveal.correct_index == correct_index
+    assert correct.reveal.correct_option == question.payload["options"][correct_index]
+
+
+async def test_cloze_grading_folds_case_and_reveals_span():
+    store = FakeStore()
+    ctx = _ctx(store=store)
+    await Cloze().prepare(ctx, _demand(3))
+    question = store.questions[0]
+
+    correct = await Cloze().grade(ctx, question, _submit(question, TextResponse(text="ELOQUENT")))
+    incorrect = await Cloze().grade(ctx, question, _submit(question, TextResponse(text="wrong")))
+
+    assert (correct.status, correct.correct, correct.score) == ("graded", True, 1.0)
+    assert (incorrect.status, incorrect.correct, incorrect.score) == ("graded", False, 0.0)
+    assert isinstance(correct.reveal, SpanReveal)
+    assert correct.reveal.correct_answer == "eloquent"
 
 
 async def test_use_in_sentence_levels_have_distinct_constraints():
@@ -295,31 +318,40 @@ async def test_use_in_sentence_levels_have_distinct_constraints():
     assert "at least" not in by_level[4].payload["rubric"].lower()
 
 
-async def test_use_in_sentence_evaluation_is_pending_without_judge():
+async def test_use_in_sentence_grading_is_pending_without_judge():
     store = FakeStore()
     plugin = UseInSentence()
     ctx = _ctx(store=store)
     await plugin.prepare(ctx, _demand(4))
-    evaluation = await plugin.evaluate(ctx, store.questions[0], "An eloquent speaker inspired us.")
+    question = store.questions[0]
+    evaluation = await plugin.grade(
+        ctx, question, _submit(question, TextResponse(text="An eloquent speaker inspired us."))
+    )
     assert evaluation.status == "pending"
-    assert evaluation.verdict is None and evaluation.score is None
-    with pytest.raises(RuntimeError, match="pending"):
-        _ = evaluation.is_correct
+    assert evaluation.correct is None and evaluation.score is None
+    # The provider-free reader cannot grade free text, so nothing is revealed yet.
+    assert evaluation.reveal is None
 
 
-async def test_use_in_sentence_evaluation_is_graded_with_judge():
+async def test_use_in_sentence_grading_is_graded_with_judge():
     store = FakeStore()
     plugin = UseInSentence()
     judge = FakeLLM(Judgment(correct=True, score=0.75, feedback="Good."))
     ctx = _ctx(store=store, judge=judge)
     await plugin.prepare(ctx, _demand(4))
-    evaluation = await plugin.evaluate(ctx, store.questions[0], "An eloquent speaker inspired us.")
-    assert (evaluation.status, evaluation.verdict, evaluation.score, evaluation.feedback) == (
+    question = store.questions[0]
+    evaluation = await plugin.grade(
+        ctx, question, _submit(question, TextResponse(text="An eloquent speaker inspired us."))
+    )
+    assert (evaluation.status, evaluation.correct, evaluation.score, evaluation.feedback) == (
         "graded",
         True,
         0.75,
         "Good.",
     )
+    # The rubric reveal carries the judge's feedback, filled at grade time.
+    assert evaluation.reveal is not None
+    assert evaluation.reveal.feedback == "Good."
 
 
 async def test_flashcard_uses_narrow_loader_without_prepare_or_store():
@@ -332,9 +364,9 @@ async def test_flashcard_uses_narrow_loader_without_prepare_or_store():
     assert loader.calls == [7]
     assert question.question_id is None
     assert question.type_id == "flashcard"
-    assert question.interaction_mode == "exposure"
+    assert question.interaction == "exposure"
     assert question.payload["word"] == "eloquent"
-    assert not hasattr(Flashcard(), "evaluate")
+    assert not hasattr(Flashcard(), "grade")
 
 
 async def test_flashcard_rejects_missing_capability_or_invalid_sense():
@@ -346,9 +378,8 @@ async def test_flashcard_rejects_missing_capability_or_invalid_sense():
         )
 
 
-
 class RaisingPrepareType:
-    descriptor = REGISTRY["use_in_sentence"].descriptor
+    info = REGISTRY["use_in_sentence"].info
 
     async def prepare(self, ctx, demands):
         raise RuntimeError("provider unavailable")
@@ -356,7 +387,7 @@ class RaisingPrepareType:
     async def retrieve(self, ctx, query):
         return None
 
-    async def evaluate(self, ctx, question, answer):
+    async def grade(self, ctx, persisted, submission):
         raise NotImplementedError
 
 
@@ -371,14 +402,14 @@ async def test_engine_dispatches_new_contract_best_effort(monkeypatch):
     )
     monkeypatch.setitem(REGISTRY, "use_in_sentence", RaisingPrepareType())
 
-    descriptors = engine.question_types()
+    infos = engine.question_types()
     report = await engine.prepare(
         _entry(),
         [QuestionDemand(7, 1, 1), QuestionDemand(7, 4, 1)],
     )
 
-    assert len(descriptors) == 5
-    assert {descriptor.type_id for descriptor in descriptors} == set(EXPECTED_DESCRIPTORS)
+    assert len(infos) == 5
+    assert {info.type_id for info in infos} == set(EXPECTED_INFO)
     assert report.produced[(7, 1)] == 2
     assert report.produced[(7, 4)] == 0
 
@@ -395,7 +426,8 @@ async def test_engine_prepare_foreign_sense_does_not_use_core_sense():
     assert store.questions == []
 
 
-async def test_engine_retrieve_is_exact_store_only_and_unknown_type_is_typed():
+async def test_engine_retrieve_presents_answer_free_and_unknown_type_is_typed():
+    from lexi_ai.contracts.questions import PresentedQuestion, SingleChoice
     from lexi_ai.questions.engine import QuestionEngine, UnknownQuestionType
 
     store = FakeStore()
@@ -403,7 +435,13 @@ async def test_engine_retrieve_is_exact_store_only_and_unknown_type_is_typed():
     await DefinitionMCQ().prepare(_ctx(store=store), _demand(1))
     stored = store.questions[0]
 
-    assert await engine.retrieve(7, 1, frozenset(), "definition_mcq") == stored
+    presented = await engine.retrieve(7, 1, frozenset(), "definition_mcq")
+    assert isinstance(presented, PresentedQuestion)
+    assert presented.question_id == str(stored.question_id)
+    assert isinstance(presented.render, SingleChoice)
+    # The answer index is NOT reachable on the presentation.
+    assert not hasattr(presented.render, "correct_index")
+
     assert await engine.retrieve(7, 2, frozenset(), "definition_mcq") is None
     assert await engine.retrieve(
         7, 1, frozenset({stored.question_id}), "definition_mcq"
@@ -419,26 +457,44 @@ async def test_engine_retrieve_exposure_uses_sense_loader_and_evaluate_rejects_i
     loader = FakeSenseLoader(_entry())
     engine = QuestionEngine(FakeStore(), FakeDistractors(), sense_loader=loader)
 
-    question = await engine.retrieve_exposure(7)
+    presented = await engine.retrieve_exposure(7)
 
     assert loader.calls == [7]
-    assert question.interaction_mode == "exposure"
+    assert presented.interaction == "exposure"
+    assert presented.question_id == "exposure:7"
     with pytest.raises(NotAssessable):
         await engine.retrieve(7, 0, frozenset(), "flashcard")
     assert loader.calls == [7]
-    with pytest.raises(NotAssessable) as exc:
-        await engine.evaluate(question, None)
-    assert exc.value.question_id is None
 
 
-async def test_engine_evaluate_dispatches_assessment():
-    from lexi_ai.questions.engine import QuestionEngine
+async def test_engine_evaluate_dispatches_assessment_and_rejects_exposure():
+    from lexi_ai.questions.engine import NotAssessable, QuestionEngine
 
     store = FakeStore()
     engine = QuestionEngine(store, FakeDistractors())
     await DefinitionMCQ().prepare(_ctx(store=store), _demand(1))
     question = store.questions[0]
 
-    result = await engine.evaluate(question, question.payload["correct_index"])
+    submission = _submit(
+        question, ChoiceResponse(selected_index=question.payload["correct_index"])
+    )
+    result = await engine.evaluate(question, submission)
+    assert (result.status, result.correct, result.score) == ("graded", True, 1.0)
 
-    assert (result.status, result.verdict, result.score) == ("graded", True, 1.0)
+    exposure = PersistedQuestion(
+        question_id=None,
+        word_id=3,
+        sense_id=7,
+        type_id="flashcard",
+        render_kind=RenderKind.FLASHCARD,
+        difficulty_level=0,
+        interaction="exposure",
+        payload={"word": "eloquent", "definition": "x"},
+    )
+    with pytest.raises(NotAssessable) as exc:
+        await engine.evaluate(exposure, _submit_none())
+    assert exc.value.question_id is None
+
+
+def _submit_none() -> AnswerSubmission:
+    return AnswerSubmission(question_id="exposure:7", response=TextResponse(text=""))

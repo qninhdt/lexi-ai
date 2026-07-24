@@ -5,7 +5,6 @@ session closes). ``display`` is always ``render(norm)`` — never a stored colum
 """
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 
 @dataclass
@@ -218,60 +217,6 @@ class SemanticHit:
     entry_type: str | None
     score: float
     sense: SenseView
-
-
-@dataclass
-class Question:
-    """A vocabulary question about a word (public read view).
-
-    ``question_id`` is ``None`` for an ephemeral question and the persisted ORM
-    row id otherwise. ``type_id`` selects the plugin and grading behavior;
-    ``render_format`` selects the UI contract. ``payload`` is the validated,
-    parsed render data.
-    """
-
-    question_id: int | None
-    word_id: int
-    sense_id: int | None
-    type_id: str
-    render_format: str
-    difficulty_level: int
-    interaction_mode: str
-    payload: dict
-
-
-@dataclass
-class Evaluation:
-    """Canonical public result of evaluating an assessment question."""
-
-    status: Literal["graded", "pending"]
-    verdict: bool | None
-    score: float | None
-    feedback: str | None = None
-
-    @property
-    def is_correct(self) -> bool:
-        """Return the verdict only after grading has completed."""
-        if self.status != "graded":
-            raise RuntimeError("is_correct is unavailable while evaluation is pending")
-        if self.verdict is None:
-            raise RuntimeError("graded evaluation has no verdict")
-        return self.verdict
-
-
-@dataclass
-class Score:
-    """The result of grading an answer to a :class:`Question`.
-
-    ``kind`` records how the verdict was reached (``'rule'`` deterministic vs
-    ``'llm'`` judge) for the caller's information only. ``feedback`` is populated
-    by the llm-judge path and is ``None`` for rule grading.
-    """
-
-    correct: bool
-    score: float  # 0.0..1.0
-    kind: str  # ∈ SCORE_KINDS
-    feedback: str | None = None
 
 
 @dataclass

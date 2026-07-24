@@ -6,6 +6,7 @@ Create Date: 2026-07-22
 """
 
 from alembic import context, op
+
 from lexi_ai.migrations.frozen_schema import metadata
 
 revision = "20260722_01"

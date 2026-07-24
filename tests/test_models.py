@@ -28,7 +28,6 @@ from lexi_ai.models import (
 from lexi_ai.models import (
     Question as QuestionRow,
 )
-from lexi_ai.read_models import Evaluation, Question
 
 
 @pytest.fixture
@@ -337,33 +336,46 @@ def test_schema_compiles_on_both_dialects():
 # --- question type contracts ---------------------------------------------
 
 
-def test_public_question_uses_type_and_render_contracts():
-    question = Question(
-        question_id=7,
-        word_id=1,
-        sense_id=2,
+def test_public_presented_question_uses_type_and_render_contracts():
+    from lexi_ai.contracts.questions import PresentedQuestion, TextSpan
+
+    question = PresentedQuestion(
+        question_id="7",
         type_id="cloze",
-        render_format="text_span",
+        interaction="assessment",
         difficulty_level=2,
-        interaction_mode="assessment",
-        payload={"stem_with_blank": "A ____.", "answer_norm": "word"},
+        render=TextSpan(stem_with_blank="A ____.", word_bank=("word", "other")),
+        sense_id="2",
+        word_id="1",
     )
 
-    assert question.question_id == 7
+    assert question.question_id == "7"
     assert question.type_id == "cloze"
-    assert question.render_format == "text_span"
-    assert not hasattr(question, "id")
-    assert not hasattr(question, "format")
+    assert isinstance(question.render, TextSpan)
+    # No answer key and no storage-shaped leak on the public presentation.
+    assert not hasattr(question, "payload")
+    assert not hasattr(question, "render_format")
     assert not hasattr(question, "answer_kind")
+    assert not hasattr(question.render, "answer_norm")
 
 
 def test_evaluation_distinguishes_graded_from_pending():
-    graded = Evaluation(status="graded", verdict=True, score=1.0, feedback=None)
-    pending = Evaluation(status="pending", verdict=None, score=None, feedback=None)
+    from lexi_ai.contracts.questions import ChoiceReveal, Evaluation
 
-    assert graded.is_correct is True
-    with pytest.raises(RuntimeError, match="pending"):
-        _ = pending.is_correct
+    graded = Evaluation(
+        question_id="7",
+        status="graded",
+        correct=True,
+        score=1.0,
+        reveal=ChoiceReveal(correct_index=0, correct_option="eloquent"),
+    )
+    pending = Evaluation(question_id="7", status="pending")
+
+    assert graded.status == "graded" and graded.correct is True
+    assert isinstance(graded.reveal, ChoiceReveal)
+    # A pending outcome carries no verdict and no reveal (nothing graded yet).
+    assert pending.status == "pending"
+    assert pending.correct is None and pending.reveal is None
 
 
 def test_question_orm_has_new_columns_and_idempotency_constraint():

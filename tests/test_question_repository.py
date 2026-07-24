@@ -7,11 +7,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from lexi_ai.contracts.questions import RenderKind
 from lexi_ai.db import create_session_factory, init_models, session_scope
+from lexi_ai.domain.questions import PersistedQuestion
 from lexi_ai.models import Question as QuestionRow
 from lexi_ai.models import Sense, Word
 from lexi_ai.questions.repository import QuestionRepository
-from lexi_ai.read_models import Question
 
 
 @pytest.fixture
@@ -38,22 +39,22 @@ async def question_repo():
         await engine.dispose()
 
 
-def _question(word_id: int, sense_id: int | None, **overrides) -> Question:
+def _question(word_id: int, sense_id: int | None, **overrides) -> PersistedQuestion:
     values = {
         "question_id": None,
         "word_id": word_id,
         "sense_id": sense_id,
         "type_id": "definition_mcq",
-        "render_format": "single_choice",
+        "render_kind": RenderKind.SINGLE_CHOICE,
         "difficulty_level": 1,
-        "interaction_mode": "assessment",
+        "interaction": "assessment",
         "payload": {"stem": "Meaning?", "options": ["b", "a"], "correct_index": 1},
     }
     values.update(overrides)
-    return Question(**values)
+    return PersistedQuestion(**values)
 
 
-async def test_insert_round_trips_contract_maps_id_and_is_idempotent(question_repo):
+async def test_insert_round_trips_carrier_maps_id_and_is_idempotent(question_repo):
     repo, session_factory, (word_id, sense_id, _) = question_repo
     question = _question(word_id, sense_id)
 
@@ -63,13 +64,15 @@ async def test_insert_round_trips_contract_maps_id_and_is_idempotent(question_re
     assert first == second
     assert first.question_id is not None
     assert first.type_id == "definition_mcq"
-    assert first.render_format == "single_choice"
+    assert first.render_kind is RenderKind.SINGLE_CHOICE
     assert first.difficulty_level == 1
-    assert first.interaction_mode == "assessment"
+    assert first.interaction == "assessment"
     async with session_scope(session_factory) as session:
         count = await session.scalar(select(func.count()).select_from(QuestionRow))
         row = (await session.execute(select(QuestionRow))).scalar_one()
     assert count == 1
+    # Storage stays FLAT with the SAME canonical json + content_hash (unchanged).
+    assert row.render_format == "single_choice"
     assert row.payload == (
         '{"correct_index":1,"options":["b","a"],"stem":"Meaning?"}'
     )
@@ -99,9 +102,8 @@ async def test_insert_rejects_payload_over_utf8_byte_limit(question_repo):
     ("field", "value"),
     [
         ("type_id", "unknown"),
-        ("render_format", "unknown"),
         ("difficulty_level", 9),
-        ("interaction_mode", "unknown"),
+        ("interaction", "unknown"),
     ],
 )
 async def test_insert_rejects_out_of_vocab_contract(question_repo, field, value):

@@ -1,24 +1,26 @@
 """Deterministic level-0 exposure card."""
 
+from lexi_ai.contracts.questions import QuestionTypeInfo, RenderKind
+from lexi_ai.domain.questions import PersistedQuestion
 from lexi_ai.questions.base import (
     QuestionContext,
     QuestionQuery,
-    QuestionTypeDescriptor,
     register,
 )
-from lexi_ai.questions.formats._shared import _exposure_question
-from lexi_ai.read_models import Question
+from lexi_ai.questions.types._shared import _exposure_question
 
 
 class Flashcard:
-    descriptor = QuestionTypeDescriptor(
+    info = QuestionTypeInfo(
         type_id="flashcard",
-        render_format="flashcard",
-        supported_levels=frozenset({0}),
-        interaction_mode="exposure",
+        render_kind=RenderKind.FLASHCARD,
+        interaction="exposure",
+        difficulty_levels=frozenset({0}),
     )
 
-    async def retrieve(self, ctx: QuestionContext, query: QuestionQuery) -> Question:
+    async def retrieve(
+        self, ctx: QuestionContext, query: QuestionQuery
+    ) -> PersistedQuestion:
         if query.difficulty_level != 0:
             raise ValueError("flashcard retrieval requires difficulty level 0")
         if ctx.sense_loader is None:

@@ -285,15 +285,7 @@ DIFFICULTY_LEVELS = frozenset({0, 1, 2, 3, 4})
 EXPOSURE_LEVEL = 0
 INTERACTION_MODES = frozenset({"exposure", "assessment"})
 
-# Stable payload-schema discriminators avoid importing ``questions.schemas``
-# here: that package imports question constants while building its registry.
-# Phase 2 resolves these names to validator classes and verifies the coupling.
-RENDER_FORMAT_PAYLOAD = {
-    "flashcard": "FlashcardPayload",
-    "single_choice": "MCQPayload",
-    "text_span": "ClozePayload",
-    "free_text": "UseInSentencePayload",
-}
+
 
 # senses.forms inflection labels. The generation prompt marks example targets and
 # emits a per-sense form table using EXACTLY these labels; the write path and the

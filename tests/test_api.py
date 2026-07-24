@@ -1037,12 +1037,24 @@ async def test_stats_empty_dictionary(engine):
 
 def test_question_public_exports_and_score_is_internal():
     import lexi_ai
-    from lexi_ai import Evaluation, QuestionDemand, QuestionTypeDescriptor
+    from lexi_ai import (
+        AnswerSubmission,
+        Evaluation,
+        PrepareDemand,
+        PresentedQuestion,
+        QuestionTypeInfo,
+    )
 
     assert Evaluation.__name__ == "Evaluation"
-    assert QuestionDemand.__name__ == "QuestionDemand"
-    assert QuestionTypeDescriptor.__name__ == "QuestionTypeDescriptor"
+    assert PresentedQuestion.__name__ == "PresentedQuestion"
+    assert AnswerSubmission.__name__ == "AnswerSubmission"
+    assert PrepareDemand.__name__ == "PrepareDemand"
+    assert QuestionTypeInfo.__name__ == "QuestionTypeInfo"
+    # The legacy read-model / descriptor names are no longer public.
     assert not hasattr(lexi_ai, "Score")
+    assert not hasattr(lexi_ai, "Question")
+    assert not hasattr(lexi_ai, "QuestionDemand")
+    assert not hasattr(lexi_ai, "QuestionTypeDescriptor")
 
 
 def test_lexicon_has_new_question_methods_and_removed_legacy_names():
@@ -1094,25 +1106,28 @@ class _QuestionEngineSpy:
     def __init__(self):
         self.evaluated = []
 
-    async def evaluate(self, question, answer):
-        from lexi_ai.read_models import Evaluation
+    async def evaluate(self, question, submission):
+        from lexi_ai.contracts.questions import Evaluation
 
-        self.evaluated.append((question, answer))
-        return Evaluation(status="graded", verdict=True, score=1.0)
+        self.evaluated.append((question, submission))
+        return Evaluation(
+            question_id=submission.question_id, status="graded", correct=True, score=1.0
+        )
 
 
 async def test_evaluate_answer_refetches_authoritative_question_by_public_id(engine):
-    from lexi_ai.read_models import Question
+    from lexi_ai.contracts.questions import AnswerSubmission, ChoiceResponse, RenderKind
+    from lexi_ai.domain.questions import PersistedQuestion
 
-    authoritative = Question(
+    authoritative = PersistedQuestion(
         question_id=41,
         word_id=3,
         sense_id=7,
         type_id="definition_mcq",
-        render_format="single_choice",
+        render_kind=RenderKind.SINGLE_CHOICE,
         difficulty_level=1,
-        interaction_mode="assessment",
-        payload={"options": ["eloquent"], "correct_index": 0},
+        interaction="assessment",
+        payload={"stem": "?", "options": ["eloquent"], "correct_index": 0},
     )
     lex, _gen, _sf = _make_lexicon(
         engine, cam_words={}, norm_by_id={}, results_by_word={}
@@ -1122,14 +1137,17 @@ async def test_evaluate_answer_refetches_authoritative_question_by_public_id(eng
     lex._question_repo = repository
     lex._worker_questions = question_engine
 
-    evaluation = await lex.evaluate_answer(41, 0)
+    submission = AnswerSubmission(question_id="41", response=ChoiceResponse(selected_index=0))
+    evaluation = await lex.evaluate_answer(41, submission)
 
     assert evaluation.status == "graded"
     assert repository.requested_ids == [41]
-    assert question_engine.evaluated == [(authoritative, 0)]
+    assert question_engine.evaluated == [(authoritative, submission)]
 
 
 async def test_evaluate_answer_returns_none_for_unknown_question(engine):
+    from lexi_ai.contracts.questions import AnswerSubmission, TextResponse
+
     lex, _gen, _sf = _make_lexicon(
         engine, cam_words={}, norm_by_id={}, results_by_word={}
     )
@@ -1137,5 +1155,6 @@ async def test_evaluate_answer_returns_none_for_unknown_question(engine):
     question_engine = _QuestionEngineSpy()
     lex._worker_questions = question_engine
 
-    assert await lex.evaluate_answer(999, "answer") is None
+    submission = AnswerSubmission(question_id="999", response=TextResponse(text="answer"))
+    assert await lex.evaluate_answer(999, submission) is None
     assert question_engine.evaluated == []

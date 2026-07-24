@@ -13,7 +13,6 @@ from lexi_ai.constants import (
     QUESTION_TYPES,
     REL_LEVEL,
     REL_TYPES,
-    RENDER_FORMAT_PAYLOAD,
     RENDER_FORMATS,
     SENSE_REL_TYPES,
     WORD_REL_TYPES,
@@ -113,12 +112,7 @@ def test_question_engine_vocabularies_are_canonical():
     assert INTERACTION_MODES == {"exposure", "assessment"}
 
 
-def test_render_format_payload_covers_every_render_contract():
-    assert set(RENDER_FORMAT_PAYLOAD) == set(RENDER_FORMATS)
-    assert all(
-        isinstance(model_name, str) and model_name
-        for model_name in RENDER_FORMAT_PAYLOAD.values()
-    )
+
 
 
 def test_legacy_question_vocabularies_are_removed():

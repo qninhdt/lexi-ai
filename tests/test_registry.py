@@ -1,19 +1,19 @@
-"""Focused Phase 2 contract tests."""
+"""Focused contract tests for the unified question-type registry."""
 
 import pytest
 
-from lexi_ai.constants import RENDER_FORMAT_PAYLOAD
-from lexi_ai.questions import base, schemas
-from lexi_ai.questions.formats import _shared as shared
+from lexi_ai.contracts.questions import QuestionTypeInfo, RenderKind
+from lexi_ai.questions import base
+from lexi_ai.questions.types import _shared as shared
 from lexi_ai.read_models import Entry, SenseView
 
 
 class _Assessment:
-    descriptor = base.QuestionTypeDescriptor(
+    info = QuestionTypeInfo(
         type_id="definition_mcq",
-        render_format="single_choice",
-        supported_levels=frozenset({1}),
-        interaction_mode="assessment",
+        render_kind=RenderKind.SINGLE_CHOICE,
+        interaction="assessment",
+        difficulty_levels=frozenset({1}),
     )
 
     async def prepare(self, ctx, demands):
@@ -22,30 +22,39 @@ class _Assessment:
     async def retrieve(self, ctx, query):
         return None
 
-    async def evaluate(self, ctx, question, answer):
+    async def grade(self, ctx, persisted, submission):
         raise NotImplementedError
 
 
-def _descriptor(**overrides):
+def _info(**overrides) -> QuestionTypeInfo:
     values = {
         "type_id": "definition_mcq",
-        "render_format": "single_choice",
-        "supported_levels": frozenset({1}),
-        "interaction_mode": "assessment",
+        "render_kind": RenderKind.SINGLE_CHOICE,
+        "interaction": "assessment",
+        "difficulty_levels": frozenset({1}),
     }
     values.update(overrides)
-    return base.QuestionTypeDescriptor(**values)
+    return QuestionTypeInfo(**values)
 
 
-def _plugin(descriptor, *, evaluate=True):
+def _plugin(info, *, grade=True):
     attrs = {
-        "descriptor": descriptor,
+        "info": info,
         "prepare": lambda self, ctx, demands: None,
         "retrieve": lambda self, ctx, query: None,
     }
-    if evaluate:
-        attrs["evaluate"] = lambda self, ctx, question, answer: None
+    if grade:
+        attrs["grade"] = lambda self, ctx, persisted, submission: None
     return type("FakeType", (), attrs)
+
+
+class _FakeEntryPoint:
+    def __init__(self, name, factory):
+        self.name = name
+        self._factory = factory
+
+    def load(self):
+        return self._factory
 
 
 @pytest.fixture(autouse=True)
@@ -63,62 +72,79 @@ def test_registers_well_formed_assessment_by_type_id():
 
 
 @pytest.mark.parametrize(
-    ("descriptor", "message"),
+    ("info", "message"),
     [
-        (_descriptor(type_id="unknown"), "unknown question type"),
-        (_descriptor(render_format="unknown"), "unknown render format"),
-        (_descriptor(supported_levels=frozenset()), "supported_levels"),
-        (_descriptor(supported_levels=frozenset({5})), "supported_levels"),
+        (_info(type_id="unknown"), "unknown question type"),
+        (_info(interaction="unknown"), "unknown interaction mode"),
+        (_info(difficulty_levels=frozenset()), "difficulty_levels"),
+        (_info(difficulty_levels=frozenset({5})), "difficulty_levels"),
         (
-            _descriptor(
+            _info(
                 type_id="flashcard",
-                render_format="single_choice",
-                supported_levels=frozenset({0}),
-                interaction_mode="exposure",
+                render_kind=RenderKind.SINGLE_CHOICE,
+                difficulty_levels=frozenset({0}),
+                interaction="exposure",
             ),
             "level 0",
         ),
         (
-            _descriptor(
+            _info(
                 type_id="flashcard",
-                render_format="flashcard",
-                supported_levels=frozenset({0, 1}),
-                interaction_mode="exposure",
+                render_kind=RenderKind.FLASHCARD,
+                difficulty_levels=frozenset({0, 1}),
+                interaction="exposure",
             ),
             "level 0",
         ),
     ],
 )
-def test_register_rejects_invalid_descriptor(descriptor, message):
+def test_register_rejects_invalid_info(info, message):
     with pytest.raises(ValueError, match=message):
-        base.register(_plugin(descriptor))
+        base.register(_plugin(info))
 
 
-def test_register_rejects_assessment_without_evaluate():
-    with pytest.raises(ValueError, match="evaluate"):
-        base.register(_plugin(_descriptor(), evaluate=False))
+def test_register_rejects_assessment_without_grade():
+    with pytest.raises(ValueError, match="grade"):
+        base.register(_plugin(_info(), grade=False))
 
 
-def test_register_rejects_exposure_with_evaluate():
-    descriptor = _descriptor(
+def test_register_rejects_exposure_with_grade():
+    info = _info(
         type_id="flashcard",
-        render_format="flashcard",
-        supported_levels=frozenset({0}),
-        interaction_mode="exposure",
+        render_kind=RenderKind.FLASHCARD,
+        difficulty_levels=frozenset({0}),
+        interaction="exposure",
     )
-    with pytest.raises(ValueError, match="must not define evaluate"):
-        base.register(_plugin(descriptor, evaluate=True))
+    with pytest.raises(ValueError, match="must not define grade"):
+        base.register(_plugin(info, grade=True))
 
 
-def test_register_rejects_missing_render_payload_mapping(monkeypatch):
-    monkeypatch.delitem(RENDER_FORMAT_PAYLOAD, "single_choice")
-    with pytest.raises(ValueError, match="payload validator"):
-        base.register(_Assessment)
+def test_load_entry_point_types_gates_on_allowlist_and_skips_registered(monkeypatch):
+    calls = []
+    alpha, beta, gamma = object(), object(), object()
+    eps = [
+        _FakeEntryPoint("alpha", alpha),
+        _FakeEntryPoint("beta", beta),
+        _FakeEntryPoint("gamma", gamma),
+    ]
+    monkeypatch.setattr(base, "entry_points", lambda group: eps)
+    monkeypatch.setattr(base, "register", lambda make_plugin: calls.append(make_plugin))
+    # A type already in the registry is never re-registered even if allowlisted.
+    base.REGISTRY["beta"] = object()
+
+    base.load_entry_point_types({"alpha", "beta"})
+
+    # gamma is not allowlisted; beta is already registered -> only alpha loads.
+    assert calls == [alpha]
 
 
-def test_render_payload_mapping_resolves_to_schema_classes():
-    assert base.payload_model_for("single_choice") is schemas.MCQPayload
-    assert base.payload_model_for("flashcard") is schemas.FlashcardPayload
+def test_load_entry_point_types_without_allowlist_is_noop(monkeypatch):
+    def _boom(group):
+        raise AssertionError("entry points must not be scanned without an allowlist")
+
+    monkeypatch.setattr(base, "entry_points", _boom)
+    base.load_entry_point_types(None)
+    base.load_entry_point_types(set())
 
 
 def _entry() -> tuple[Entry, SenseView]:
@@ -145,7 +171,7 @@ def _entry() -> tuple[Entry, SenseView]:
     )
 
 
-def test_mcq_builder_stamps_new_question_contract():
+def test_mcq_builder_stamps_persisted_carrier():
     entry, sense = _entry()
     question = shared._mcq_question(
         entry,
@@ -156,11 +182,12 @@ def test_mcq_builder_stamps_new_question_contract():
         type_id="definition_mcq",
         difficulty_level=1,
     )
+    assert question.question_id is None  # a draft until the store stamps an id
     assert question.type_id == "definition_mcq"
-    assert question.render_format == "single_choice"
+    assert question.render_kind is RenderKind.SINGLE_CHOICE
     assert question.difficulty_level == 1
-    assert question.interaction_mode == "assessment"
-    assert not hasattr(question, "format")
+    assert question.interaction == "assessment"
+    assert not hasattr(question, "render_format")
     assert not hasattr(question, "answer_kind")
 
 
@@ -168,9 +195,9 @@ def test_exposure_builder_stamps_flashcard_payload():
     entry, sense = _entry()
     question = shared._exposure_question(entry, sense)
     assert question.type_id == "flashcard"
-    assert question.render_format == "flashcard"
+    assert question.render_kind is RenderKind.FLASHCARD
     assert question.difficulty_level == 0
-    assert question.interaction_mode == "exposure"
+    assert question.interaction == "exposure"
     assert question.payload == {
         "word": "eloquent",
         "pos": "adjective",

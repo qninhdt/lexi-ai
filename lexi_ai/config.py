@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     tts_voice: str = "alloy"
     tts_format: str = "mp3"
 
+    # Third-party question types are discovered via the ``lexi_ai.question_types``
+    # entry-point group, but registered ONLY when their type_id appears here.
+    # Empty (default) = built-in types only; untrusted discovery stays opt-in.
+    question_type_allowlist: frozenset[str] = frozenset()
+
 
 def get_settings() -> Settings:
     """Load settings from environment / .env."""

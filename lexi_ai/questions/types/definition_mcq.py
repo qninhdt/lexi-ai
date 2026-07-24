@@ -2,26 +2,31 @@
 
 from collections.abc import Sequence
 
+from lexi_ai.contracts.questions import (
+    AnswerSubmission,
+    Evaluation,
+    QuestionTypeInfo,
+    RenderKind,
+)
+from lexi_ai.domain.questions import PersistedQuestion
 from lexi_ai.normalize import match_key
 from lexi_ai.questions.base import (
     PrepareReport,
     QuestionContext,
     QuestionDemand,
     QuestionQuery,
-    QuestionTypeDescriptor,
     register,
 )
-from lexi_ai.questions.formats._shared import _MCQ_OPTIONS, _mcq_question
 from lexi_ai.questions.scoring import grade_single_choice
-from lexi_ai.read_models import Evaluation, Question
+from lexi_ai.questions.types._shared import _MCQ_OPTIONS, _mcq_question
 
 
 class DefinitionMCQ:
-    descriptor = QuestionTypeDescriptor(
+    info = QuestionTypeInfo(
         type_id="definition_mcq",
-        render_format="single_choice",
-        supported_levels=frozenset({1}),
-        interaction_mode="assessment",
+        render_kind=RenderKind.SINGLE_CHOICE,
+        interaction="assessment",
+        difficulty_levels=frozenset({1}),
     )
 
     async def prepare(
@@ -40,7 +45,7 @@ class DefinitionMCQ:
             produced[key] = 1
         return PrepareReport(produced)
 
-    async def _build(self, ctx: QuestionContext, sense_id: int) -> Question | None:
+    async def _build(self, ctx: QuestionContext, sense_id: int) -> PersistedQuestion | None:
         entry = ctx.entry
         if entry is None:
             return None
@@ -56,26 +61,29 @@ class DefinitionMCQ:
             f"Which word means: {sense.definition}",
             f"definition_mcq:{match_key(entry.norm)}:1",
             distractors,
-            type_id=self.descriptor.type_id,
+            type_id=self.info.type_id,
             difficulty_level=1,
         )
 
     async def retrieve(
         self, ctx: QuestionContext, query: QuestionQuery
-    ) -> Question | None:
+    ) -> PersistedQuestion | None:
         if query.difficulty_level != 1 or ctx.store is None:
             return None
         return await ctx.store.retrieve_one(
             query.sense_id,
             query.difficulty_level,
-            self.descriptor.type_id,
+            self.info.type_id,
             query.excluded_question_ids,
         )
 
-    async def evaluate(
-        self, ctx: QuestionContext, question: Question, answer: object
+    async def grade(
+        self,
+        ctx: QuestionContext,
+        persisted: PersistedQuestion,
+        submission: AnswerSubmission,
     ) -> Evaluation:
-        return await grade_single_choice(question, answer)
+        return await grade_single_choice(persisted, submission)
 
 
 register(DefinitionMCQ)

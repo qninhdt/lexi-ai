@@ -1,4 +1,11 @@
-"""Portable persistence for prepared assessment questions."""
+"""Portable persistence for prepared assessment questions.
+
+The public boundary speaks the answer-safe contract types, but persistence stays
+UNCHANGED: each draft's flat ``payload`` is stored in the single ``payload``
+column with the SAME canonical-json ``content_hash`` (so dedup / idempotency
+identity never shifts). The internal :class:`PersistedQuestion` carrier bridges
+the two — its ``render_kind`` maps to/from the stored ``render_format`` string.
+"""
 
 import hashlib
 import json
@@ -13,9 +20,10 @@ from lexi_ai.constants import (
     QUESTION_TYPES,
     RENDER_FORMATS,
 )
+from lexi_ai.contracts.questions import RenderKind
 from lexi_ai.db import session_scope
+from lexi_ai.domain.questions import PersistedQuestion
 from lexi_ai.models import Question as QuestionRow
-from lexi_ai.read_models import Question
 
 _MAX_PAYLOAD_BYTES = 65_536
 
@@ -26,28 +34,28 @@ class QuestionRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
         self._session_factory = session_factory
 
-    async def insert(self, question: Question) -> Question:
+    async def insert(self, draft: PersistedQuestion) -> PersistedQuestion:
         """Insert once per canonical content identity and return the stored row.
 
         The pre-read is the common fast path. The savepoint catches a concurrent
         unique-key winner without aborting the outer transaction, which keeps the
         implementation portable across SQLite and Postgres.
         """
-        _validate_contract(question)
-        payload_json = _dump_payload(question.payload)
+        _validate_contract(draft)
+        payload_json = _dump_payload(draft.payload)
         content_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         async with session_scope(self._session_factory) as session:
-            existing = await _find_existing(session, question, content_hash)
+            existing = await _find_existing(session, draft, content_hash)
             if existing is not None:
-                return _to_read_model(existing)
+                return _to_persisted(existing)
 
             row = QuestionRow(
-                word_id=question.word_id,
-                sense_id=question.sense_id,
-                type_id=question.type_id,
-                render_format=question.render_format,
-                difficulty_level=question.difficulty_level,
-                interaction_mode=question.interaction_mode,
+                word_id=draft.word_id,
+                sense_id=draft.sense_id,
+                type_id=draft.type_id,
+                render_format=draft.render_kind.value,
+                difficulty_level=draft.difficulty_level,
+                interaction_mode=draft.interaction,
                 payload=payload_json,
                 content_hash=content_hash,
             )
@@ -56,11 +64,11 @@ class QuestionRepository:
                     session.add(row)
                     await session.flush()
             except IntegrityError:
-                existing = await _find_existing(session, question, content_hash)
+                existing = await _find_existing(session, draft, content_hash)
                 if existing is None:
                     raise
-                return _to_read_model(existing)
-            return _to_read_model(row)
+                return _to_persisted(existing)
+            return _to_persisted(row)
 
     async def retrieve_one(
         self,
@@ -68,7 +76,7 @@ class QuestionRepository:
         difficulty_level: int,
         type_id: str,
         excluded_ids: frozenset[int],
-    ) -> Question | None:
+    ) -> PersistedQuestion | None:
         """Return the first exact unexcluded row.
 
         This is intentionally non-atomic: it does not claim or lock the row.
@@ -87,21 +95,21 @@ class QuestionRepository:
                 stmt.order_by(QuestionRow.id).limit(1)
             )
             row = result.scalar_one_or_none()
-            return _to_read_model(row) if row is not None else None
+            return _to_persisted(row) if row is not None else None
 
     async def list_for_word(
         self, word_id: int, type_id: str | None = None
-    ) -> list[Question]:
+    ) -> list[PersistedQuestion]:
         async with session_scope(self._session_factory) as session:
             stmt = select(QuestionRow).where(QuestionRow.word_id == word_id)
             if type_id is not None:
                 stmt = stmt.where(QuestionRow.type_id == type_id)
             rows = (await session.execute(stmt.order_by(QuestionRow.id))).scalars().all()
-            return [_to_read_model(row) for row in rows]
+            return [_to_persisted(row) for row in rows]
 
     async def list_for_sense(
         self, sense_id: int, type_id: str | None = None
-    ) -> list[Question]:
+    ) -> list[PersistedQuestion]:
         """List only rows bound to the requested sense, newest first."""
         async with session_scope(self._session_factory) as session:
             stmt = select(QuestionRow).where(QuestionRow.sense_id == sense_id)
@@ -110,12 +118,12 @@ class QuestionRepository:
             rows = (
                 await session.execute(stmt.order_by(QuestionRow.id.desc()))
             ).scalars().all()
-            return [_to_read_model(row) for row in rows]
+            return [_to_persisted(row) for row in rows]
 
-    async def get(self, question_id: int) -> Question | None:
+    async def get(self, question_id: int) -> PersistedQuestion | None:
         async with session_scope(self._session_factory) as session:
             row = await session.get(QuestionRow, question_id)
-            return _to_read_model(row) if row is not None else None
+            return _to_persisted(row) if row is not None else None
 
     async def delete(self, question_id: int) -> bool:
         async with session_scope(self._session_factory) as session:
@@ -126,29 +134,29 @@ class QuestionRepository:
 
 
 async def _find_existing(
-    session: AsyncSession, question: Question, content_hash: str
+    session: AsyncSession, draft: PersistedQuestion, content_hash: str
 ) -> QuestionRow | None:
     stmt = select(QuestionRow).where(
-        QuestionRow.word_id == question.word_id,
-        QuestionRow.sense_id == question.sense_id,
-        QuestionRow.type_id == question.type_id,
-        QuestionRow.difficulty_level == question.difficulty_level,
+        QuestionRow.word_id == draft.word_id,
+        QuestionRow.sense_id == draft.sense_id,
+        QuestionRow.type_id == draft.type_id,
+        QuestionRow.difficulty_level == draft.difficulty_level,
         QuestionRow.content_hash == content_hash,
     )
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-def _validate_contract(question: Question) -> None:
+def _validate_contract(draft: PersistedQuestion) -> None:
     vocabularies = (
-        ("type_id", question.type_id, QUESTION_TYPES),
-        ("render_format", question.render_format, RENDER_FORMATS),
-        ("difficulty_level", question.difficulty_level, DIFFICULTY_LEVELS),
-        ("interaction_mode", question.interaction_mode, INTERACTION_MODES),
+        ("type_id", draft.type_id, QUESTION_TYPES),
+        ("render_format", draft.render_kind.value, RENDER_FORMATS),
+        ("difficulty_level", draft.difficulty_level, DIFFICULTY_LEVELS),
+        ("interaction_mode", draft.interaction, INTERACTION_MODES),
     )
     for field, value, vocabulary in vocabularies:
         if value not in vocabulary:
             raise ValueError(f"question {field} is out of vocabulary: {value!r}")
-    if question.interaction_mode == "assessment" and question.sense_id is None:
+    if draft.interaction == "assessment" and draft.sense_id is None:
         raise ValueError("assessment question requires a non-null sense_id")
 
 
@@ -178,14 +186,14 @@ def _has_nul(value: object) -> bool:
     return False
 
 
-def _to_read_model(row: QuestionRow) -> Question:
-    return Question(
+def _to_persisted(row: QuestionRow) -> PersistedQuestion:
+    return PersistedQuestion(
         question_id=row.id,
         word_id=row.word_id,
         sense_id=row.sense_id,
         type_id=row.type_id,
-        render_format=row.render_format,
+        render_kind=RenderKind(row.render_format),
         difficulty_level=row.difficulty_level,
-        interaction_mode=row.interaction_mode,
+        interaction=row.interaction_mode,
         payload=json.loads(row.payload),
     )

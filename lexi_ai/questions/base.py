@@ -1,30 +1,50 @@
-"""Plugin contracts and registry for the questions subsystem."""
+"""Plugin contracts and registry for the unified questions subsystem.
+
+A question type is ONE plugin declaring a typed
+:class:`~lexi_ai.contracts.questions.QuestionTypeInfo` (``info``). It owns
+prepare/retrieve and — for assessments — ``grade``. The collapsed model replaces
+the old split of ``QuestionTypeDescriptor`` (type) and a separate render-format
+registry: the render shape now rides ``info.render_kind`` and the answer-safe
+projection lives in :mod:`lexi_ai.questions.render`.
+
+Built-in types register by DIRECT import (see ``lexi_ai.questions.types``).
+Third-party types are discovered via the ``lexi_ai.question_types`` entry-point
+group, but only when their ``type_id`` appears in an explicit allowlist
+(:func:`load_entry_point_types`) — untrusted discovery is opt-in for safety.
+"""
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, Protocol, TypeAlias
-
-from pydantic import BaseModel
 
 from lexi_ai.constants import (
     DIFFICULTY_LEVELS,
     INTERACTION_MODES,
     QUESTION_TYPES,
-    RENDER_FORMAT_PAYLOAD,
     RENDER_FORMATS,
 )
-from lexi_ai.questions import schemas as question_schemas
-from lexi_ai.read_models import Entry, Evaluation, Question
+from lexi_ai.contracts.questions import (
+    AnswerSubmission,
+    Evaluation,
+    QuestionTypeInfo,
+    RenderKind,
+)
+from lexi_ai.domain.questions import PersistedQuestion
+from lexi_ai.read_models import Entry
 
 if TYPE_CHECKING:
     from lexi_ai.llm import StructuredLLM
     from lexi_ai.questions.distractors import DistractorProvider
 
+# Entry-point group third-party question types advertise themselves under.
+ENTRY_POINT_GROUP = "lexi_ai.question_types"
+
 
 class QuestionStore(Protocol):
     """Question-only persistence capability supplied to assessment plugins."""
 
-    async def insert(self, question: Question) -> Question: ...
+    async def insert(self, draft: PersistedQuestion) -> PersistedQuestion: ...
 
     async def retrieve_one(
         self,
@@ -32,13 +52,13 @@ class QuestionStore(Protocol):
         difficulty_level: int,
         type_id: str,
         excluded_ids: frozenset[int],
-    ) -> Question | None: ...
+    ) -> PersistedQuestion | None: ...
 
     async def list_for_word(
         self, word_id: int, type_id: str | None = None
-    ) -> list[Question]: ...
+    ) -> list[PersistedQuestion]: ...
 
-    async def get(self, question_id: int) -> Question | None: ...
+    async def get(self, question_id: int) -> PersistedQuestion | None: ...
 
     async def delete(self, question_id: int) -> bool: ...
 
@@ -71,15 +91,10 @@ class QuestionContext:
 
 
 @dataclass(frozen=True)
-class QuestionTypeDescriptor:
-    type_id: str
-    render_format: str
-    supported_levels: frozenset[int]
-    interaction_mode: str
-
-
-@dataclass(frozen=True)
 class QuestionDemand:
+    """Internal prepare input (sense id is a resolved int, unlike the public
+    ``contracts.PrepareDemand`` whose sense id is a string)."""
+
     sense_id: int
     difficulty_level: int
     expected_count: int
@@ -114,7 +129,7 @@ class NotAssessable(ValueError):
 
 
 class AssessmentType(Protocol):
-    descriptor: QuestionTypeDescriptor
+    info: QuestionTypeInfo
 
     async def prepare(
         self, ctx: QuestionContext, demands: Sequence[QuestionDemand]
@@ -122,71 +137,87 @@ class AssessmentType(Protocol):
 
     async def retrieve(
         self, ctx: QuestionContext, query: QuestionQuery
-    ) -> Question | None: ...
+    ) -> PersistedQuestion | None: ...
 
-    async def evaluate(
-        self, ctx: QuestionContext, question: Question, answer: object
+    async def grade(
+        self,
+        ctx: QuestionContext,
+        persisted: PersistedQuestion,
+        submission: AnswerSubmission,
     ) -> Evaluation: ...
 
 
 class ExposureType(Protocol):
-    descriptor: QuestionTypeDescriptor
+    info: QuestionTypeInfo
 
-    async def retrieve(self, ctx: QuestionContext, query: QuestionQuery) -> Question: ...
+    async def retrieve(
+        self, ctx: QuestionContext, query: QuestionQuery
+    ) -> PersistedQuestion: ...
 
 
 QuestionType: TypeAlias = AssessmentType | ExposureType
 QuestionTypeFactory: TypeAlias = Callable[[], QuestionType]
-# Keep the package facade importable until its public exports migrate with the engine.
-QuestionFormat = QuestionType
-FormatSpec = QuestionTypeDescriptor
 REGISTRY: dict[str, QuestionType] = {}
 
 
-def payload_model_for(render_format: str) -> type[BaseModel]:
-    """Resolve a render contract to its validator without a constants/schema cycle."""
-    model_name = RENDER_FORMAT_PAYLOAD.get(render_format)
-    model = getattr(question_schemas, model_name, None) if model_name else None
-    if not isinstance(model, type) or not issubclass(model, BaseModel):
-        raise ValueError(f"render format {render_format!r} has no payload validator")
-    return model
-
-
 def register(make_plugin: QuestionTypeFactory) -> None:
-    """Instantiate and register one type after fail-fast contract validation."""
+    """Instantiate and register one type after fail-fast contract validation.
+
+    Validates the declared :class:`QuestionTypeInfo` against the controlled
+    vocabularies and the exposure/assessment invariant: level 0 is flashcard-only
+    exposure with NO ``grade``; every other level is a graded assessment.
+    """
     plugin = make_plugin()
-    descriptor = plugin.descriptor
+    info = plugin.info
 
-    if descriptor.type_id not in QUESTION_TYPES:
-        raise ValueError(f"unknown question type: {descriptor.type_id!r}")
-    if descriptor.render_format not in RENDER_FORMATS:
-        raise ValueError(f"unknown render format: {descriptor.render_format!r}")
-    if descriptor.interaction_mode not in INTERACTION_MODES:
-        raise ValueError(f"unknown interaction mode: {descriptor.interaction_mode!r}")
-    if not descriptor.supported_levels or not descriptor.supported_levels <= DIFFICULTY_LEVELS:
-        raise ValueError("supported_levels must be a non-empty difficulty-level subset")
+    if info.type_id not in QUESTION_TYPES:
+        raise ValueError(f"unknown question type: {info.type_id!r}")
+    if info.render_kind.value not in RENDER_FORMATS:
+        raise ValueError(f"unknown render format: {info.render_kind.value!r}")
+    if info.interaction not in INTERACTION_MODES:
+        raise ValueError(f"unknown interaction mode: {info.interaction!r}")
+    if not info.difficulty_levels or not info.difficulty_levels <= DIFFICULTY_LEVELS:
+        raise ValueError("difficulty_levels must be a non-empty difficulty-level subset")
 
-    payload_model_for(descriptor.render_format)
-    if 0 in descriptor.supported_levels:
+    if 0 in info.difficulty_levels:
         if (
-            descriptor.supported_levels != frozenset({0})
-            or descriptor.render_format != "flashcard"
-            or descriptor.interaction_mode != "exposure"
+            info.difficulty_levels != frozenset({0})
+            or info.render_kind is not RenderKind.FLASHCARD
+            or info.interaction != "exposure"
         ):
             raise ValueError("level 0 types must be flashcard-only exposure types")
-        if hasattr(plugin, "evaluate"):
-            raise ValueError("an exposure type must not define evaluate")
+        if hasattr(plugin, "grade"):
+            raise ValueError("an exposure type must not define grade")
     else:
-        if descriptor.interaction_mode != "assessment":
+        if info.interaction != "assessment":
             raise ValueError("non-zero difficulty types must be assessments")
-        if not hasattr(plugin, "evaluate"):
-            raise ValueError("an assessment type must define evaluate")
+        if not hasattr(plugin, "grade"):
+            raise ValueError("an assessment type must define grade")
 
-    REGISTRY[descriptor.type_id] = plugin
+    REGISTRY[info.type_id] = plugin
+
+
+def load_entry_point_types(allowlist: set[str] | None = None) -> None:
+    """Discover and register third-party question types via entry points.
+
+    SECURITY: an installed distribution can advertise a plugin under the
+    ``lexi_ai.question_types`` group, but it is registered ONLY when its
+    ``type_id`` (the entry-point name) is present in ``allowlist``. ``None`` / an
+    empty allowlist is a no-op — built-in-only, the default posture. A type_id
+    already in the registry (e.g. a built-in loaded by direct import) is skipped,
+    never double-registered.
+    """
+    if not allowlist:
+        return
+    for ep in entry_points(group=ENTRY_POINT_GROUP):
+        if ep.name not in allowlist or ep.name in REGISTRY:
+            continue
+        register(ep.load())
 
 
 __all__ = [
     "AssessmentType",
+    "ENTRY_POINT_GROUP",
     "ExposureType",
     "NotAssessable",
     "PrepareReport",
@@ -195,11 +226,10 @@ __all__ = [
     "QuestionQuery",
     "QuestionStore",
     "QuestionType",
-    "QuestionTypeDescriptor",
     "REGISTRY",
     "SenseEntryLoader",
     "TtsPort",
     "UnknownQuestionType",
-    "payload_model_for",
+    "load_entry_point_types",
     "register",
 ]

@@ -87,3 +87,48 @@ def test_stored_question_presentation_is_answer_free():
     assert "presentation" in ann and "grading" in ann
     # grading is a distinct attribute, never merged into presentation.
     assert "grading" not in {f.name for f in dataclasses.fields(q.PresentedQuestion)}
+
+
+async def test_retrieved_question_hides_answer_but_grading_reveals_it():
+    # End-to-end: the projected presentation exposes no answer key; the sanctioned
+    # answer is disclosed ONLY through the typed ``Evaluation.reveal`` after grading.
+    from lexi_ai.contracts.questions import (
+        AnswerSubmission,
+        ChoiceResponse,
+        ChoiceReveal,
+        SingleChoice,
+    )
+    from lexi_ai.domain.questions import PersistedQuestion
+    from lexi_ai.questions.render import to_presented
+    from lexi_ai.questions.scoring import grade_single_choice
+
+    persisted = PersistedQuestion(
+        question_id=5,
+        word_id=3,
+        sense_id=7,
+        type_id="definition_mcq",
+        render_kind=q.RenderKind.SINGLE_CHOICE,
+        difficulty_level=1,
+        interaction="assessment",
+        payload={
+            "stem": "Which word means fluent?",
+            "options": ["taciturn", "eloquent"],
+            "correct_index": 1,
+        },
+    )
+
+    presented = to_presented(persisted)
+    assert isinstance(presented.render, SingleChoice)
+    # The correct index is not a field on the presentation or its render contract.
+    assert not hasattr(presented, "payload")
+    render_fields = {f.name for f in dataclasses.fields(presented.render)}
+    assert "correct_index" not in render_fields
+
+    evaluation = await grade_single_choice(
+        persisted,
+        AnswerSubmission(question_id="5", response=ChoiceResponse(selected_index=1)),
+    )
+    assert evaluation.correct is True
+    assert isinstance(evaluation.reveal, ChoiceReveal)
+    assert evaluation.reveal.correct_index == 1
+    assert evaluation.reveal.correct_option == "eloquent"

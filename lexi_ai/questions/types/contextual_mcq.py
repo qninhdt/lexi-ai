@@ -2,6 +2,13 @@
 
 from collections.abc import Sequence
 
+from lexi_ai.contracts.questions import (
+    AnswerSubmission,
+    Evaluation,
+    QuestionTypeInfo,
+    RenderKind,
+)
+from lexi_ai.domain.questions import PersistedQuestion
 from lexi_ai.llm import ainvoke_structured, guarded_messages
 from lexi_ai.normalize import match_key
 from lexi_ai.prompts import PromptLoader
@@ -10,26 +17,25 @@ from lexi_ai.questions.base import (
     QuestionContext,
     QuestionDemand,
     QuestionQuery,
-    QuestionTypeDescriptor,
     register,
 )
 from lexi_ai.questions.dedup import DistractorDedup
-from lexi_ai.questions.formats._shared import (
+from lexi_ai.questions.schemas import GeneratedMCQ
+from lexi_ai.questions.scoring import grade_single_choice
+from lexi_ai.questions.types._shared import (
     _CONTEXTUAL_SYSTEM,
     _MCQ_OPTIONS,
     _mcq_question,
 )
-from lexi_ai.questions.schemas import GeneratedMCQ
-from lexi_ai.questions.scoring import grade_single_choice
-from lexi_ai.read_models import Entry, Evaluation, Question, SenseView
+from lexi_ai.read_models import Entry, SenseView
 
 
 class ContextualMCQ:
-    descriptor = QuestionTypeDescriptor(
+    info = QuestionTypeInfo(
         type_id="contextual_mcq",
-        render_format="single_choice",
-        supported_levels=frozenset({1, 2}),
-        interaction_mode="assessment",
+        render_kind=RenderKind.SINGLE_CHOICE,
+        interaction="assessment",
+        difficulty_levels=frozenset({1, 2}),
     )
 
     async def prepare(
@@ -38,7 +44,7 @@ class ContextualMCQ:
         produced: dict[tuple[int, int], int] = {}
         for demand in demands:
             level = demand.difficulty_level
-            if level not in self.descriptor.supported_levels or demand.expected_count <= 0:
+            if level not in self.info.difficulty_levels or demand.expected_count <= 0:
                 continue
             key = (demand.sense_id, level)
             question = await self._build(ctx, demand.sense_id, level)
@@ -51,7 +57,7 @@ class ContextualMCQ:
 
     async def _build(
         self, ctx: QuestionContext, sense_id: int, level: int
-    ) -> Question | None:
+    ) -> PersistedQuestion | None:
         entry = ctx.entry
         if entry is None:
             return None
@@ -75,7 +81,7 @@ class ContextualMCQ:
             stem,
             f"contextual_mcq:{match_key(entry.norm)}:{level}",
             distractors,
-            type_id=self.descriptor.type_id,
+            type_id=self.info.type_id,
             difficulty_level=level,
         )
 
@@ -114,20 +120,23 @@ class ContextualMCQ:
 
     async def retrieve(
         self, ctx: QuestionContext, query: QuestionQuery
-    ) -> Question | None:
-        if query.difficulty_level not in self.descriptor.supported_levels or ctx.store is None:
+    ) -> PersistedQuestion | None:
+        if query.difficulty_level not in self.info.difficulty_levels or ctx.store is None:
             return None
         return await ctx.store.retrieve_one(
             query.sense_id,
             query.difficulty_level,
-            self.descriptor.type_id,
+            self.info.type_id,
             query.excluded_question_ids,
         )
 
-    async def evaluate(
-        self, ctx: QuestionContext, question: Question, answer: object
+    async def grade(
+        self,
+        ctx: QuestionContext,
+        persisted: PersistedQuestion,
+        submission: AnswerSubmission,
     ) -> Evaluation:
-        return await grade_single_choice(question, answer)
+        return await grade_single_choice(persisted, submission)
 
 
 register(ContextualMCQ)

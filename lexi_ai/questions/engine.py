@@ -5,6 +5,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
+from lexi_ai.contracts.questions import (
+    AnswerSubmission,
+    Evaluation,
+    PresentedQuestion,
+    QuestionTypeInfo,
+)
+from lexi_ai.domain.questions import PersistedQuestion
 from lexi_ai.llm import StructuredLLM
 from lexi_ai.questions.base import (
     REGISTRY,
@@ -15,19 +22,27 @@ from lexi_ai.questions.base import (
     QuestionQuery,
     QuestionStore,
     QuestionType,
-    QuestionTypeDescriptor,
     SenseEntryLoader,
     TtsPort,
     UnknownQuestionType,
 )
 from lexi_ai.questions.distractors import DistractorProvider
-from lexi_ai.read_models import Entry, Evaluation, Question
+from lexi_ai.questions.render import to_presented
+from lexi_ai.read_models import Entry
 
 logger = logging.getLogger(__name__)
 
 
 class QuestionEngine:
-    """Prepare, retrieve, and evaluate questions through registered plugins."""
+    """Prepare, retrieve, and evaluate questions through registered plugins.
+
+    The engine speaks the answer-safe contract on its public seams: retrieval
+    returns :class:`PresentedQuestion` (no answer) via the projection layer, and
+    grading returns a typed :class:`Evaluation` whose ``reveal`` is the sanctioned
+    disclosure. It still carries the judge LLM; a provider-free reader engine
+    (``judge_llm=None``) cannot grade rubric/free-text types — that outcome stays
+    ``pending`` rather than silently succeeding.
+    """
 
     def __init__(
         self,
@@ -45,9 +60,9 @@ class QuestionEngine:
         self._tts = tts
         self._sense_loader = sense_loader
 
-    def question_types(self) -> list[QuestionTypeDescriptor]:
-        """Return descriptors for every registered type in registry order."""
-        return [question_type.descriptor for question_type in REGISTRY.values()]
+    def question_types(self) -> list[QuestionTypeInfo]:
+        """Return the capability info for every registered type in registry order."""
+        return [question_type.info for question_type in REGISTRY.values()]
 
     async def prepare(
         self, entry: Entry, demands: Sequence[QuestionDemand]
@@ -67,7 +82,7 @@ class QuestionEngine:
                 demand
                 for demand in demands
                 if demand.expected_count > 0
-                and demand.difficulty_level in question_type.descriptor.supported_levels
+                and demand.difficulty_level in question_type.info.difficulty_levels
             ]
             if not relevant:
                 continue
@@ -78,7 +93,7 @@ class QuestionEngine:
             except Exception:
                 logger.warning(
                     "question preparation failed for type %s",
-                    question_type.descriptor.type_id,
+                    question_type.info.type_id,
                     exc_info=True,
                 )
                 continue
@@ -92,32 +107,36 @@ class QuestionEngine:
         difficulty_level: int,
         excluded_ids: frozenset[int],
         type_id: str,
-    ) -> Question | None:
-        """Retrieve one exact stored assessment; never generate or fall back."""
+    ) -> PresentedQuestion | None:
+        """Retrieve one exact stored assessment as an answer-free presentation."""
         question_type = self._question_type(type_id)
-        if question_type.descriptor.interaction_mode != "assessment":
+        if question_type.info.interaction != "assessment":
             raise NotAssessable(None)
-        return await question_type.retrieve(
+        persisted = await question_type.retrieve(
             self._ctx(None),
             QuestionQuery(sense_id, difficulty_level, excluded_ids),
         )
+        return to_presented(persisted) if persisted is not None else None
 
-    async def retrieve_exposure(self, sense_id: int) -> Question:
+    async def retrieve_exposure(self, sense_id: int) -> PresentedQuestion:
         """Build a non-null level-0 exposure card through the loader seam."""
         question_type = self._question_type("flashcard")
-        return await question_type.retrieve(
+        persisted = await question_type.retrieve(
             self._ctx(None), QuestionQuery(sense_id, 0, frozenset())
         )
+        return to_presented(persisted)
 
-    async def evaluate(self, question: Question, answer: object) -> Evaluation:
-        """Evaluate an assessment, rejecting exposure before plugin dispatch."""
-        if question.interaction_mode == "exposure":
-            raise NotAssessable(question.question_id)
-        question_type = self._question_type(question.type_id)
-        evaluate = getattr(question_type, "evaluate", None)
-        if evaluate is None:
-            raise NotAssessable(question.question_id)
-        return await evaluate(self._ctx(None), question, answer)
+    async def evaluate(
+        self, persisted: PersistedQuestion, submission: AnswerSubmission
+    ) -> Evaluation:
+        """Grade an assessment, rejecting exposure before plugin dispatch."""
+        if persisted.interaction == "exposure":
+            raise NotAssessable(persisted.question_id)
+        question_type = self._question_type(persisted.type_id)
+        grade = getattr(question_type, "grade", None)
+        if grade is None:
+            raise NotAssessable(persisted.question_id)
+        return await grade(self._ctx(None), persisted, submission)
 
     def _ctx(self, entry: Entry | None) -> QuestionContext:
         return QuestionContext(

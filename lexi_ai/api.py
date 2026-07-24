@@ -51,9 +51,16 @@ from lexi_ai.references.wordnet import WordNetSource
 from lexi_ai.vectors import cosine, pack_vector, unpack_vector
 
 if TYPE_CHECKING:
+    from lexi_ai.contracts.questions import (
+        AnswerSubmission,
+        Evaluation,
+        PrepareDemand,
+        PresentedQuestion,
+        QuestionTypeInfo,
+    )
     from lexi_ai.generation.wsd import WsdJudge
     from lexi_ai.llm import StructuredLLM
-    from lexi_ai.questions.base import TtsPort
+    from lexi_ai.questions.base import PrepareReport, TtsPort
     from lexi_ai.questions.engine import QuestionEngine
 
 # Upper bound for a single add_examples call, taken from ExampleBatch's own
@@ -101,6 +108,21 @@ def _build_sense_relation(rel) -> SenseRelationView:
         to_sense_gloss=to_sense_gloss,
         wsd_state=state,
     )
+
+
+def _to_internal_demands(demands: list) -> list:
+    """Map public ``PrepareDemand`` inputs (string sense id) to the internal
+    ``QuestionDemand`` (resolved int sense id) the engine consumes."""
+    from lexi_ai.questions.base import QuestionDemand
+
+    return [
+        QuestionDemand(
+            sense_id=int(demand.sense_id),
+            difficulty_level=demand.difficulty_level,
+            expected_count=demand.expected_count,
+        )
+        for demand in demands
+    ]
 
 
 class Lexicon:
@@ -194,10 +216,7 @@ class Lexicon:
             self._worker_questions = self._build_question_engine(providers=True)
         return self._worker_questions
 
-    @property
-    def questions(self) -> QuestionEngine:
-        """Provider-enabled question engine used by direct ``Lexicon`` calls."""
-        return self.worker_questions
+
 
     def _question_repository(self):
         if self._question_repo is None:
@@ -207,8 +226,13 @@ class Lexicon:
         return self._question_repo
 
     def _build_question_engine(self, *, providers: bool) -> QuestionEngine:
+        from lexi_ai.questions.base import load_entry_point_types
         from lexi_ai.questions.distractors import DistractorProvider
         from lexi_ai.questions.engine import QuestionEngine
+
+        # Third-party question types are opt-in: register only those the Settings
+        # allowlist names (built-ins are already loaded by direct import).
+        load_entry_point_types(set(get_settings().question_type_allowlist) or None)
 
         return QuestionEngine(
             self._question_repository(),
@@ -221,20 +245,28 @@ class Lexicon:
 
     # Public question API -------------------------------------------------------
 
-    def question_types(self):
+    def question_types(self) -> list[QuestionTypeInfo]:
         return self.worker_questions.question_types()
 
-    async def prepare_questions(self, word_id: int, demands):
+    async def prepare_questions(
+        self, word_id: int, demands: list[PrepareDemand]
+    ) -> PrepareReport:
         entry = await self.get_entry(word_id)
-        return await self.worker_questions.prepare(entry, demands)
+        return await self.worker_questions.prepare(entry, _to_internal_demands(demands))
 
-    async def get_question(self, question_id: int):
-        return await self._question_repository().get(question_id)
+    async def get_question(self, question_id: int) -> PresentedQuestion | None:
+        from lexi_ai.questions.render import to_presented
+
+        persisted = await self._question_repository().get(question_id)
+        return to_presented(persisted) if persisted is not None else None
 
     async def list_questions_for_sense(
         self, sense_id: int, type_id: str | None = None
-    ):
-        return await self._question_repository().list_for_sense(sense_id, type_id)
+    ) -> list[PresentedQuestion]:
+        from lexi_ai.questions.render import to_presented
+
+        rows = await self._question_repository().list_for_sense(sense_id, type_id)
+        return [to_presented(row) for row in rows]
 
     async def retrieve_question(
         self,
@@ -242,22 +274,26 @@ class Lexicon:
         difficulty_level: int,
         excluded_ids: frozenset[int],
         type_id: str,
-    ):
+    ) -> PresentedQuestion | None:
         return await self.worker_questions.retrieve(
             sense_id, difficulty_level, excluded_ids, type_id
         )
 
-    async def retrieve_exposure(self, sense_id: int):
+    async def retrieve_exposure(self, sense_id: int) -> PresentedQuestion:
         return await self.worker_questions.retrieve_exposure(sense_id)
 
-    async def evaluate_answer(self, question_id: int, answer: object):
-        return await self._evaluate_answer(self.worker_questions, question_id, answer)
+    async def evaluate_answer(
+        self, question_id: int, submission: AnswerSubmission
+    ) -> Evaluation | None:
+        return await self._evaluate_answer(self.worker_questions, question_id, submission)
 
-    async def _evaluate_answer(self, question_engine, question_id: int, answer: object):
-        question = await self._question_repository().get(question_id)
-        if question is None:
+    async def _evaluate_answer(
+        self, question_engine, question_id: int, submission: AnswerSubmission
+    ) -> Evaluation | None:
+        persisted = await self._question_repository().get(question_id)
+        if persisted is None:
             return None
-        return await question_engine.evaluate(question, answer)
+        return await question_engine.evaluate(persisted, submission)
 
     def _build_questions_llm(self) -> StructuredLLM | None:
         """Structured LLM for the contextual-MCQ plugin (bound to ``GeneratedMCQ``

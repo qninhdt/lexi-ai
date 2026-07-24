@@ -46,6 +46,17 @@ dev = [
 requires = ["uv_build>=0.10.7,<0.11.0"]
 build-backend = "uv_build"
 
+# Built-in question types. They load by DIRECT import at runtime (see
+# ``lexi_ai.questions.types``); declaring them here documents the canonical
+# ``type_id`` -> plugin mapping and lets third-party discovery reuse the same
+# group. Third-party entries register only under a Settings allowlist.
+[project.entry-points."lexi_ai.question_types"]
+definition_mcq = "lexi_ai.questions.types.definition_mcq:DefinitionMCQ"
+contextual_mcq = "lexi_ai.questions.types.contextual_mcq:ContextualMCQ"
+cloze = "lexi_ai.questions.types.cloze:Cloze"
+use_in_sentence = "lexi_ai.questions.types.use_in_sentence:UseInSentence"
+flashcard = "lexi_ai.questions.types.flashcard:Flashcard"
+
 [tool.uv.build-backend]
 module-name = "lexi_ai"
 module-root = ""

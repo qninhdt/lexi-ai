@@ -2,25 +2,30 @@
 
 from collections.abc import Sequence
 
+from lexi_ai.contracts.questions import (
+    AnswerSubmission,
+    Evaluation,
+    QuestionTypeInfo,
+    RenderKind,
+)
+from lexi_ai.domain.questions import PersistedQuestion
 from lexi_ai.questions.base import (
     PrepareReport,
     QuestionContext,
     QuestionDemand,
     QuestionQuery,
-    QuestionTypeDescriptor,
     register,
 )
 from lexi_ai.questions.schemas import UseInSentencePayload
 from lexi_ai.questions.scoring import grade_rubric
-from lexi_ai.read_models import Evaluation, Question
 
 
 class UseInSentence:
-    descriptor = QuestionTypeDescriptor(
+    info = QuestionTypeInfo(
         type_id="use_in_sentence",
-        render_format="free_text",
-        supported_levels=frozenset({3, 4}),
-        interaction_mode="assessment",
+        render_kind=RenderKind.FREE_TEXT,
+        interaction="assessment",
+        difficulty_levels=frozenset({3, 4}),
     )
 
     async def prepare(
@@ -29,7 +34,7 @@ class UseInSentence:
         produced: dict[tuple[int, int], int] = {}
         for demand in demands:
             level = demand.difficulty_level
-            if level not in self.descriptor.supported_levels or demand.expected_count <= 0:
+            if level not in self.info.difficulty_levels or demand.expected_count <= 0:
                 continue
             key = (demand.sense_id, level)
             question = self._build(ctx, demand.sense_id, level)
@@ -42,7 +47,7 @@ class UseInSentence:
 
     def _build(
         self, ctx: QuestionContext, sense_id: int, level: int
-    ) -> Question | None:
+    ) -> PersistedQuestion | None:
         entry = ctx.entry
         if entry is None:
             return None
@@ -69,33 +74,36 @@ class UseInSentence:
             target_norm=entry.norm,
             rubric=rubric,
         )
-        return Question(
+        return PersistedQuestion(
             question_id=None,
             word_id=entry.word_id,
             sense_id=sense.sense_id,
-            type_id=self.descriptor.type_id,
-            render_format=self.descriptor.render_format,
+            type_id=self.info.type_id,
+            render_kind=self.info.render_kind,
             difficulty_level=level,
-            interaction_mode=self.descriptor.interaction_mode,
+            interaction=self.info.interaction,
             payload=payload.model_dump(),
         )
 
     async def retrieve(
         self, ctx: QuestionContext, query: QuestionQuery
-    ) -> Question | None:
-        if query.difficulty_level not in self.descriptor.supported_levels or ctx.store is None:
+    ) -> PersistedQuestion | None:
+        if query.difficulty_level not in self.info.difficulty_levels or ctx.store is None:
             return None
         return await ctx.store.retrieve_one(
             query.sense_id,
             query.difficulty_level,
-            self.descriptor.type_id,
+            self.info.type_id,
             query.excluded_question_ids,
         )
 
-    async def evaluate(
-        self, ctx: QuestionContext, question: Question, answer: object
+    async def grade(
+        self,
+        ctx: QuestionContext,
+        persisted: PersistedQuestion,
+        submission: AnswerSubmission,
     ) -> Evaluation:
-        return await grade_rubric(question, answer, judge=ctx.judge)
+        return await grade_rubric(persisted, submission, judge=ctx.judge)
 
 
 register(UseInSentence)
