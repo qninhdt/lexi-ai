@@ -6,9 +6,15 @@ never guessing) so the WSD POS-filter (Phase 4) can compare both sides safely.
 """
 
 from lexi_ai.constants import (
+    DIFFICULTY_LEVELS,
+    EXPOSURE_LEVEL,
+    INTERACTION_MODES,
     POS_TAGS,
+    QUESTION_TYPES,
     REL_LEVEL,
     REL_TYPES,
+    RENDER_FORMAT_PAYLOAD,
+    RENDER_FORMATS,
     SENSE_REL_TYPES,
     WORD_REL_TYPES,
     normalize_pos,
@@ -87,3 +93,36 @@ def test_sense_rel_types_are_the_semantic_relations():
         "holonym",
         "see_also",
     }
+
+
+
+# --- question engine contracts -------------------------------------------
+
+
+def test_question_engine_vocabularies_are_canonical():
+    assert QUESTION_TYPES == {
+        "flashcard",
+        "definition_mcq",
+        "contextual_mcq",
+        "cloze",
+        "use_in_sentence",
+    }
+    assert RENDER_FORMATS == {"flashcard", "single_choice", "text_span", "free_text"}
+    assert DIFFICULTY_LEVELS == {0, 1, 2, 3, 4}
+    assert EXPOSURE_LEVEL == 0
+    assert INTERACTION_MODES == {"exposure", "assessment"}
+
+
+def test_render_format_payload_covers_every_render_contract():
+    assert set(RENDER_FORMAT_PAYLOAD) == set(RENDER_FORMATS)
+    assert all(
+        isinstance(model_name, str) and model_name
+        for model_name in RENDER_FORMAT_PAYLOAD.values()
+    )
+
+
+def test_legacy_question_vocabularies_are_removed():
+    import lexi_ai.constants as constants
+
+    assert not hasattr(constants, "QUESTION_FORMATS")
+    assert not hasattr(constants, "ANSWER_KINDS")

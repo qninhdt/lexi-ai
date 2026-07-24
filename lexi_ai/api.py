@@ -137,8 +137,11 @@ class Lexicon:
         # lock can never form a cycle with the neutral per-key lock (the neutral
         # lock is fully released before the overlay block runs, never nested).
         self._theme_locks: dict[tuple[int, int], asyncio.Lock] = {}
-        # Lazy questions engine (built on first access; see the `questions` property).
-        self._questions: QuestionEngine | None = None
+        # Reader and worker question engines are distinct capability contexts.
+        # The reader never receives provider capabilities, even when configured.
+        self._question_repo = None
+        self._reader_questions: QuestionEngine | None = None
+        self._worker_questions: QuestionEngine | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> Lexicon:
@@ -178,54 +181,83 @@ class Lexicon:
         await init_models(engine)
 
     @property
-    def questions(self) -> QuestionEngine:
-        """The question engine (generate/list/get/delete/grade). Built lazily.
+    def reader_questions(self) -> QuestionEngine:
+        """Provider-free question context used by API reader processes."""
+        if self._reader_questions is None:
+            self._reader_questions = self._build_question_engine(providers=False)
+        return self._reader_questions
 
-        Constructing a :class:`Lexicon` costs nothing extra until this is first
-        accessed. The two llm runnables (contextual-MCQ generator, rubric judge)
-        are built from settings the same way generation builds its model; a caller
-        wanting fakes constructs the engine directly instead of via this property.
-        """
-        if self._questions is None:
-            from lexi_ai.questions.distractors import DistractorProvider
-            from lexi_ai.questions.engine import QuestionEngine
+    @property
+    def worker_questions(self) -> QuestionEngine:
+        """Provider-enabled question context used by worker processes."""
+        if self._worker_questions is None:
+            self._worker_questions = self._build_question_engine(providers=True)
+        return self._worker_questions
+
+    @property
+    def questions(self) -> QuestionEngine:
+        """Provider-enabled question engine used by direct ``Lexicon`` calls."""
+        return self.worker_questions
+
+    def _question_repository(self):
+        if self._question_repo is None:
             from lexi_ai.questions.repository import QuestionRepository
 
-            self._questions = QuestionEngine(
-                QuestionRepository(self._session_factory),
-                DistractorProvider(self._repo, self._embedder),
-                llm=self._build_questions_llm(),
-                judge_llm=self._build_judge_llm(),
-                tts=self._build_tts_port(),
-            )
-        return self._questions
+            self._question_repo = QuestionRepository(self._session_factory)
+        return self._question_repo
 
-    # Service-facing question facade -------------------------------------------------
-    # These methods intentionally accept opaque database ids.  They let the service
-    # own question lookup/grading without exporting the engine's private repository
-    # or requiring a second connection to the generated-dictionary database.
+    def _build_question_engine(self, *, providers: bool) -> QuestionEngine:
+        from lexi_ai.questions.distractors import DistractorProvider
+        from lexi_ai.questions.engine import QuestionEngine
 
-    async def generate_questions_for_sense(
-        self, word_id: int, sense_id: int, formats: list[str], count: int
-    ):
-        entry = await self.get_entry(word_id)
-        if entry.status != "done":
-            return []
-        return await self.questions.generate_for_sense(
-            entry, sense_id, formats=formats, n=count, persist=True
+        return QuestionEngine(
+            self._question_repository(),
+            DistractorProvider(self._repo, self._embedder),
+            llm=self._build_questions_llm() if providers else None,
+            judge_llm=self._build_judge_llm() if providers else None,
+            tts=self._build_tts_port() if providers else None,
+            sense_loader=_LexiconSenseLoader(self),
         )
 
+    # Public question API -------------------------------------------------------
+
+    def question_types(self):
+        return self.worker_questions.question_types()
+
+    async def prepare_questions(self, word_id: int, demands):
+        entry = await self.get_entry(word_id)
+        return await self.worker_questions.prepare(entry, demands)
+
     async def get_question(self, question_id: int):
-        return await self.questions.get(question_id)
+        return await self._question_repository().get(question_id)
 
-    async def list_questions_for_sense(self, sense_id: int, fmt: str | None = None):
-        return await self.questions.list_for_sense(sense_id, fmt)
+    async def list_questions_for_sense(
+        self, sense_id: int, type_id: str | None = None
+    ):
+        return await self._question_repository().list_for_sense(sense_id, type_id)
 
-    async def grade_question(self, question_id: int, answer: object):
-        question = await self.questions.get(question_id)
+    async def retrieve_question(
+        self,
+        sense_id: int,
+        difficulty_level: int,
+        excluded_ids: frozenset[int],
+        type_id: str,
+    ):
+        return await self.worker_questions.retrieve(
+            sense_id, difficulty_level, excluded_ids, type_id
+        )
+
+    async def retrieve_exposure(self, sense_id: int):
+        return await self.worker_questions.retrieve_exposure(sense_id)
+
+    async def evaluate_answer(self, question_id: int, answer: object):
+        return await self._evaluate_answer(self.worker_questions, question_id, answer)
+
+    async def _evaluate_answer(self, question_engine, question_id: int, answer: object):
+        question = await self._question_repository().get(question_id)
         if question is None:
             return None
-        return await self.questions.grade(question, answer)
+        return await question_engine.evaluate(question, answer)
 
     def _build_questions_llm(self) -> StructuredLLM | None:
         """Structured LLM for the contextual-MCQ plugin (bound to ``GeneratedMCQ``
@@ -1569,6 +1601,19 @@ class Lexicon:
                 for wt in sorted(word.tags, key=lambda wt: wt.tag.name)
             ],
         )
+
+
+class _LexiconSenseLoader:
+    """Resolve a sense to its owning entry for provider-free exposure cards."""
+
+    def __init__(self, lexicon: Lexicon):
+        self._lexicon = lexicon
+
+    async def load_entry(self, sense_id: int) -> Entry | None:
+        word_id = await self._lexicon._repo.word_id_for_sense(sense_id)
+        if word_id is None:
+            return None
+        return await self._lexicon.get_entry(word_id)
 
 
 class _LexiconTtsPort:

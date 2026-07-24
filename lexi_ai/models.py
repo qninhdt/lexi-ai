@@ -490,17 +490,24 @@ class Asset(Base):
 
 
 class Question(Base):
-    """A generated vocabulary question about a word (optionally a specific sense).
+    """A persisted vocabulary question about a word and optional sense.
 
-    The polymorphic per-format content lives in ``payload`` as an app-serialized
-    JSON string (portable ``Text``, never native JSONB), so a new format needs no
-    new table — only a new plugin. Rows exist only for questions a plugin chose to
-    persist (it calls the question store itself); ephemeral questions never reach
-    here. No UNIQUE key: questions are content, not identity — the app decides dup
-    tolerance (contrast ``words.match_key``).
+    Plugin identity (``type_id``) is separate from the UI contract
+    (``render_format``). The canonical payload hash participates in the durable
+    idempotency key used by the prepare path. Per-format content remains portable
+    app-serialized JSON in ``payload``.
     """
 
     __tablename__ = "questions"
+    __table_args__ = (
+        UniqueConstraint(
+            "sense_id",
+            "type_id",
+            "difficulty_level",
+            "content_hash",
+            name="uq_question_content",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     word_id: Mapped[int] = mapped_column(
@@ -508,9 +515,12 @@ class Question(Base):
     )
     # Nullable: a whole-word question targets no single sense.
     sense_id: Mapped[int | None] = mapped_column(ForeignKey("senses.id", ondelete="CASCADE"))
-    format: Mapped[str] = mapped_column(String(32), nullable=False)  # ∈ QUESTION_FORMATS
-    answer_kind: Mapped[str] = mapped_column(String(16), nullable=False)  # ∈ ANSWER_KINDS
-    payload: Mapped[str] = mapped_column(Text, nullable=False)  # app-level JSON string
+    type_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    render_format: Mapped[str] = mapped_column(String(16), nullable=False)
+    difficulty_level: Mapped[int] = mapped_column(Integer, nullable=False)
+    interaction_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, server_default=func.now()
     )

@@ -265,29 +265,35 @@ TTS_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
 SOURCE_KINDS = frozenset({"sense_def", "example", "collocation"})
 
 # --- questions subsystem vocabularies -------------------------------------
-#
-# Three axes wired through ``answer_kind``: a format DECLARES an answer_kind, a
-# generator PRODUCES a question, a scorer GRADES it — dispatched by answer_kind,
-# never by which backend produced the question. Adding a format = one id here +
-# one registry row.
 
-# questions.format (v1 seed set).
-QUESTION_FORMATS = frozenset(
+# Plugin identity and grading-dispatch keys for the registered MVP types.
+QUESTION_TYPES = frozenset(
     {
+        "flashcard",
         "definition_mcq",
-        "cloze",
         "contextual_mcq",
+        "cloze",
         "use_in_sentence",
-        "matching",
-        "listening",
-        "spelling",
-        "pronunciation_mcq",
-        "collocation_fill",
     }
 )
 
-# questions.answer_kind — the coupling contract a scorer dispatches on.
-ANSWER_KINDS = frozenset({"single_choice", "text_span", "free_text", "matching"})
+# UI render contracts. Multiple question types may share one render format.
+RENDER_FORMATS = frozenset({"flashcard", "single_choice", "text_span", "free_text"})
+
+# Retrieval-demand scale: exposure at level 0, assessment at levels 1-4.
+DIFFICULTY_LEVELS = frozenset({0, 1, 2, 3, 4})
+EXPOSURE_LEVEL = 0
+INTERACTION_MODES = frozenset({"exposure", "assessment"})
+
+# Stable payload-schema discriminators avoid importing ``questions.schemas``
+# here: that package imports question constants while building its registry.
+# Phase 2 resolves these names to validator classes and verifies the coupling.
+RENDER_FORMAT_PAYLOAD = {
+    "flashcard": "FlashcardPayload",
+    "single_choice": "MCQPayload",
+    "text_span": "ClozePayload",
+    "free_text": "UseInSentencePayload",
+}
 
 # senses.forms inflection labels. The generation prompt marks example targets and
 # emits a per-sense form table using EXACTLY these labels; the write path and the

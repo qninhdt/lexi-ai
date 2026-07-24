@@ -43,7 +43,18 @@ class Judgment(BaseModel):
     feedback: str = Field(max_length=512, description="Short learner-facing feedback.")
 
 
-# --- payload validators (one per format) ----------------------------------
+# --- payload validators (one per render format) ---------------------------
+
+
+class FlashcardPayload(BaseModel):
+    """Deterministic level-0 exposure card built from authoritative sense data."""
+
+    word: str = Field(min_length=1, max_length=128)
+    pos: str | None = Field(default=None, max_length=32)
+    definition: str = Field(min_length=1, max_length=2048)
+    example: str | None = Field(default=None, max_length=512)
+    ipa_uk: str | None = Field(default=None, max_length=128)
+    ipa_us: str | None = Field(default=None, max_length=128)
 
 
 class MCQPayload(BaseModel):
@@ -70,6 +81,7 @@ class ClozePayload(BaseModel):
     stem_with_blank: str = Field(min_length=1, max_length=512)
     answer_norm: str = Field(min_length=1, max_length=128)
     accepted_forms: list[str] = Field(default_factory=list)
+    word_bank: list[str] = Field(default_factory=list)
 
 
 class UseInSentencePayload(BaseModel):

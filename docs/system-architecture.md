@@ -48,16 +48,16 @@ lexi_ai/
     tts.py          TTSProvider protocol + StubTTSProvider + OpenAICompatibleTTSProvider
   persistence/
     repository.py   THE write path: upsert, dedup, stub-link, cefr, themes, error path
-  questions/        generate + grade vocabulary questions from a done entry
-    base.py         plugin contract: QuestionContext, QuestionFormat, registry
+  questions/        prepare + retrieve + evaluate persisted vocabulary questions
+    base.py         type descriptors, demands, plugin contracts, registry
     distractors.py  best-effort wrong-option ladder (semantic -> topic)
-    schemas.py      GeneratedMCQ / Judgment (llm) + per-format payload validators
-    scoring.py      shared async grade helpers (single_choice / text_span / rubric)
-    formats/        one module per format, each self-registering on import
-      _shared.py    cross-format helpers (MCQ build, blank-target, audio-ref)
-      *.py          one plugin per format (definition_mcq, cloze, listening, ...)
-    repository.py   QuestionRepository (the questions write path; JSON at boundary)
-    engine.py       QuestionEngine — the dispatcher over plugins
+    schemas.py      render-payload validators + structured LLM outputs
+    scoring.py      shared evaluation helpers (single choice / text span / rubric)
+    formats/        one module per type; five MVP types self-register on import
+      _shared.py    cross-type helpers (MCQ build, target blanking, exposure)
+      *.py          registered types plus unregistered follow-up candidates
+    repository.py   QuestionRepository (durable idempotent question store)
+    engine.py       QuestionEngine — prepare/retrieve/evaluate dispatcher
   api.py            Lexicon.get_entry() — the public lazy-lookup surface
   prep/
     phrase_overlap.py  Phase-7 one-off: classify Cambridge phrase_titles

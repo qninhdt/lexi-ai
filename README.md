@@ -38,13 +38,11 @@ cost zero tokens.
   the source reference `(source_kind, source_id, kind, params)`, plus a stored
   `content_hash` verified on read — so a regenerated or reused source yields a clean
   miss (never stale content), and a repeat call spends zero tokens.
-- **Question engine** — turn a generated word into vocabulary questions across
-  nine formats and grade answers. Each format is a self-contained plugin (one
-  module under `questions/formats/`) owning its own generation, grading, and
-  persistence; the engine is a pure dispatcher. Covers rule-based and LLM-based
-  generation and grading (see below). Text-span grading (cloze, spelling,
-  collocation-fill) accepts a sense's inflected forms, so a learner typing `ran`
-  for `run` scores correct.
+- **Question engine** — prepare, retrieve, and evaluate persisted vocabulary
+  questions through five registered types. Plugin identity (`type_id`) is separate
+  from the UI contract (`render_format`); level 0 is exposure and levels 1–4 are
+  assessments. Preparation is best-effort, retrieval is exact and never generates,
+  and evaluation reports `graded` or `pending`.
 - **Portable storage** — one schema runs on both SQLite and Postgres (portable
   column types only, no JSONB/ARRAY/native enum).
 
@@ -73,10 +71,27 @@ async def main():
     entry = await lex.generate(results[0])
     print(entry.display, entry.senses[0].definition)
 
-    # Question engine: generate + grade vocabulary questions from a done word.
-    questions = await lex.questions.generate(entry, formats=["contextual_mcq"], n=1)
-    score = await lex.questions.grade(questions[0], answer=2)
-    print(score.correct, score.score)
+    # Question engine: inspect capabilities, prepare persisted assessments,
+    # retrieve one exact question, then evaluate by durable question id.
+    from lexi_ai import QuestionDemand
+
+    question_types = lex.question_types()
+    sense_id = entry.senses[0].sense_id
+    report = await lex.prepare_questions(
+        entry.word_id,
+        [QuestionDemand(sense_id, difficulty_level=1, expected_count=1)],
+    )
+    question = await lex.retrieve_question(
+        sense_id,
+        difficulty_level=1,
+        excluded_ids=frozenset(),
+        type_id="definition_mcq",
+    )
+    if question is not None:
+        evaluation = await lex.evaluate_answer(
+            question.question_id, question.payload["correct_index"]
+        )
+        print(question.type_id, question.render_format, evaluation.status)
 
     # Themes: author a voice once (LLM-expanded if description/tone are omitted,
     # generated in-line the first time a word is fetched under it), read the overlay.
@@ -117,9 +132,11 @@ Every resource has get/list/delete alongside create — `get_theme`/`update_them
 `delete_theme`, `delete_entry`/`list_entries`/`list_entries_by_tag`,
 `rename_tag`/`delete_tag`/`merge_tags`, `get_asset`/`list_assets`/`delete_asset`/
 `purge_assets`. Bulk variants (`generate_many`, `get_many`, `translate_many`,
-`tts_many`, `get_status_many`, `lex.questions.grade_many`) run concurrently and
-return a `list[BatchResult]` — one entry per input, in order; a failed item never
-aborts the rest (check `result.ok` / `result.value` / `result.error`).
+`tts_many`, `get_status_many`) run concurrently and return a
+`list[BatchResult]` — one entry per input, in order; a failed item never aborts
+the rest (check `result.ok` / `result.value` / `result.error`). Question work uses
+`prepare_questions`; persisted assessments are selected with `retrieve_question`
+and evaluated with `evaluate_answer`.
 
 `add_examples(sense_id, n=3, theme=None)` appends up to `n` fresh example
 sentences to a single sense (neutral, or a themed overlay when `theme=` is set —
@@ -128,21 +145,31 @@ overwrites existing examples and never re-embeds. `stats()` returns read-only
 dictionary counts (words by status, senses, examples, tags, themes, themed
 words, assets by kind, questions).
 
-### Question formats
+### Question types
 
-| Format | Answer kind | Generator | Grader | Persists |
-|--------|-------------|-----------|--------|----------|
-| `definition_mcq` | single choice | rule | rule (index) | no |
-| `cloze` | text span | rule | rule (`match_key`) | no |
-| `contextual_mcq` | single choice | LLM | rule (index) | yes |
-| `use_in_sentence` | free text | rule | LLM (rubric) | no |
-| `matching` | matching | rule | rule (permutation) | no |
-| `listening` | single choice | rule (TTS) | rule (index) | yes |
-| `spelling` | text span | rule (TTS) | rule (`match_key`) | no |
+`question_types()` returns the registered capability descriptors. `type_id`
+selects generation/evaluation behavior; `render_format` selects the UI payload
+contract, so multiple types can share one renderer. Difficulty is explicit:
+level 0 is non-assessable exposure and levels 1–4 are assessments.
 
-`listening` and `spelling` synthesize an audio clip via the configured TTS
-provider; with no TTS configured they degrade to no questions rather than
-failing. Adding a format is one plugin class + one registry line — no engine edit.
+| Type ID | Render format | Levels | Mode |
+|---------|---------------|--------|------|
+| `flashcard` | `flashcard` | 0 | exposure |
+| `definition_mcq` | `single_choice` | 1 | assessment |
+| `contextual_mcq` | `single_choice` | 1–2 | assessment |
+| `cloze` | `text_span` | 2–3 | assessment |
+| `use_in_sentence` | `free_text` | 3–4 | assessment |
+
+`prepare_questions(word_id, demands)` best-effort creates persisted assessments
+and returns produced counts by `(sense_id, difficulty_level)`.
+`retrieve_question(...)` performs exact type/level selection, excludes supplied
+question IDs, and never generates or falls back. `retrieve_exposure(sense_id)`
+builds the level-0 flashcard. `evaluate_answer(question_id, answer)` returns an
+`Evaluation` with status `graded` or `pending`; exposure cards are not assessable.
+
+The existing `matching`, `listening`, `spelling`, `pronunciation_mcq`, and
+`collocation_fill` plugin files are intentionally unregistered while they await
+migration to this contract in a follow-up.
 
 ## Examples
 

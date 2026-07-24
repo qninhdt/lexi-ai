@@ -1,81 +1,133 @@
-"""``contextual_mcq`` — LLM MCQ from a novel context; PERSISTS its output."""
+"""Level-1 direct and level-2 contextual multiple choice."""
+
+from collections.abc import Sequence
 
 from lexi_ai.llm import ainvoke_structured, guarded_messages
 from lexi_ai.normalize import match_key
 from lexi_ai.prompts import PromptLoader
-from lexi_ai.questions.base import FormatSpec, QuestionContext, register
+from lexi_ai.questions.base import (
+    PrepareReport,
+    QuestionContext,
+    QuestionDemand,
+    QuestionQuery,
+    QuestionTypeDescriptor,
+    register,
+)
 from lexi_ai.questions.dedup import DistractorDedup
 from lexi_ai.questions.formats._shared import (
     _CONTEXTUAL_SYSTEM,
     _MCQ_OPTIONS,
-    _core_sense,
     _mcq_question,
 )
 from lexi_ai.questions.schemas import GeneratedMCQ
 from lexi_ai.questions.scoring import grade_single_choice
-from lexi_ai.read_models import Entry, Question, Score, SenseView
+from lexi_ai.read_models import Entry, Evaluation, Question, SenseView
 
 
 class ContextualMCQ:
-    """LLM MCQ from a novel context — PERSISTS its output via ``ctx.store``."""
+    descriptor = QuestionTypeDescriptor(
+        type_id="contextual_mcq",
+        render_format="single_choice",
+        supported_levels=frozenset({1, 2}),
+        interaction_mode="assessment",
+    )
 
-    format = "contextual_mcq"
-    answer_kind = "single_choice"
+    async def prepare(
+        self, ctx: QuestionContext, demands: Sequence[QuestionDemand]
+    ) -> PrepareReport:
+        produced: dict[tuple[int, int], int] = {}
+        for demand in demands:
+            level = demand.difficulty_level
+            if level not in self.descriptor.supported_levels or demand.expected_count <= 0:
+                continue
+            key = (demand.sense_id, level)
+            question = await self._build(ctx, demand.sense_id, level)
+            if question is None or ctx.store is None:
+                produced[key] = 0
+                continue
+            await ctx.store.insert(question)
+            produced[key] = 1
+        return PrepareReport(produced)
 
-    async def generate(self, ctx: QuestionContext, n: int = 1) -> list[Question]:
+    async def _build(
+        self, ctx: QuestionContext, sense_id: int, level: int
+    ) -> Question | None:
         entry = ctx.entry
-        if entry is None or n <= 0 or ctx.llm is None:
-            return []  # no llm configured -> this format is unavailable, best-effort
-        sense = _core_sense(entry)
+        if entry is None:
+            return None
+        sense = next((item for item in entry.senses if item.sense_id == sense_id), None)
         if sense is None:
-            return []
+            return None
+        if level == 1:
+            stem = f"Which word means: {sense.definition}"
+            distractors = await ctx.distractors.for_word(
+                entry, k=_MCQ_OPTIONS - 1, pos=sense.pos
+            )
+        else:
+            if ctx.llm is None:
+                return None
+            generated = await self._generate_context(ctx, entry, sense)
+            stem = generated.stem
+            distractors = await self._merge_distractors(ctx, entry, sense, generated)
+        return _mcq_question(
+            entry,
+            sense,
+            stem,
+            f"contextual_mcq:{match_key(entry.norm)}:{level}",
+            distractors,
+            type_id=self.descriptor.type_id,
+            difficulty_level=level,
+        )
+
+    @staticmethod
+    async def _generate_context(
+        ctx: QuestionContext, entry: Entry, sense: SenseView
+    ) -> GeneratedMCQ:
         human = PromptLoader.render(
             "contextual_mcq_user",
             word=entry.display,
             definition=sense.definition,
         )
-        mcq = await ainvoke_structured(
+        return await ainvoke_structured(
             ctx.llm,
             guarded_messages(_CONTEXTUAL_SYSTEM, human),
             GeneratedMCQ,
         )
-        # We use only the llm's stem + distractors; the correct answer is always the
-        # target word (entry.display), NOT the model's claimed `mcq.correct` — trusting
-        # a generated answer would risk a hallucinated key. `correct` steers the model
-        # to build coherent distractors, then is intentionally discarded.
-        distractors = await self._merge_distractors(ctx, entry, sense, mcq)
-        question_id = f"contextual_mcq:{match_key(entry.norm)}"
-        q = _mcq_question(entry, sense, mcq.stem, question_id, distractors, self.format)
-        if q is None:
-            return []
-        if ctx.store is not None:  # the plugin decides to persist; the engine does not
-            q = await ctx.store.insert(q)
-        return [q]
 
     @staticmethod
     async def _merge_distractors(
-        ctx: QuestionContext, entry: Entry, sense: SenseView, mcq: GeneratedMCQ
+        ctx: QuestionContext, entry: Entry, sense: SenseView, generated: GeneratedMCQ
     ) -> list[str]:
-        """LLM-proposed distractors first (answer-filtered), topped up from the ladder.
-
-        Uses the shared :class:`DistractorDedup` (3.3) so the exclude+dedup rule
-        (never the answer or an alias variant, never a repeat) is enforced by the
-        SAME code the ladder provider uses — not a hand-rolled second copy."""
         dedup = DistractorDedup(entry)
-        want = _MCQ_OPTIONS - 1
-        for cand in mcq.distractors:
-            if len(dedup.items) >= want:
+        wanted = _MCQ_OPTIONS - 1
+        for candidate in generated.distractors:
+            if len(dedup.items) >= wanted:
                 break
-            dedup.take(cand)
-        if len(dedup.items) < want:
-            for cand in await ctx.distractors.for_word(entry, k=want, pos=sense.pos):
-                if dedup.take(cand) and len(dedup.items) >= want:
+            dedup.take(candidate)
+        if len(dedup.items) < wanted:
+            for candidate in await ctx.distractors.for_word(
+                entry, k=wanted, pos=sense.pos
+            ):
+                if dedup.take(candidate) and len(dedup.items) >= wanted:
                     break
-        return dedup.items[:want]
+        return dedup.items[:wanted]
 
-    async def grade(self, ctx: QuestionContext, question: Question, answer: object) -> Score:
-        # Same helper the rule DefinitionMCQ uses — the cross-axis proof.
+    async def retrieve(
+        self, ctx: QuestionContext, query: QuestionQuery
+    ) -> Question | None:
+        if query.difficulty_level not in self.descriptor.supported_levels or ctx.store is None:
+            return None
+        return await ctx.store.retrieve_one(
+            query.sense_id,
+            query.difficulty_level,
+            self.descriptor.type_id,
+            query.excluded_question_ids,
+        )
+
+    async def evaluate(
+        self, ctx: QuestionContext, question: Question, answer: object
+    ) -> Evaluation:
         return await grade_single_choice(question, answer)
 
 
-register(FormatSpec("contextual_mcq", "single_choice", ContextualMCQ))
+register(ContextualMCQ)

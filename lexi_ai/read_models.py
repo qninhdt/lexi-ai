@@ -5,6 +5,7 @@ session closes). ``display`` is always ``render(norm)`` — never a stored colum
 """
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 
 @dataclass
@@ -223,18 +224,39 @@ class SemanticHit:
 class Question:
     """A vocabulary question about a word (public read view).
 
-    ``id`` is ``None`` for an ephemeral question a plugin chose not to persist;
-    a persisted question carries its DB id. ``payload`` is the parsed per-format
-    dict (prompt, options, correct index, rubric, ... — shape depends on
-    ``format``); the DB stores it as a JSON string, the read layer parses it.
+    ``question_id`` is ``None`` for an ephemeral question and the persisted ORM
+    row id otherwise. ``type_id`` selects the plugin and grading behavior;
+    ``render_format`` selects the UI contract. ``payload`` is the validated,
+    parsed render data.
     """
 
-    id: int | None
+    question_id: int | None
     word_id: int
     sense_id: int | None
-    format: str
-    answer_kind: str
+    type_id: str
+    render_format: str
+    difficulty_level: int
+    interaction_mode: str
     payload: dict
+
+
+@dataclass
+class Evaluation:
+    """Canonical public result of evaluating an assessment question."""
+
+    status: Literal["graded", "pending"]
+    verdict: bool | None
+    score: float | None
+    feedback: str | None = None
+
+    @property
+    def is_correct(self) -> bool:
+        """Return the verdict only after grading has completed."""
+        if self.status != "graded":
+            raise RuntimeError("is_correct is unavailable while evaluation is pending")
+        if self.verdict is None:
+            raise RuntimeError("graded evaluation has no verdict")
+        return self.verdict
 
 
 @dataclass

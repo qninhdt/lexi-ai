@@ -25,6 +25,10 @@ from lexi_ai.models import (
     WordAlias,
     WordRelation,
 )
+from lexi_ai.models import (
+    Question as QuestionRow,
+)
+from lexi_ai.read_models import Evaluation, Question
 
 
 @pytest.fixture
@@ -327,3 +331,66 @@ def test_schema_compiles_on_both_dialects():
         for table in Base.metadata.sorted_tables:
             ddl = str(CreateTable(table).compile(dialect=dialect))
             assert "CREATE TABLE" in ddl
+
+
+
+# --- question type contracts ---------------------------------------------
+
+
+def test_public_question_uses_type_and_render_contracts():
+    question = Question(
+        question_id=7,
+        word_id=1,
+        sense_id=2,
+        type_id="cloze",
+        render_format="text_span",
+        difficulty_level=2,
+        interaction_mode="assessment",
+        payload={"stem_with_blank": "A ____.", "answer_norm": "word"},
+    )
+
+    assert question.question_id == 7
+    assert question.type_id == "cloze"
+    assert question.render_format == "text_span"
+    assert not hasattr(question, "id")
+    assert not hasattr(question, "format")
+    assert not hasattr(question, "answer_kind")
+
+
+def test_evaluation_distinguishes_graded_from_pending():
+    graded = Evaluation(status="graded", verdict=True, score=1.0, feedback=None)
+    pending = Evaluation(status="pending", verdict=None, score=None, feedback=None)
+
+    assert graded.is_correct is True
+    with pytest.raises(RuntimeError, match="pending"):
+        _ = pending.is_correct
+
+
+def test_question_orm_has_new_columns_and_idempotency_constraint():
+    columns = set(QuestionRow.__table__.columns.keys())
+    constraints = {
+        constraint.name: tuple(column.name for column in constraint.columns)
+        for constraint in QuestionRow.__table__.constraints
+        if constraint.name is not None
+    }
+
+    assert {
+        "id",
+        "word_id",
+        "sense_id",
+        "type_id",
+        "render_format",
+        "difficulty_level",
+        "interaction_mode",
+        "payload",
+        "content_hash",
+        "created_at",
+    } == columns
+    assert "format" not in columns
+    assert "answer_kind" not in columns
+    assert constraints["uq_question_content"] == (
+        "sense_id",
+        "type_id",
+        "difficulty_level",
+        "content_hash",
+    )

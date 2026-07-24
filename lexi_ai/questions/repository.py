@@ -1,129 +1,191 @@
-"""Question persistence — CRUD for questions a plugin chose to save.
+"""Portable persistence for prepared assessment questions."""
 
-Mirrors the patterns of :mod:`lexi_ai.persistence.repository`: all writes go
-through ``session_scope`` (commit/rollback), reads return detached column-only
-data, and the JSON (de)serialization of ``payload`` happens ONLY at this
-boundary — the rest of the system deals in dicts/dataclasses.
-
-This class satisfies the ``QuestionStore`` protocol, so a plugin receives exactly
-this CRUD surface via ``ctx.store`` (never a raw session). There is no dedup key
-(a Phase-1 decision): ``insert`` always creates a new row.
-"""
-
+import hashlib
 import json
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from lexi_ai.constants import (
+    DIFFICULTY_LEVELS,
+    INTERACTION_MODES,
+    QUESTION_TYPES,
+    RENDER_FORMATS,
+)
 from lexi_ai.db import session_scope
 from lexi_ai.models import Question as QuestionRow
 from lexi_ai.read_models import Question
 
+_MAX_PAYLOAD_BYTES = 65_536
+
 
 class QuestionRepository:
-    """CRUD for persisted questions. The ``QuestionStore`` handed to plugins."""
+    """Question storage shared by all assessment plugins."""
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
         self._session_factory = session_factory
 
-    async def insert(self, q: Question) -> Question:
-        """Persist a question; return it with its DB ``id`` set.
+    async def insert(self, question: Question) -> Question:
+        """Insert once per canonical content identity and return the stored row.
 
-        Serializes ``payload`` to a JSON string at this boundary. Rejects a
-        payload that serializes to text containing a NUL (``\\x00``) — Postgres
-        text columns reject it, so we fail explicitly rather than corrupt on one
-        backend and not the other.
+        The pre-read is the common fast path. The savepoint catches a concurrent
+        unique-key winner without aborting the outer transaction, which keeps the
+        implementation portable across SQLite and Postgres.
         """
-        payload_json = _dump_payload(q.payload)
+        _validate_contract(question)
+        payload_json = _dump_payload(question.payload)
+        content_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         async with session_scope(self._session_factory) as session:
-            row = QuestionRow(
-                word_id=q.word_id,
-                sense_id=q.sense_id,
-                format=q.format,
-                answer_kind=q.answer_kind,
-                payload=payload_json,
-            )
-            session.add(row)
-            await session.flush()
-            new_id = row.id
-        return Question(
-            id=new_id,
-            word_id=q.word_id,
-            sense_id=q.sense_id,
-            format=q.format,
-            answer_kind=q.answer_kind,
-            payload=q.payload,
-        )
+            existing = await _find_existing(session, question, content_hash)
+            if existing is not None:
+                return _to_read_model(existing)
 
-    async def list_for_word(self, word_id: int, fmt: str | None = None) -> list[Question]:
-        """Persisted questions for a word, optionally filtered by ``format``."""
+            row = QuestionRow(
+                word_id=question.word_id,
+                sense_id=question.sense_id,
+                type_id=question.type_id,
+                render_format=question.render_format,
+                difficulty_level=question.difficulty_level,
+                interaction_mode=question.interaction_mode,
+                payload=payload_json,
+                content_hash=content_hash,
+            )
+            try:
+                async with session.begin_nested():
+                    session.add(row)
+                    await session.flush()
+            except IntegrityError:
+                existing = await _find_existing(session, question, content_hash)
+                if existing is None:
+                    raise
+                return _to_read_model(existing)
+            return _to_read_model(row)
+
+    async def retrieve_one(
+        self,
+        sense_id: int,
+        difficulty_level: int,
+        type_id: str,
+        excluded_ids: frozenset[int],
+    ) -> Question | None:
+        """Return the first exact unexcluded row.
+
+        This is intentionally non-atomic: it does not claim or lock the row.
+        Session-level duplicate avoidance belongs to the caller maintaining
+        ``excluded_ids``.
+        """
+        async with session_scope(self._session_factory) as session:
+            stmt = select(QuestionRow).where(
+                QuestionRow.sense_id == sense_id,
+                QuestionRow.difficulty_level == difficulty_level,
+                QuestionRow.type_id == type_id,
+            )
+            if excluded_ids:
+                stmt = stmt.where(QuestionRow.id.not_in(excluded_ids))
+            result = await session.execute(
+                stmt.order_by(QuestionRow.id).limit(1)
+            )
+            row = result.scalar_one_or_none()
+            return _to_read_model(row) if row is not None else None
+
+    async def list_for_word(
+        self, word_id: int, type_id: str | None = None
+    ) -> list[Question]:
         async with session_scope(self._session_factory) as session:
             stmt = select(QuestionRow).where(QuestionRow.word_id == word_id)
-            if fmt is not None:
-                stmt = stmt.where(QuestionRow.format == fmt)
-            stmt = stmt.order_by(QuestionRow.id)
-            rows = (await session.execute(stmt)).scalars().all()
-            return [_to_read_model(r) for r in rows]
+            if type_id is not None:
+                stmt = stmt.where(QuestionRow.type_id == type_id)
+            rows = (await session.execute(stmt.order_by(QuestionRow.id))).scalars().all()
+            return [_to_read_model(row) for row in rows]
 
-    async def list_for_sense(self, sense_id: int, fmt: str | None = None) -> list[Question]:
-        """Persisted questions for one sense, newest first.
-
-        A learner session is scoped to a sense, not merely its owning word.  This
-        query deliberately excludes whole-word questions (``sense_id IS NULL``),
-        such as matching, because they cannot be safely bound to one FSRS item.
-        """
+    async def list_for_sense(
+        self, sense_id: int, type_id: str | None = None
+    ) -> list[Question]:
+        """List only rows bound to the requested sense, newest first."""
         async with session_scope(self._session_factory) as session:
             stmt = select(QuestionRow).where(QuestionRow.sense_id == sense_id)
-            if fmt is not None:
-                stmt = stmt.where(QuestionRow.format == fmt)
-            stmt = stmt.order_by(QuestionRow.id.desc())
-            rows = (await session.execute(stmt)).scalars().all()
-            return [_to_read_model(r) for r in rows]
+            if type_id is not None:
+                stmt = stmt.where(QuestionRow.type_id == type_id)
+            rows = (
+                await session.execute(stmt.order_by(QuestionRow.id.desc()))
+            ).scalars().all()
+            return [_to_read_model(row) for row in rows]
 
     async def get(self, question_id: int) -> Question | None:
-        """A single persisted question by id, or ``None`` if absent."""
         async with session_scope(self._session_factory) as session:
             row = await session.get(QuestionRow, question_id)
             return _to_read_model(row) if row is not None else None
 
     async def delete(self, question_id: int) -> bool:
-        """Delete a question by id; return whether a row was removed."""
         async with session_scope(self._session_factory) as session:
-            result = await session.execute(delete(QuestionRow).where(QuestionRow.id == question_id))
+            result = await session.execute(
+                delete(QuestionRow).where(QuestionRow.id == question_id)
+            )
             return (result.rowcount or 0) > 0
 
 
-def _dump_payload(payload: dict) -> str:
-    """JSON-encode a payload dict, rejecting embedded NUL in any string value.
+async def _find_existing(
+    session: AsyncSession, question: Question, content_hash: str
+) -> QuestionRow | None:
+    stmt = select(QuestionRow).where(
+        QuestionRow.word_id == question.word_id,
+        QuestionRow.sense_id == question.sense_id,
+        QuestionRow.type_id == question.type_id,
+        QuestionRow.difficulty_level == question.difficulty_level,
+        QuestionRow.content_hash == content_hash,
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
 
-    JSON escapes a NUL to ``\\u0000`` on the way out (so the stored text is
-    Postgres-safe), but ``json.loads`` turns it back into a raw ``\\x00`` in the
-    dict — which would then poison a downstream Postgres text write. Reject it at
-    the boundary instead of storing a value that can't round-trip safely.
-    """
+
+def _validate_contract(question: Question) -> None:
+    vocabularies = (
+        ("type_id", question.type_id, QUESTION_TYPES),
+        ("render_format", question.render_format, RENDER_FORMATS),
+        ("difficulty_level", question.difficulty_level, DIFFICULTY_LEVELS),
+        ("interaction_mode", question.interaction_mode, INTERACTION_MODES),
+    )
+    for field, value, vocabulary in vocabularies:
+        if value not in vocabulary:
+            raise ValueError(f"question {field} is out of vocabulary: {value!r}")
+    if question.interaction_mode == "assessment" and question.sense_id is None:
+        raise ValueError("assessment question requires a non-null sense_id")
+
+
+def _dump_payload(payload: dict) -> str:
+    """Return canonical JSON after recursive NUL and UTF-8 size checks."""
     if _has_nul(payload):
         raise ValueError("question payload contains a NUL character (\\x00)")
-    return json.dumps(payload, ensure_ascii=False)
+    dumped = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    if len(dumped.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+        raise ValueError("question payload exceeds 65,536 UTF-8 bytes")
+    return dumped
 
 
 def _has_nul(value: object) -> bool:
-    """True if a NUL (``\\x00``) hides in any string within a JSON-like value."""
     if isinstance(value, str):
         return "\x00" in value
     if isinstance(value, dict):
-        return any(_has_nul(k) or _has_nul(v) for k, v in value.items())
+        return any(_has_nul(key) or _has_nul(item) for key, item in value.items())
     if isinstance(value, (list, tuple)):
-        return any(_has_nul(v) for v in value)
+        return any(_has_nul(item) for item in value)
     return False
 
 
 def _to_read_model(row: QuestionRow) -> Question:
-    """Build the public read model from a row, parsing the JSON payload."""
     return Question(
-        id=row.id,
+        question_id=row.id,
         word_id=row.word_id,
         sense_id=row.sense_id,
-        format=row.format,
-        answer_kind=row.answer_kind,
+        type_id=row.type_id,
+        render_format=row.render_format,
+        difficulty_level=row.difficulty_level,
+        interaction_mode=row.interaction_mode,
         payload=json.loads(row.payload),
     )

@@ -1,12 +1,4 @@
-"""Shared grade helpers — the deterministic grading logic plugins delegate to.
-
-Grading is dispatched by the engine to a plugin's ``grade``; a plugin grades by
-calling the helper matching its ``answer_kind``. Keeping the logic here (not in a
-class hierarchy) is pure DRY: multiple plugins grade ``single_choice`` the same
-way, and that sameness is exactly the cross-axis proof — the llm-authored
-``contextual_mcq`` and the rule ``definition_mcq`` both grade through
-:func:`grade_single_choice`, so "who generated it" is irrelevant to grading.
-"""
+"""Shared evaluation helpers for assessment question types."""
 
 import re
 
@@ -14,59 +6,43 @@ from lexi_ai.llm import StructuredLLM, ainvoke_structured, guarded_messages
 from lexi_ai.normalize import match_key
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.questions.schemas import Judgment
-from lexi_ai.read_models import Question, Score
+from lexi_ai.read_models import Evaluation, Question
 
 _RUBRIC_SYSTEM = PromptLoader.render("rubric_scoring_system")
-
-# An option index is an ASCII integer only. Guards the choice grader against
-# unicode digits and repeated signs that str.isdigit()/lstrip("-") let through.
 _ASCII_INT_RE = re.compile(r"^-?[0-9]+$")
 
 
-async def grade_single_choice(question: Question, answer: object) -> Score:
-    """Grade a single-choice answer given as an option index OR the option text.
+def _graded(verdict: bool, score: float | None = None, feedback: str | None = None) -> Evaluation:
+    return Evaluation(
+        status="graded",
+        verdict=verdict,
+        score=(1.0 if verdict else 0.0) if score is None else score,
+        feedback=feedback,
+    )
 
-    An int (or int-like string) is the option index. Any other string is matched
-    by ``match_key`` against the options (lenient — a client can answer by value).
-    An unmatched value scores wrong rather than raising.
-    """
+
+async def grade_single_choice(question: Question, answer: object) -> Evaluation:
+    """Grade an option index or normalized option value without raising."""
     options = question.payload["options"]
     correct_index = question.payload["correct_index"]
-    idx = _resolve_choice(answer, options)
-    correct = idx is not None and idx == correct_index
-    return Score(correct=correct, score=1.0 if correct else 0.0, kind="rule")
+    selected = _resolve_choice(answer, options)
+    return _graded(selected is not None and selected == correct_index)
 
 
-async def grade_text_span(question: Question, answer: object) -> Score:
-    """Grade a text-span answer by ``match_key`` equality with the stored answer.
-
-    Rides the ONE normalizer, so cloze grading can never drift from how the
-    dictionary keys words — ``"colour"`` folds equal to a stored ``"color"`` only
-    if ``match_key`` says so.
-
-    ``accepted_forms`` (optional) widens the accepted set with the sense's
-    inflected surfaces, so a learner typing ``ran`` for ``run`` scores right. This
-    does NOT alter ``match_key`` — each accepted surface is normalized the same
-    way and added to the target set, closing the documented inflection gap without
-    touching the invariant.
-    """
+async def grade_text_span(question: Question, answer: object) -> Evaluation:
+    """Grade text against the lemma and any accepted inflected surfaces."""
     payload = question.payload
-    want = {match_key(payload["answer_norm"])}
-    want.update(match_key(s) for s in payload.get("accepted_forms", []))
-    correct = match_key(str(answer)) in want
-    return Score(correct=correct, score=1.0 if correct else 0.0, kind="rule")
+    accepted = {match_key(payload["answer_norm"])}
+    accepted.update(match_key(value) for value in payload.get("accepted_forms", []))
+    return _graded(match_key(str(answer)) in accepted)
 
 
-async def grade_rubric(question: Question, answer: object, *, judge: StructuredLLM | None) -> Score:
-    """Grade a free-text answer against the payload rubric via an llm judge.
-
-    Best-effort posture is deliberately NOT used here: grading is the caller's
-    explicit request (unlike best-effort embeddings), so a persistent judge
-    failure raises rather than silently scoring wrong. Requires an injected
-    ``judge`` :class:`StructuredLLM` producing a :class:`Judgment`.
-    """
+async def grade_rubric(
+    question: Question, answer: object, *, judge: StructuredLLM | None
+) -> Evaluation:
+    """Return pending without a judge; otherwise evaluate through the rubric."""
     if judge is None:
-        raise ValueError("rubric grading requires a judge (ctx.judge is None)")
+        return Evaluation(status="pending", verdict=None, score=None)
     payload = question.payload
     human = PromptLoader.render(
         "rubric_scoring_user",
@@ -80,51 +56,35 @@ async def grade_rubric(question: Question, answer: object, *, judge: StructuredL
         guarded_messages(_RUBRIC_SYSTEM, human),
         Judgment,
     )
-    return Score(
-        correct=judgment.correct,
-        score=judgment.score,
-        kind="llm",
-        feedback=judgment.feedback,
-    )
+    return _graded(judgment.correct, judgment.score, judgment.feedback)
 
 
-async def grade_matching(question: Question, answer: object) -> Score:
-    """Grade a matching answer (a list of right-indices) against ``correct_map``.
-
-    ``score`` is the fraction of lefts paired with their correct right; ``correct``
-    is True only when every pair is right. A malformed answer (not a list, or wrong
-    length) scores wrong rather than raising — same lenient posture as the choice
-    grader. Order-independent: the shuffle lives in the payload, so submitting the
-    stored ``correct_map`` back always scores full regardless of display order.
-    """
+async def grade_matching(question: Question, answer: object) -> Evaluation:
+    """Retain the unregistered matching helper for its future plugin migration."""
     correct_map = question.payload["correct_map"]
     if not isinstance(answer, (list, tuple)) or len(answer) != len(correct_map):
-        return Score(correct=False, score=0.0, kind="rule")
+        return _graded(False)
     hits = sum(1 for got, want in zip(answer, correct_map, strict=True) if got == want)
-    score = hits / len(correct_map)
-    return Score(correct=hits == len(correct_map), score=score, kind="rule")
+    return _graded(hits == len(correct_map), hits / len(correct_map))
 
 
 def _resolve_choice(answer: object, options: list[str]) -> int | None:
-    """Interpret an answer as an option index: an int index, or an option value."""
-    if isinstance(answer, bool):  # bool is an int subclass — never an index
+    if isinstance(answer, bool):
         return None
     if isinstance(answer, int):
         return answer
     text = str(answer).strip()
-    # Parse an option index TOTALLY: only an ASCII ``-?\d+`` is an index, and even
-    # then ``int()`` can still reject it (e.g. a 5000-digit string trips CPython's
-    # int_max_str_digits). ``str.isdigit()`` was wrong here — it accepts unicode
-    # digits ("²") and ``lstrip("-")`` allowed "--5", both of which ``int()`` then
-    # raised on, crashing the public grade() contract. A non-index (or unparseable)
-    # string must fall through to the match_key option lookup and score wrong.
-    if _ASCII_INT_RE.match(text):
+    if _ASCII_INT_RE.fullmatch(text):
         try:
             return int(text)
         except ValueError:
             return None
-    want = match_key(text)
-    for i, opt in enumerate(options):
-        if match_key(opt) == want:
-            return i
-    return None
+    wanted = match_key(text)
+    return next(
+        (
+            index
+            for index, option in enumerate(options)
+            if match_key(option) == wanted
+        ),
+        None,
+    )

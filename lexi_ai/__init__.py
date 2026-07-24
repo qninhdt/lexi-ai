@@ -8,12 +8,13 @@ from lexi_ai.api import Lexicon
 from lexi_ai.facades import LexiconEngine, LexiconReader
 from lexi_ai.markup import parse_marked_example, strip_markup
 from lexi_ai.normalize import match_key, render
+from lexi_ai.questions.base import PrepareReport, QuestionDemand, QuestionTypeDescriptor
 from lexi_ai.read_models import (
     Asset,
     BatchResult,
     Entry,
+    Evaluation,
     Question,
-    Score,
     SearchResult,
     SemanticHit,
     TagCount,
@@ -28,8 +29,11 @@ __all__ = [
     "Asset",
     "BatchResult",
     "Entry",
+    "Evaluation",
+    "PrepareReport",
     "Question",
-    "Score",
+    "QuestionDemand",
+    "QuestionTypeDescriptor",
     "SearchResult",
     "SemanticHit",
     "TagCount",

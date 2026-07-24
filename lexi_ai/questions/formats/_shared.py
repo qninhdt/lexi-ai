@@ -14,7 +14,7 @@ from lexi_ai.markup import parse_marked_example
 from lexi_ai.normalize import match_key
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.questions.base import QuestionContext
-from lexi_ai.questions.schemas import AudioRef, MCQPayload
+from lexi_ai.questions.schemas import AudioRef, FlashcardPayload, MCQPayload
 from lexi_ai.read_models import Entry, Question, SenseView
 
 # Target option count for MCQs (1 correct + 3 distractors); degrade below this
@@ -50,23 +50,50 @@ def _shuffled_options(correct: str, distractors: list[str], seed: str) -> tuple[
 
 
 def _mcq_question(
-    entry: Entry, sense: SenseView, stem: str, seed: str, distractors: list[str], format: str
-):
-    """Build a validated single-choice Question (or None if too few options).
-
-    ``format`` is passed in (the plugin knows its own id) so the returned read
-    model is COMPLETE — callers no longer mutate a constructed ``Question`` to
-    patch ``format=""`` after the fact (3.5)."""
+    entry: Entry,
+    sense: SenseView,
+    stem: str,
+    seed: str,
+    distractors: list[str],
+    *,
+    type_id: str,
+    difficulty_level: int,
+) -> Question | None:
+    """Build a validated assessment question, or ``None`` if options are thin."""
     if len(distractors) < _MCQ_MIN_DISTRACTORS:
         return None
     options, correct_index = _shuffled_options(entry.display, distractors, seed)
     payload = MCQPayload(stem=stem, options=options, correct_index=correct_index)
     return Question(
-        id=None,
+        question_id=None,
         word_id=entry.word_id,
         sense_id=sense.sense_id,
-        format=format,
-        answer_kind="single_choice",
+        type_id=type_id,
+        render_format="single_choice",
+        difficulty_level=difficulty_level,
+        interaction_mode="assessment",
+        payload=payload.model_dump(),
+    )
+
+
+def _exposure_question(entry: Entry, sense: SenseView) -> Question:
+    """Build a deterministic level-0 flashcard from authoritative sense data."""
+    payload = FlashcardPayload(
+        word=entry.display,
+        pos=sense.pos or entry.pos,
+        definition=sense.definition,
+        example=sense.examples[0] if sense.examples else None,
+        ipa_uk=sense.ipa_uk,
+        ipa_us=sense.ipa_us,
+    )
+    return Question(
+        question_id=None,
+        word_id=entry.word_id,
+        sense_id=sense.sense_id,
+        type_id="flashcard",
+        render_format="flashcard",
+        difficulty_level=0,
+        interaction_mode="exposure",
         payload=payload.model_dump(),
     )
 

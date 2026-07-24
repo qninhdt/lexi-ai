@@ -996,9 +996,12 @@ async def test_stats_matches_seeded_fixture(engine):
                 Question(
                     word_id=w1.id,
                     sense_id=s1.id,
-                    format="contextual_mcq",
-                    answer_kind="choice",
+                    type_id="contextual_mcq",
+                    render_format="single_choice",
+                    difficulty_level=1,
+                    interaction_mode="assessment",
                     payload="{}",
+                    content_hash="question-hash",
                 ),
             ]
         )
@@ -1026,3 +1029,113 @@ async def test_stats_empty_dictionary(engine):
     assert stats.themed_words == 0
     assert stats.assets_by_kind == {}
     assert stats.questions == 0
+
+
+
+# --- public question API -------------------------------------------------
+
+
+def test_question_public_exports_and_score_is_internal():
+    import lexi_ai
+    from lexi_ai import Evaluation, QuestionDemand, QuestionTypeDescriptor
+
+    assert Evaluation.__name__ == "Evaluation"
+    assert QuestionDemand.__name__ == "QuestionDemand"
+    assert QuestionTypeDescriptor.__name__ == "QuestionTypeDescriptor"
+    assert not hasattr(lexi_ai, "Score")
+
+
+def test_lexicon_has_new_question_methods_and_removed_legacy_names():
+    expected = {
+        "question_types",
+        "prepare_questions",
+        "get_question",
+        "list_questions_for_sense",
+        "retrieve_question",
+        "retrieve_exposure",
+        "evaluate_answer",
+    }
+    assert all(hasattr(Lexicon, name) for name in expected)
+    assert not any(
+        hasattr(Lexicon, name)
+        for name in ("generate_questions_for_sense", "grade_question")
+    )
+
+
+async def test_reader_and_worker_question_engines_have_separate_judge_contexts(engine):
+    lex, _gen, _sf = _make_lexicon(
+        engine, cam_words={}, norm_by_id={}, results_by_word={}
+    )
+    judge = object()
+    lex._build_judge_llm = lambda: judge
+
+    reader_engine = lex.reader_questions
+    worker_engine = lex.worker_questions
+
+    assert reader_engine is not worker_engine
+    assert reader_engine._judge is None
+    assert worker_engine._judge is judge
+
+
+class _QuestionRepositorySpy:
+    def __init__(self, question):
+        self.question = question
+        self.requested_ids = []
+
+    async def get(self, question_id):
+        self.requested_ids.append(question_id)
+        return self.question
+
+    async def list_for_sense(self, sense_id, type_id=None):
+        return [self.question]
+
+
+class _QuestionEngineSpy:
+    def __init__(self):
+        self.evaluated = []
+
+    async def evaluate(self, question, answer):
+        from lexi_ai.read_models import Evaluation
+
+        self.evaluated.append((question, answer))
+        return Evaluation(status="graded", verdict=True, score=1.0)
+
+
+async def test_evaluate_answer_refetches_authoritative_question_by_public_id(engine):
+    from lexi_ai.read_models import Question
+
+    authoritative = Question(
+        question_id=41,
+        word_id=3,
+        sense_id=7,
+        type_id="definition_mcq",
+        render_format="single_choice",
+        difficulty_level=1,
+        interaction_mode="assessment",
+        payload={"options": ["eloquent"], "correct_index": 0},
+    )
+    lex, _gen, _sf = _make_lexicon(
+        engine, cam_words={}, norm_by_id={}, results_by_word={}
+    )
+    repository = _QuestionRepositorySpy(authoritative)
+    question_engine = _QuestionEngineSpy()
+    lex._question_repo = repository
+    lex._worker_questions = question_engine
+
+    evaluation = await lex.evaluate_answer(41, 0)
+
+    assert evaluation.status == "graded"
+    assert repository.requested_ids == [41]
+    assert question_engine.evaluated == [(authoritative, 0)]
+
+
+async def test_evaluate_answer_returns_none_for_unknown_question(engine):
+    lex, _gen, _sf = _make_lexicon(
+        engine, cam_words={}, norm_by_id={}, results_by_word={}
+    )
+    lex._question_repo = _QuestionRepositorySpy(None)
+    question_engine = _QuestionEngineSpy()
+    lex._worker_questions = question_engine
+
+    assert await lex.evaluate_answer(999, "answer") is None
+    assert question_engine.evaluated == []
