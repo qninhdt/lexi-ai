@@ -202,6 +202,11 @@ class Lexicon:
         engine = self._engine or self._session_factory.kw["bind"]
         await init_models(engine)
 
+    async def close(self) -> None:
+        """Release the database engine owned by this Lexicon instance."""
+        engine = self._engine or self._session_factory.kw["bind"]
+        await engine.dispose()
+
     @property
     def reader_questions(self) -> QuestionEngine:
         """Provider-free question context used by API reader processes."""

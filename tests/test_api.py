@@ -1158,3 +1158,20 @@ async def test_evaluate_answer_returns_none_for_unknown_question(engine):
     submission = AnswerSubmission(question_id="999", response=TextResponse(text="answer"))
     assert await lex.evaluate_answer(999, submission) is None
     assert question_engine.evaluated == []
+
+
+
+async def test_close_disposes_owned_engine():
+    class DisposableEngine:
+        def __init__(self) -> None:
+            self.disposed = False
+
+        async def dispose(self) -> None:
+            self.disposed = True
+
+    engine = DisposableEngine()
+    lexicon = Lexicon(None, None, None, None, engine=engine)  # type: ignore[arg-type]
+
+    await lexicon.close()
+
+    assert engine.disposed
