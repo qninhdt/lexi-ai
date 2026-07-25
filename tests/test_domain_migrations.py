@@ -10,7 +10,7 @@ from sqlalchemy import UniqueConstraint, inspect
 
 from lexi_ai.config import Settings
 from lexi_ai.db import create_engine, init_models
-from lexi_ai.models import Question
+from lexi_ai.infrastructure.db.models import Question
 from tests.conftest import PG_SCHEMA, requires_postgres
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,7 +82,7 @@ def test_baseline_is_frozen_independent_of_orm_metadata():
     baseline = (MIGRATIONS / "versions" / "20260722_01_baseline.py").read_text()
     frozen_schema = (MIGRATIONS / "frozen_schema.py").read_text()
 
-    assert "lexi_ai.models" not in baseline
+    assert "lexi_ai.infrastructure.db.models" not in baseline
     assert "Base.metadata" not in baseline
     assert "Base.metadata" not in frozen_schema
 

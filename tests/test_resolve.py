@@ -27,7 +27,7 @@ from lexi_ai.generation.schemas import (
     WsdBatch,
     WsdChoice,
 )
-from lexi_ai.models import Sense, SenseRelation
+from lexi_ai.infrastructure.db.models import Sense, SenseRelation
 from lexi_ai.persistence.repository import Repository
 
 # --- harness ---------------------------------------------------------------

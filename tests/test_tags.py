@@ -21,7 +21,7 @@ from lexi_ai.generation.schemas import (
     GeneratedSense,
     GeneratedTopic,
 )
-from lexi_ai.models import Tag, WordTag
+from lexi_ai.infrastructure.db.models import Tag, WordTag
 from lexi_ai.normalize import tag_key
 from lexi_ai.persistence.repository import Repository
 from lexi_ai.read_models import SearchResult, TagCount
@@ -255,7 +255,7 @@ async def test_force_regen_rebuilds_word_tags(engine):
     await repo.persist_result(_result("alpha", [("food", "Food")]))
 
     async with sf() as s:
-        from lexi_ai.models import Word
+        from lexi_ai.infrastructure.db.models import Word
 
         wid = (await s.execute(select(Word.id).where(Word.norm == "alpha"))).scalar_one()
         links = (
@@ -357,7 +357,7 @@ async def test_non_done_member_excluded_from_vocab(engine):
     await repo.persist_result(_result("alpha", [("law", "Law")]))
     # Flip the word off "done" (simulates a failed force-regen error state).
     async with sf() as s:
-        from lexi_ai.models import Word
+        from lexi_ai.infrastructure.db.models import Word
 
         w = (await s.execute(select(Word).where(Word.norm == "alpha"))).scalar_one()
         w.status = "error"

@@ -56,7 +56,7 @@ def test_theme_tables_compile_on_both_dialects():
     from sqlalchemy.dialects import postgresql, sqlite
     from sqlalchemy.schema import CreateTable
 
-    from lexi_ai.models import Base
+    from lexi_ai.infrastructure.db.models import Base
 
     names = set(Base.metadata.tables)
     assert {"themes", "themed_senses", "themed_examples"} <= names

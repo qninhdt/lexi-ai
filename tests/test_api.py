@@ -23,8 +23,8 @@ from lexi_ai.generation.schemas import (
     GeneratedResult,
     RelatedWord,
 )
+from lexi_ai.infrastructure.db.models import Example, Sense, Word
 from lexi_ai.markup import parse_marked_example
-from lexi_ai.models import Example, Sense, Word
 from lexi_ai.normalize import match_key
 from lexi_ai.persistence.repository import Repository
 from lexi_ai.read_models import Entry, SenseView
@@ -927,7 +927,7 @@ async def test_add_examples_does_not_reembed(engine):
 
 
 async def test_stats_matches_seeded_fixture(engine):
-    from lexi_ai.models import (
+    from lexi_ai.infrastructure.db.models import (
         Asset,
         Example,
         Question,

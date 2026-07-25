@@ -32,7 +32,7 @@ from lexi_ai.generation.schemas import (
     GeneratedSense,
     GeneratedSenseRelation,
 )
-from lexi_ai.models import Sense, SenseRelation, Word
+from lexi_ai.infrastructure.db.models import Sense, SenseRelation, Word
 from lexi_ai.persistence.repository import Repository
 
 

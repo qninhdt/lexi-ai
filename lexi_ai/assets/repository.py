@@ -30,8 +30,8 @@ from lexi_ai.constants import (
     TTS_VOICES,
 )
 from lexi_ai.db import session_scope
-from lexi_ai.models import Asset as AssetRow
-from lexi_ai.models import Collocation, Example, Sense
+from lexi_ai.infrastructure.db.models import Asset as AssetRow
+from lexi_ai.infrastructure.db.models import Collocation, Example, Sense
 from lexi_ai.normalize import _CTRL_RE
 from lexi_ai.read_models import Asset
 

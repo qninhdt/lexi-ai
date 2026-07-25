@@ -15,7 +15,7 @@ from _common import aclose, build_lexicon, lookup, print_entry
 from sqlalchemy import select
 
 from lexi_ai.db import session_scope
-from lexi_ai.models import Word
+from lexi_ai.infrastructure.db.models import Word
 
 
 async def _status_of(lex, norm: str) -> str | None:

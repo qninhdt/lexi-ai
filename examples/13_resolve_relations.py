@@ -30,7 +30,7 @@ from _common import aclose, build_lexicon, lookup
 from sqlalchemy import select
 
 from lexi_ai.db import session_scope
-from lexi_ai.models import Sense, SenseRelation, Word
+from lexi_ai.infrastructure.db.models import Sense, SenseRelation, Word
 
 DEFAULT_SOURCE = "bright"
 DEFAULT_TARGET = "dark"

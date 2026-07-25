@@ -36,7 +36,7 @@ from lexi_ai.generation.schemas import (
     GeneratedTopic,
     RelatedWord,
 )
-from lexi_ai.models import (
+from lexi_ai.infrastructure.db.models import (
     Asset,
     Collocation,
     Example,

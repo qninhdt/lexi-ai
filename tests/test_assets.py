@@ -19,8 +19,8 @@ from lexi_ai.assets.repository import (
     normalize_asset_params,
 )
 from lexi_ai.db import create_session_factory, init_models, session_scope
-from lexi_ai.models import Asset as AssetRow
-from lexi_ai.models import Sense, Word
+from lexi_ai.infrastructure.db.models import Asset as AssetRow
+from lexi_ai.infrastructure.db.models import Sense, Word
 from lexi_ai.persistence.repository import Repository
 
 # --- hashing verify contract ----------------------------------------------
@@ -105,7 +105,7 @@ def test_asset_table_compiles_on_both_dialects():
     from sqlalchemy.dialects import postgresql, sqlite
     from sqlalchemy.schema import CreateTable
 
-    from lexi_ai.models import Base
+    from lexi_ai.infrastructure.db.models import Base
 
     assert "assets" in Base.metadata.tables
     for dialect in (postgresql.dialect(), sqlite.dialect()):
@@ -115,7 +115,7 @@ def test_asset_table_compiles_on_both_dialects():
 
 
 def test_assets_table_has_reference_columns():
-    from lexi_ai.models import Base
+    from lexi_ai.infrastructure.db.models import Base
 
     cols = Base.metadata.tables["assets"].columns
     assert "source_kind" in cols

@@ -10,8 +10,8 @@ from sqlalchemy.pool import StaticPool
 from lexi_ai.contracts.questions import RenderKind
 from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.domain.questions import PersistedQuestion
-from lexi_ai.models import Question as QuestionRow
-from lexi_ai.models import Sense, Word
+from lexi_ai.infrastructure.db.models import Question as QuestionRow
+from lexi_ai.infrastructure.db.models import Sense, Word
 from lexi_ai.questions.repository import QuestionRepository
 
 

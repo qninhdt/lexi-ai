@@ -23,7 +23,7 @@ from lexi_ai.constants import (
 from lexi_ai.contracts.questions import RenderKind
 from lexi_ai.db import session_scope
 from lexi_ai.domain.questions import PersistedQuestion
-from lexi_ai.models import Question as QuestionRow
+from lexi_ai.infrastructure.db.models import Question as QuestionRow
 
 _MAX_PAYLOAD_BYTES = 65_536
 

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from lexi_ai.config import Settings, get_settings
-from lexi_ai.models import Asset, Base
+from lexi_ai.infrastructure.db.models import Asset, Base
 
 
 def _enable_sqlite_fk(engine: AsyncEngine) -> None:

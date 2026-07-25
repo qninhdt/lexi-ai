@@ -16,7 +16,7 @@ from lexi_ai.db import (
     init_models,
     session_scope,
 )
-from lexi_ai.models import (
+from lexi_ai.infrastructure.db.models import (
     Example,
     Sense,
     SenseReference,
@@ -25,7 +25,7 @@ from lexi_ai.models import (
     WordAlias,
     WordRelation,
 )
-from lexi_ai.models import (
+from lexi_ai.infrastructure.db.models import (
     Question as QuestionRow,
 )
 
@@ -319,7 +319,7 @@ def test_schema_compiles_on_both_dialects():
     from sqlalchemy.dialects import postgresql, sqlite
     from sqlalchemy.schema import CreateTable
 
-    from lexi_ai.models import Base
+    from lexi_ai.infrastructure.db.models import Base
 
     # The tag + collocation + sense_forms + questions tables ride the same
     # portability guarantee.

@@ -23,7 +23,13 @@ from lexi_ai.generation.schemas import (
     GeneratedSenseRelation,
     RelatedWord,
 )
-from lexi_ai.models import Collocation, SenseForm, SenseRelation, Word, WordRelation
+from lexi_ai.infrastructure.db.models import (
+    Collocation,
+    SenseForm,
+    SenseRelation,
+    Word,
+    WordRelation,
+)
 from lexi_ai.normalize import match_key
 from lexi_ai.persistence.repository import Repository
 
@@ -403,7 +409,7 @@ async def test_grammar_stored_joined_empty_is_none(engine):
     await repo.persist_result(_result("go", grammar=["intransitive"]))
     await repo.persist_result(_result("stay"))  # no grammar
 
-    from lexi_ai.models import Sense
+    from lexi_ai.infrastructure.db.models import Sense
 
     async with create_session_factory(engine)() as s:
         go = (await s.execute(select(Sense).join(Word).where(Word.norm == "go"))).scalar_one()

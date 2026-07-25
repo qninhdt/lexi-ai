@@ -24,7 +24,14 @@ from lexi_ai.db import create_engine, create_session_factory, init_models, sessi
 from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
 from lexi_ai.generation.schemas import ExampleBatch
-from lexi_ai.models import Sense, SenseRelation, Word, WordAlias, WordRelation, WordTag
+from lexi_ai.infrastructure.db.models import (
+    Sense,
+    SenseRelation,
+    Word,
+    WordAlias,
+    WordRelation,
+    WordTag,
+)
 from lexi_ai.normalize import match_key, render, tag_key
 from lexi_ai.normalize import theme_key as _norm_theme_key
 from lexi_ai.persistence.repository import Repository, sense_content_hash
@@ -221,8 +228,6 @@ class Lexicon:
             self._worker_questions = self._build_question_engine(providers=True)
         return self._worker_questions
 
-
-
     def _question_repository(self):
         if self._question_repo is None:
             from lexi_ai.questions.repository import QuestionRepository
@@ -253,9 +258,7 @@ class Lexicon:
     def question_types(self) -> list[QuestionTypeInfo]:
         return self.worker_questions.question_types()
 
-    async def prepare_questions(
-        self, word_id: int, demands: list[PrepareDemand]
-    ) -> PrepareReport:
+    async def prepare_questions(self, word_id: int, demands: list[PrepareDemand]) -> PrepareReport:
         entry = await self.get_entry(word_id)
         return await self.worker_questions.prepare(entry, _to_internal_demands(demands))
 

@@ -26,7 +26,14 @@ from lexi_ai.generation.schemas import (
     GeneratedResult,
     GeneratedSense,
 )
-from lexi_ai.models import Example, Sense, SenseReference, SenseRelation, Word, WordAlias
+from lexi_ai.infrastructure.db.models import (
+    Example,
+    Sense,
+    SenseReference,
+    SenseRelation,
+    Word,
+    WordAlias,
+)
 from lexi_ai.normalize import match_key
 from lexi_ai.persistence.repository import Repository, ResolveDecision, StaleGenerationError
 from tests.conftest import requires_postgres

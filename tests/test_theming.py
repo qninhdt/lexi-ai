@@ -14,8 +14,8 @@ from sqlalchemy.pool import StaticPool
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.generation.schemas import ExampleBatch
+from lexi_ai.infrastructure.db.models import Example, Sense, ThemedExample, ThemedSense, Word
 from lexi_ai.markup import parse_marked_example
-from lexi_ai.models import Example, Sense, ThemedExample, ThemedSense, Word
 from lexi_ai.persistence.repository import Repository
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.read_models import Entry, SenseView
