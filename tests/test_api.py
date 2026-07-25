@@ -974,9 +974,7 @@ async def test_add_examples_does_not_reembed(engine):
     # A word generated with a real fake embedder is embedded once at generation;
     # add_examples must not trigger a re-embed (embeddings cover the definition only).
     embedder = _fake_embedder()
-    lex, _gen, _sf, sense_id = await _seed_sense_with_examples(
-        engine, ["Old."], embedder=embedder
-    )
+    lex, _gen, _sf, sense_id = await _seed_sense_with_examples(engine, ["Old."], embedder=embedder)
     before = await lex._vectors.fetch([str(sense_id)])
 
     await lex.engine().add_examples(sense_id, n=2)

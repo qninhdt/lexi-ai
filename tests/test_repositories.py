@@ -360,9 +360,7 @@ async def test_sense_ids_for_word_lists_every_sense_of_that_word(repo, uow):
 
     async with uow() as work:
         word_id = (await work.words.listing())[0].word_id
-        assert await work.senses.ids_for_word(word_id) == sorted(
-            await work.senses.live_sense_ids()
-        )
+        assert await work.senses.ids_for_word(word_id) == sorted(await work.senses.live_sense_ids())
         assert await work.senses.ids_for_word(4242) == []
 
 
