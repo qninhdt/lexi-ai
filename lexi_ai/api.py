@@ -10,30 +10,29 @@ asyncio lock plus a DB double-check (library, single-process — decision #18).
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from lexi_ai.application.assets import AssetService
+from lexi_ai.application.batching import gather_batch
 from lexi_ai.application.dictionary import DictionaryService
 from lexi_ai.application.enrichment import EnrichmentService
+from lexi_ai.application.generation import GenerationService
 from lexi_ai.application.generation_writer import GenerationWriter
 from lexi_ai.application.questions import QuestionService
 from lexi_ai.application.search import SearchService
+from lexi_ai.application.single_flight import SingleFlight
 from lexi_ai.application.tags import TagService
 from lexi_ai.application.themes import ThemeService
 from lexi_ai.assets.repository import AssetRepository
 from lexi_ai.config import Settings, get_settings
-from lexi_ai.constants import canonical_cambridge_ref
 from lexi_ai.db import create_engine, create_session_factory, init_models
-from lexi_ai.domain.models import WordListing
 from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
 from lexi_ai.generation.schemas import ExampleBatch
 from lexi_ai.infrastructure.db.uow import SqlAlchemyUnitOfWork
-from lexi_ai.normalize import match_key
 from lexi_ai.read_models import (
     Asset,
     BatchResult,
@@ -46,7 +45,7 @@ from lexi_ai.read_models import (
     Theme,
 )
 from lexi_ai.references.cambridge import CambridgeSource
-from lexi_ai.references.loader import ReferenceBundle, ReferenceLoader
+from lexi_ai.references.loader import ReferenceLoader
 from lexi_ai.references.wordnet import WordNetSource
 
 if TYPE_CHECKING:
@@ -114,14 +113,14 @@ class Lexicon:
         self._tts_impl = None
         self._themed_gen = None
         self._theme_meta_gen = None
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._locks = SingleFlight()
         # Single-flight lock for the THEMED overlay step (2.6), keyed on
         # (word_id, theme_id) — word_id is the canonical resolution of the word's
         # match_key (using it, not the raw display key, sidesteps the 2.1
         # display-vs-norm key mismatch). A DISTINCT map from _locks so the overlay
         # lock can never form a cycle with the neutral per-key lock (the neutral
         # lock is fully released before the overlay block runs, never nested).
-        self._theme_locks: dict[tuple[int, int], asyncio.Lock] = {}
+        self._theme_locks = SingleFlight()
         # Reader and worker question engines are distinct capability contexts.
         # The reader never receives provider capabilities, even when configured.
         self._question_repo = None
@@ -607,6 +606,26 @@ class Lexicon:
 
     # --- cached assets ----------------------------------------------------
 
+    def _generation(self) -> GenerationService:
+        """The generation service over this Lexicon's PROCESS-scoped locks.
+
+        The lock registries are owned by the Lexicon, not the service: rebuilt per
+        call they would collapse nothing, because each caller would take its own.
+        """
+        return GenerationService(
+            self._uow,
+            self._writer,
+            self._loader,
+            self._generator,
+            self._to_entry,
+            self._locks,
+            self._theme_locks,
+            self._resolve_theme_or_raise,
+            self._run_themed_generation,
+            self._embed_words,
+            self._enrichment().resolve_inbound,
+        )
+
     def _search(self) -> SearchService:
         """The lookup service, rebuilt per call over this Lexicon's collaborators."""
         return SearchService(self._uow, self._loader, self._embedder)
@@ -780,69 +799,9 @@ class Lexicon:
         If a ``theme`` (name or key) is provided, the generated/resolved entry is
         automatically restyled in that theme's voice (if not already done).
         """
-        # Custom string: anchor to WordNet only, dedup by the string's match_key.
-        if isinstance(source, str):
-            entry = await self._generate_locked(
-                match_key(source), source, None, force, structured_method=structured_method
-            )
-        # Already-generated hit: return it, or re-anchor to its Cambridge id on force.
-        elif source.lexi_word_id is not None:
-            if not force:
-                entry = await self._to_entry(source.lexi_word_id)
-            else:
-                norm, cam_id = await self._word_norm_and_cambridge(source.lexi_word_id)
-                entry = await self._generate_locked(
-                    match_key(norm), norm, cam_id, True, structured_method=structured_method
-                )
-        # Suggestion: cache-check by Cambridge provenance, then generate.
-        else:
-            if source.cambridge_id is None:
-                raise ValueError("SearchResult has neither lexi_word_id nor cambridge_id")
-            if not force:
-                hit = await self._generated_by_cambridge([source.cambridge_id])
-                if source.cambridge_id in hit:
-                    entry = await self._to_entry(hit[source.cambridge_id][0])
-                else:
-                    entry = await self._generate_locked(
-                        match_key(source.display),
-                        source.display,
-                        source.cambridge_id,
-                        force,
-                        structured_method=structured_method,
-                    )
-            else:
-                entry = await self._generate_locked(
-                    match_key(source.display),
-                    source.display,
-                    source.cambridge_id,
-                    force,
-                    structured_method=structured_method,
-                )
-
-        if theme is not None:
-            theme_id, style_prompt = await self._resolve_theme_or_raise(theme)
-
-            # Single-flight the overlay step (2.6): the LLM call in
-            # _run_themed_generation runs BEFORE persist_themed, so an unguarded
-            # check-then-act let two concurrent generate(word, theme=T) both see no
-            # overlay and both call the LLM. Serialize on (word_id, theme_id) and
-            # RE-CHECK the overlay inside the lock so the second waiter adopts the
-            # first's result instead of regenerating.
-            theme_lock_key = (entry.word_id, theme_id)
-            theme_lock = self._theme_locks.setdefault(theme_lock_key, asyncio.Lock())
-            try:
-                async with theme_lock:
-                    async with self._uow() as uow:
-                        overlay = await uow.themes.overlay_for_word(entry.word_id, theme_id)
-                    if not overlay or force:
-                        await self._run_themed_generation(entry.word_id, theme_id, style_prompt)
-            finally:
-                self._evict_theme_lock(theme_lock_key, theme_lock)
-
-            # Reload entry with the theme overlay
-            entry = await self._to_entry(entry.word_id, theme_id)
-
-        return entry
+        return await self._generation().generate(
+            source, force=force, theme=theme, structured_method=structured_method
+        )
 
     async def generate_many(
         self,
@@ -858,88 +817,29 @@ class Lexicon:
         exactly once (the existing per-``match_key`` lock + DB double-check is
         reused unchanged) — no new locking logic here."""
 
-        async def _one(source: SearchResult | str) -> Entry:
-            return await self.generate(source, force=force, theme=theme)
-
-        return await self._gather_batch(sources, _one, concurrency=concurrency)
-
-    async def _generate_locked(
-        self,
-        key: str,
-        word: str,
-        cambridge_id: int | None,
-        force: bool,
-        *,
-        structured_method: str | None = None,
-    ) -> Entry:
-        """Locked generate-and-persist for one word key (double-checked)."""
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        try:
-            async with lock:
-                if not force:
-                    done = await self._done_ids(key)
-                    if done:
-                        return await self._to_entry(done[0])
-                result = await self._run_generation(
-                    word, cambridge_id, structured_method=structured_method
-                )
-        finally:
-            self._evict_lock(key, lock)
-        return await self._entry_for_key(key, result)
+        return await self._generation().generate_many(
+            sources, force=force, theme=theme, concurrency=concurrency
+        )
 
     async def generate_fenced(
         self, source: SearchResult | str, *, structured_method: str | None = None
     ) -> Entry:
-        """Generate once under a database fence for independently deployed workers.
+        """Generate once under a database fence, for independently deployed workers.
 
-        This service-facing seam deliberately has no ``force`` flag: remote
-        callers cannot use a delayed job to replace an entry that a newer claim
-        owns. Library callers retain :meth:`generate` and its local single-flight
-        semantics.
+        Deliberately has no ``force``: a remote caller must not be able to use a
+        delayed job to replace an entry a newer claim owns.
         """
-        if isinstance(source, str):
-            key, word, cambridge_id = match_key(source), source, None
-        elif source.lexi_word_id is not None:
-            norm, cambridge_id = await self._word_norm_and_cambridge(source.lexi_word_id)
-            key, word = match_key(norm), norm
-        elif source.cambridge_id is not None:
-            key, word, cambridge_id = match_key(source.display), source.display, source.cambridge_id
-        else:
-            raise ValueError("SearchResult has neither lexi_word_id nor cambridge_id")
+        return await self._generation().generate_fenced(
+            source, structured_method=structured_method
+        )
 
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        try:
-            async with lock:
-                done = await self._done_ids(key)
-                if done:
-                    return await self._to_entry(done[0])
-                fence = await self._writer.claim(word)
-                result = await self._run_generation(
-                    word, cambridge_id, fence=fence, structured_method=structured_method
-                )
-        finally:
-            self._evict_lock(key, lock)
-        return await self._entry_for_key(key, result)
+    async def resolve_relations(self, batch_size: int = 20) -> list[BatchResult]:
+        """Reconcile one batch of pending sense-relation edges (manual/backfill)."""
+        return await self._enrichment().resolve_relations(batch_size)
 
-    async def _word_norm_and_cambridge(self, lexi_word_id: int) -> tuple[str, int | None]:
-        async with self._uow() as uow:
-            return await uow.words.norm_and_cambridge(lexi_word_id)
-
-    async def _resolve(self, key: str) -> list[tuple[int, str]]:
-        """Return (word_id, status) for every word matching key via headword or alias."""
-        async with self._uow() as uow:
-            return list(await uow.words.resolve_key(key))
-
-    async def _done_ids(self, key: str) -> list[int]:
-        """word_ids with a ``done`` entry for this match_key (headword or alias)."""
-        return [wid for wid, status in await self._resolve(key) if status == "done"]
-
-    async def _generated_by_cambridge(self, cambridge_ids: list[int]) -> dict[int, WordListing]:
-        """Which Cambridge ids are already generated, keyed by that provenance."""
-        async with self._uow() as uow:
-            return await uow.words.generated_by_cambridge(cambridge_ids)
-
-    # --- generation path --------------------------------------------------
+    async def _embed_words(self, word_ids: list[int]) -> int:
+        """Embed the senses of the given words, best-effort."""
+        return await self._enrichment().embed_missing(word_ids=word_ids)
 
     async def _run_generation(
         self,
@@ -949,130 +849,15 @@ class Lexicon:
         fence=None,
         structured_method: str | None = None,
     ):
-        """Build the bundle (Cambridge-anchored or custom), generate, persist.
-
-        After persistence, embed the new senses best-effort: an embedding failure
-        (extra missing, model load error) never fails the generation.
-        """
-        if cambridge_id is None:
-            bundle = await self._loader.bundle_custom(word)
-            cefr_map: dict[str, str] = {}
-        else:
-            got = await self._loader.bundle_by_id(cambridge_id)
-            if got is None:
-                raise ValueError(f"Cambridge word_id {cambridge_id} not found")
-            bundle = got
-            cefr_map = self._cefr_map(bundle)
-        try:
-            async with self._uow() as uow:
-                existing_tags = await uow.tags.names()
-        except Exception:  # noqa: BLE001 - vocab is best-effort; empty on failure
-            existing_tags = []
-        if structured_method is None:
-            result = await self._generator.generate(bundle, existing_tags=existing_tags)
-        else:
-            result = await self._generator.generate(
-                bundle, existing_tags=existing_tags, structured_method=structured_method
-            )
-        words = await self._writer.publish(
-            result, cambridge_word_id=cambridge_id, cambridge_cefr=cefr_map, fence=fence
+        """Build the bundle, generate, publish, then enrich after the commit."""
+        return await self._generation()._run(
+            word, cambridge_id, fence=fence, method=structured_method
         )
-        await self._embed_words([w.id for w in words])
-        # [F11] Inbound-resolve hook: these words just flipped to ``done``, so any
-        # pending sense-relation edge pointing AT them can now be reconciled.
-        # Coverage grows with traffic — no scheduler needed. Best-effort: a WSD
-        # failure must never fail an already-persisted generation.
-        await self._enrichment().resolve_inbound([w.id for w in words])
-        return result
-
-    # --- WSD relation resolution (Phase 4) --------------------------------
-
-    async def resolve_relations(self, batch_size: int = 20) -> list[BatchResult]:
-        """Reconcile one batch of pending sense-relation half-edges (manual/backfill).
-
-        Lifts up to ``batch_size`` derived-``pending`` edges whose target word is
-        ``done`` with senses, POS-filters each edge's candidate target senses,
-        LM-judges them in ONE batched prompt, and applies the verdicts under
-        per-edge savepoints with conditional writes ([F6]/[F7]). ``batch_size`` is
-        clamped to a hard ceiling ([F9]). Returns one :class:`BatchResult` per
-        edge (``value`` = derived state: ``resolved``/``unresolvable``/``noop``).
-
-        Complements the automatic inbound hook in :meth:`_run_generation` — this
-        is for words done BEFORE the feature existed, or a hook that was skipped.
-        """
-        return await self._enrichment().resolve_relations(batch_size)
-
-    # --- embeddings -------------------------------------------------------
-
-    async def _embed_words(self, word_ids: list[int]) -> int:
-        """Embed the senses of the given words, best-effort."""
-        return await self._enrichment().embed_missing(word_ids=word_ids)
-
-    async def _entry_for_key(self, key: str, result) -> Entry:
-        """Return the entry for the just-generated key, or the first unit as fallback."""
-        done = await self._done_ids(key)
-        if done:
-            return await self._to_entry(done[0])
-        # The queried key didn't match any generated unit exactly (e.g. the model
-        # normalized the norm differently); fall back to the first persisted unit.
-        fallback = await self._resolve(match_key(result.units[0].norm))
-        if not fallback:
-            raise ValueError(
-                f"no persisted entry found for key {key!r} or "
-                f"first-unit norm {result.units[0].norm!r} — generation may have errored"
-            )
-        return await self._to_entry(fallback[0][0])
-
-    def _evict_lock(self, lock_key: str, lock: asyncio.Lock) -> None:
-        """Drop a per-key lock once idle, so _locks does not grow unbounded."""
-        if not lock.locked() and self._locks.get(lock_key) is lock:
-            del self._locks[lock_key]
-
-    def _evict_theme_lock(self, lock_key: tuple[int, int], lock: asyncio.Lock) -> None:
-        """Drop a per-(word, theme) overlay lock once idle (2.6). A DISTINCT map
-        from ``_locks`` so the overlay lock never nests against the neutral
-        per-key lock — no cross-lock cycle."""
-        if not lock.locked() and self._theme_locks.get(lock_key) is lock:
-            del self._theme_locks[lock_key]
 
     @staticmethod
     async def _gather_batch(items: list, fn, concurrency: int | None = None) -> list[BatchResult]:
-        """Run ``fn(item)`` for every item, wrapping outcomes as order-aligned
-        ``BatchResult``s. One item's exception is captured, never cancels or
-        aborts the others (``asyncio.gather(..., return_exceptions=True)``).
-        ``concurrency`` bounds in-flight calls via a semaphore (for LLM-backed
-        batches); ``None`` runs everything at once (cheap DB-only batches)."""
-        if not items:
-            return []
-        if concurrency is None:
-            raw = await asyncio.gather(*(fn(item) for item in items), return_exceptions=True)
-        else:
-            sem = asyncio.Semaphore(concurrency)
-
-            async def _guarded(item):
-                async with sem:
-                    return await fn(item)
-
-            raw = await asyncio.gather(*(_guarded(item) for item in items), return_exceptions=True)
-        return [
-            BatchResult(key=item, error=str(r))
-            if isinstance(r, Exception)
-            else BatchResult(key=item, value=r)
-            for item, r in zip(items, raw, strict=True)
-        ]
-
-    @staticmethod
-    def _cefr_map(bundle: ReferenceBundle) -> dict[str, str]:
-        """Cambridge sense_id -> cefr, for the repository's Cambridge-first rule.
-
-        Keyed by the canonical ref form so it matches whatever the model echoes
-        back as ``source_ref`` (bare ``42`` or the prompt-shown ``sense#42``).
-        """
-        return {
-            canonical_cambridge_ref(str(s.cambridge_sense_id)): s.cefr_level
-            for s in bundle.cambridge_senses
-            if s.cefr_level
-        }
+        """Order-aligned batch execution; one failure never cancels its siblings."""
+        return await gather_batch(items, fn, concurrency)
 
     # --- read model assembly ---------------------------------------------
 

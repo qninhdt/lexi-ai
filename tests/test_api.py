@@ -276,7 +276,7 @@ async def test_lock_dict_does_not_grow(engine):
         await lex.generate(hits[w])
     await asyncio.gather(*[lex.generate(hits["alpha"]) for _ in range(4)])
     assert gen.calls == 3
-    assert lex._locks == {}  # every lock evicted
+    assert len(lex._locks) == 0  # every lock evicted
 
 
 async def test_get_and_status_by_lexi_id(engine):
