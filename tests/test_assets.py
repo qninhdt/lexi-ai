@@ -407,9 +407,9 @@ def _lexicon(session_factory, tmp_path, *, translator=None, tts=None):
         assets=assets,
     )
     if translator is not None:
-        lex._translator_impl = translator
+        lex._providers.translator = translator
     if tts is not None:
-        lex._tts_impl = tts
+        lex._providers.tts = tts
     return lex
 
 

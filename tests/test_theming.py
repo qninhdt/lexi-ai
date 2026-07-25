@@ -210,9 +210,9 @@ class FakeThemeMetadataGenerator:
 def _lexicon(session_factory, themed_gen=None, theme_meta_gen=None):
     lex = Lexicon(session_factory, None, None)  # type: ignore[arg-type]
     if themed_gen is not None:
-        lex._themed_gen = themed_gen
+        lex._providers.themed_generator = themed_gen
     if theme_meta_gen is not None:
-        lex._theme_meta_gen = theme_meta_gen
+        lex._providers.theme_metadata_generator = theme_meta_gen
     return lex
 
 

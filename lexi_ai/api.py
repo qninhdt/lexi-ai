@@ -33,6 +33,7 @@ from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
 from lexi_ai.generation.schemas import ExampleBatch
 from lexi_ai.infrastructure.db.uow import SqlAlchemyUnitOfWork
+from lexi_ai.infrastructure.providers import ProviderRegistry
 from lexi_ai.read_models import (
     Asset,
     BatchResult,
@@ -102,17 +103,11 @@ class Lexicon:
         self._engine = engine
         self._embedder = embedder or Embedder()
         self._assets = assets
-        # WSD judge (sense-relation reconciliation). Injectable for hermetic tests;
-        # lazily built from settings otherwise. ``None`` sentinel = not-yet-built,
-        # resolved via the ``_wsd`` property.
-        self._wsd_judge = wsd_judge
-        self._wsd_built = wsd_judge is not None
-        # Providers built on first use. Explicit fields rather than getattr
-        # sentinels so the state a caller can inject is visible on the class.
-        self._translator_impl = None
-        self._tts_impl = None
-        self._themed_gen = None
-        self._theme_meta_gen = None
+        # Every optional external capability (LLM, WSD judge, translator, TTS,
+        # themed generators) is built on first use by the registry, which owns the
+        # "is it configured?" branching. Injected collaborators are handed over so
+        # there is exactly one place that answers for a provider.
+        self._providers = ProviderRegistry(generator=generator, wsd_judge=wsd_judge)
         self._locks = SingleFlight()
         # Single-flight lock for the THEMED overlay step (2.6), keyed on
         # (word_id, theme_id) — word_id is the canonical resolution of the word's
@@ -267,48 +262,18 @@ class Lexicon:
         return QuestionService(engine, self._question_repository(), self.get_entry)
 
     def _build_questions_llm(self) -> StructuredLLM | None:
-        """Structured LLM for the contextual-MCQ plugin (bound to ``GeneratedMCQ``
-        at the call site via :func:`ainvoke_structured`)."""
-        return self._build_structured()
+        """Structured LLM for the contextual-MCQ plugin."""
+        return self._providers.questions_llm()
 
     def _build_judge_llm(self) -> StructuredLLM | None:
-        """Structured LLM for the rubric scorer (bound to ``Judgment`` at the call
-        site via :func:`ainvoke_structured`)."""
-        return self._build_structured()
-
-    def _build_structured(self) -> StructuredLLM | None:
-        """Build the openai-backed structured LLM from settings.
-
-        Returns ``None`` when no LLM is configured (empty api key), so the
-        llm-dependent formats degrade gracefully instead of failing at import.
-        The schema is supplied per-call by ``parse``, so one client serves both
-        the MCQ generator and the judge.
-        """
-        settings = get_settings()
-        if not settings.llm_api_key:
-            return None
-        from lexi_ai.llm import build_structured_llm
-
-        return build_structured_llm(settings)
-
-    def _build_wsd_judge(self):
-        """WSD judge for sense-relation reconciliation, or ``None`` when no LLM is
-        configured (resolve degrades to a no-op, like the other llm formats)."""
-        llm = self._build_structured()
-        if llm is None:
-            return None
-        from lexi_ai.generation.wsd import WsdJudge
-
-        return WsdJudge(llm)
+        """Structured LLM for the rubric scorer."""
+        return self._providers.judge_llm()
 
     @property
     def _wsd(self) -> WsdJudge | None:
         """The WSD judge, built once from settings on first use (or the injected
         fake). ``None`` when no LLM is configured — resolve is then a no-op."""
-        if not self._wsd_built:
-            self._wsd_judge = self._build_wsd_judge()
-            self._wsd_built = True
-        return self._wsd_judge
+        return self._providers.wsd()
 
     def _build_tts_port(self) -> TtsPort | None:
         """Audio-synthesis port for the listening/spelling formats, or ``None`` when
@@ -318,8 +283,7 @@ class Lexicon:
         ``(source_kind, source_id, voice, fmt)`` reference tuple — never a row id, so
         the payload stays durable across a purge/regenerate.
         """
-        settings = get_settings()
-        if not (settings.tts_api_key or settings.tts_base_url):
+        if not self._providers.tts_configured():
             return None
         return _LexiconTtsPort(self)
 
@@ -400,12 +364,8 @@ class Lexicon:
         return await self._enrichment().add_examples(sense_id, n, theme)
 
     def _example_generator(self) -> Generator:
-        """The neutral generator, used for targeted example augmentation. Reuses
-        the injected :class:`Generator`; raises ``ValueError`` when none is wired
-        (mirrors ``translate_field``'s no-LLM posture)."""
-        if self._generator is None:
-            raise ValueError("no LLM configured for example generation")
-        return self._generator
+        """The neutral generator, used for targeted example augmentation."""
+        return self._providers.example_generator()
 
     async def _add_themed_examples(self, sense_id: int, n: int, theme: str | int) -> SenseView:
         """Append up to ``n`` in-voice examples to a sense's themed overlay.
@@ -590,19 +550,11 @@ class Lexicon:
 
     def _themed_generator(self):
         """Lazy themed generator; uses settings/OpenAI proxy by default."""
-        if self._themed_gen is None:
-            from lexi_ai.theming.generator import ThemedGenerator
-
-            self._themed_gen = ThemedGenerator(settings=get_settings())
-        return self._themed_gen
+        return self._providers.themed()
 
     def _theme_metadata_generator(self):
         """Lazy theme metadata generator."""
-        if self._theme_meta_gen is None:
-            from lexi_ai.theming.generator import ThemeMetadataGenerator
-
-            self._theme_meta_gen = ThemeMetadataGenerator(settings=get_settings())
-        return self._theme_meta_gen
+        return self._providers.theme_metadata()
 
     # --- cached assets ----------------------------------------------------
 
@@ -699,9 +651,7 @@ class Lexicon:
         concurrency: int = 5,
     ) -> list[BatchResult]:
         """Batch :meth:`tts_field`, order-aligned; one failure never aborts the rest."""
-        return await self._asset_service().speak_many(
-            refs, voice, fmt, concurrency=concurrency
-        )
+        return await self._asset_service().speak_many(refs, voice, fmt, concurrency=concurrency)
 
     async def stats(self) -> Stats:
         """Read-only dictionary counts in one grouped snapshot (no LLM)."""
@@ -715,15 +665,7 @@ class Lexicon:
 
     def _translator(self):
         """The translator, or ``None`` when no LLM is configured."""
-        if self._translator_impl is not None:
-            return self._translator_impl
-        settings = get_settings()
-        if not settings.llm_api_key:
-            return None
-        from lexi_ai.assets.translate import Translator
-
-        self._translator_impl = Translator(settings=settings)
-        return self._translator_impl
+        return self._providers.translator_provider()
 
     async def tts_field(
         self, source_kind: str, source_id: int, voice: str | None = None, fmt: str | None = None
@@ -738,27 +680,8 @@ class Lexicon:
         return await self.tts_field("sense_def", sense_id, voice, fmt)
 
     def _tts_provider(self):
-        """The speech provider: the real one when configured, else the stub.
-
-        The stub raises instead of returning audio, so an unconfigured install fails
-        loudly rather than caching something fake.
-        """
-        if self._tts_impl is not None:
-            return self._tts_impl
-        settings = get_settings()
-        if settings.tts_api_key or settings.tts_base_url:
-            from lexi_ai.assets.tts import OpenAICompatibleTTSProvider
-
-            self._tts_impl = OpenAICompatibleTTSProvider(
-                base_url=settings.tts_base_url,
-                api_key=settings.tts_api_key,
-                model=settings.tts_model,
-            )
-        else:
-            from lexi_ai.assets.tts import StubTTSProvider
-
-            self._tts_impl = StubTTSProvider()
-        return self._tts_impl
+        """The speech provider: the real one when configured, else the stub."""
+        return self._providers.tts_provider()
 
     async def get_asset(self, asset_id: int) -> Asset | None:
         """A cached asset by id, or ``None``."""
@@ -829,9 +752,7 @@ class Lexicon:
         Deliberately has no ``force``: a remote caller must not be able to use a
         delayed job to replace an entry a newer claim owns.
         """
-        return await self._generation().generate_fenced(
-            source, structured_method=structured_method
-        )
+        return await self._generation().generate_fenced(source, structured_method=structured_method)
 
     async def resolve_relations(self, batch_size: int = 20) -> list[BatchResult]:
         """Reconcile one batch of pending sense-relation edges (manual/backfill)."""
