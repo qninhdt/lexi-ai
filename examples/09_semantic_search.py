@@ -14,22 +14,30 @@ Flow:
   2. semantic_search(query) -> senses closest in MEANING to the query (FREE)
   3. backfill_embeddings() -> fills any vectors skipped when the extra was absent
 
-If the ``[embeddings]`` extra is not installed, generation still works (vectors
-are best-effort on the write path) but ``semantic_search`` RAISES
-``EmbeddingUnavailable`` rather than answering "no match" for a search it never
-ran. Handling that named exception — as this script does — is the intended way to
-degrade; an empty list always means the search ran and matched nothing.
+Semantic search is OFF by default, so this example needs it switched on:
+
+    uv sync --extra embeddings --extra lancedb
+    LEXI_VECTOR_BACKEND=lancedb uv run python examples/09_semantic_search.py
+
+Whenever the feature cannot run — switched off, index extra missing, encoder extra
+missing — ``semantic_search`` RAISES rather than answering "no match" for a search
+it never ran. Catching ``SemanticSearchUnavailable`` (the base class of all three)
+is the intended way to degrade; an empty list always means the search ran and
+matched nothing. Generation is unaffected either way: it just stores no vectors.
 """
 
 import asyncio
 
 from _common import aclose, build_lexicon, lookup, print_hits
 
-from lexi_ai.embeddings import EmbeddingUnavailable
+from lexi_ai.domain.errors import SemanticSearchUnavailable
 
-_INSTALL_HINT = (
-    "\nSemantic search needs the local encoder. Install it with:\n"
+# Catch the BASE class, not one subclass: the feature has three independent ways to
+# be unavailable and an example that named just one would crash on the other two.
+_ENABLE_HINT = (
+    "\nSemantic search is off or incomplete. Enable it with:\n"
     "    uv sync --extra embeddings --extra lancedb\n"
+    "    export LEXI_VECTOR_BACKEND=lancedb\n"
     "then re-run — backfill_embeddings() will vectorize the senses generated above."
 )
 
@@ -64,8 +72,9 @@ async def main() -> None:
                 # An empty result here means no sense was close enough — the
                 # encoder and index both worked.
                 print_hits(await lex.reader().semantic_search(query, k=5))
-        except EmbeddingUnavailable:
-            print(_INSTALL_HINT)
+        except SemanticSearchUnavailable as exc:
+            print(f"\n{type(exc).__name__}: {exc}")
+            print(_ENABLE_HINT)
     finally:
         await aclose(lex)
 

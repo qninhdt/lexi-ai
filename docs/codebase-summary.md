@@ -80,7 +80,7 @@ db/
   types.py                custom column types
   asset_gc.py             orphaned-asset collection
 vectors/
-  lancedb_index.py (179)  durable ANN index (LEXI_VECTOR_BACKEND=lancedb, default)
+  lancedb_index.py (179)  durable ANN index (LEXI_VECTOR_BACKEND=lancedb)
   memory_index.py   (68)  exact scan, non-durable — the hermetic test default
   validation.py     (18)  shared vector/metadata checks
 providers.py     (176)  LLM / translator / TTS provider factories

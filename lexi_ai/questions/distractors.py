@@ -61,7 +61,15 @@ class DistractorProvider:
     # --- ladder steps (each best-effort, returns [] on any miss/failure) ------
 
     async def _semantic(self, entry: Entry) -> list[str]:
-        """Displays of the nearest senses belonging to OTHER words, best first."""
+        """Displays of the nearest senses belonging to OTHER words, best first.
+
+        Skipped entirely when semantic search is off, which is a configuration
+        fact rather than a failure — the ladder falls through to topic tags. Being
+        explicit here keeps the rung from depending on an ``AttributeError`` landing
+        in the catch-all below.
+        """
+        if self._vectors is None:
+            return []
         try:
             target = await self._target_vector(entry)
             if target is None:

@@ -68,7 +68,14 @@ The dominant convention, and the one to follow:
 ## Errors
 
 - Raise on failure. Return an empty result only when the operation ran and found
-  nothing — an empty list must never be able to mean "the subsystem is down".
+  nothing — an empty list must never be able to mean "the subsystem is down" or
+  "this optional feature is switched off".
+- An optional feature exposes ONE catchable base class covering every reason it
+  cannot run (`SemanticSearchUnavailable` over disabled / index extra missing /
+  encoder extra missing). A caller degrading on a subclass list will under-count
+  the causes and crash on the one it forgot.
+- Opting into an optional dependency is validated where the choice is made — at
+  construction — not on first use, and the error carries the install command.
 - The one sanctioned swallow is the post-commit generation hook
   (`Lexicon._embed_words`): the entry is committed and the LLM call is paid for,
   so a vector failure must not fail the generation. Tolerance belongs at the call
@@ -76,6 +83,9 @@ The dominant convention, and the one to follow:
 - `ValueError` for caller mistakes (unknown id, missing overlay, absent LLM).
 - The write transaction records a failure and then re-raises; error recording must
   never mask the cause.
+- `x or default()` is wrong whenever `None` is a meaningful value. Use an `_UNSET`
+  sentinel: `vectors or build_vector_index()` silently rebuilt from the ambient
+  environment when a caller passed a deliberately disabled index.
 
 ## File size
 

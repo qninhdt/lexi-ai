@@ -35,7 +35,7 @@ class QuestionEngineFactory:
         session_factory: async_sessionmaker[AsyncSession],
         embedder: Embedder,
         providers: ProviderRegistry,
-        vectors: VectorIndex,
+        vectors: VectorIndex | None,
         speak: Callable[[str, int, str, str], Awaitable[object]],
         load_entry: Callable[[int], Awaitable[Entry]],
     ) -> None:

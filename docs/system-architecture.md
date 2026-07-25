@@ -429,9 +429,21 @@ embed hook (`Lexicon._embed_words`): the entry is persisted and the LLM call is
 already paid for, so a vector failure there is swallowed and the backfill
 reconciles it later.
 
+**The feature is opt-in and off by default.** `LEXI_VECTOR_BACKEND=none` (the
+default) makes `build_vector_index` return `None`, and the services that would use
+an index say so: `semantic_search` and `backfill_embeddings` raise
+`SemanticSearchDisabled`, while the embed hook and `delete_entry` skip silently
+because neither asked for the feature. `None` rather than a null object precisely
+because those two groups want opposite behaviour, which one object cannot express.
+Every reason the feature can be unavailable — disabled, backend extra missing,
+encoder extra missing — is a `SemanticSearchUnavailable`, so a caller degrades with
+one `except` instead of enumerating causes it will inevitably under-count.
+
 **Backends** are a settings switch (`LEXI_VECTOR_BACKEND`), not a code change:
-`lancedb` (default — embedded, on disk, ANN, needs the `[lancedb]` extra) or
-`memory` (exact scan, non-durable, what the hermetic test tier uses). Adding
+`lancedb` (embedded, on disk, ANN, needs the `[lancedb]` extra — the choice for
+production) or `memory` (exact scan, non-durable, what the hermetic test tier
+uses). A backend whose extra is absent fails at construction, not at first query:
+selecting it is an explicit opt-in, so that is where the error belongs. Adding
 pgvector or Qdrant is one module in `infrastructure/vectors/` plus a branch in
 `build_vector_index`; nothing upstream of the port changes. The adapter contract is
 pinned by one test module parametrized over every backend, with the exact-scan

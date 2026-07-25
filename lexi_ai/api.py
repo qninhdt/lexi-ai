@@ -18,7 +18,7 @@ built providers, cached question engines — lives on this object instead.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -52,6 +52,10 @@ if TYPE_CHECKING:
     from lexi_ai.generation.wsd import WsdJudge
     from lexi_ai.read_models import Entry
 
+# Distinguishes "caller said nothing" from "caller said semantic search is off",
+# which ``None`` now means.
+_UNSET: Any = object()
+
 
 class Lexicon:
     """The wired object graph. Construct with :meth:`from_settings`."""
@@ -65,7 +69,7 @@ class Lexicon:
         embedder: Embedder | None = None,
         assets: AssetRepository | None = None,
         wsd_judge: WsdJudge | None = None,
-        vectors: VectorIndex | None = None,
+        vectors: VectorIndex | None = _UNSET,
     ):
         self._session_factory = session_factory
         self._loader = loader
@@ -75,7 +79,12 @@ class Lexicon:
         self._assets = assets
         # Sense vectors live outside the primary database and are eventually
         # consistent: written post-commit, best-effort, reconciled by a backfill.
-        self._vectors = vectors or build_vector_index()
+        # ``None`` is a MEANINGFUL value here — semantic search switched off — so
+        # this cannot use ``vectors or build_vector_index()``: that would rebuild
+        # from the ambient environment every time a caller passed the disabled
+        # index, silently overriding an explicit decision (and ignoring the
+        # ``settings`` that produced it).
+        self._vectors = build_vector_index() if vectors is _UNSET else vectors
         # Every optional external capability (LLM, WSD judge, translator, TTS,
         # themed generators) is built on first use by the registry, which owns the
         # "is it configured?" branching. Injected collaborators are handed over so

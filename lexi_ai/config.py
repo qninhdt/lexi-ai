@@ -55,11 +55,20 @@ class Settings(BaseSettings):
     # Where those vectors live. Embeddings are NOT in the primary database: they
     # are eventually consistent by design (written post-commit, best-effort,
     # reconciled by a backfill), so they get their own store.
-    #   ``lancedb`` — embedded, on disk, no server; needs the ``[lancedb]`` extra.
-    #   ``memory``  — exact-scan, non-durable; the hermetic default for tests.
+    #
+    # Semantic search is an OPT-IN feature and this is its switch:
+    #   ``none``    — off (DEFAULT). No index; ``semantic_search`` and
+    #                 ``backfill_embeddings`` raise ``SemanticSearchDisabled``, and
+    #                 generation simply stores no vectors. Costs nothing: neither
+    #                 optional dependency is needed.
+    #   ``lancedb`` — embedded, on disk, durable; needs the ``[lancedb]`` extra.
+    #                 The right choice in production once the feature is wanted.
+    #   ``memory``  — exact-scan, non-durable (vectors die with the process);
+    #                 for tests and local experiments, never for production.
+    # Enabling also needs the ``[embeddings]`` extra for the encoder itself.
     # ``vector_metric`` must match the encoder's geometry; the Embedder
     # L2-normalizes, so cosine is correct.
-    vector_backend: str = "lancedb"
+    vector_backend: str = "none"
     vector_path: str = "./lexi-vectors"
     vector_metric: str = "cosine"
 

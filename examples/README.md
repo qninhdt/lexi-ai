@@ -84,14 +84,17 @@ by a `transformers` model (the chat proxy has no embeddings endpoint). Install t
 optional extra once, then run:
 
 ```bash
-uv sync --extra embeddings                    # torch + transformers (~200MB, CPU)
+uv sync --extra embeddings --extra lancedb    # encoder (~200MB) + index (~300MB)
+export LEXI_VECTOR_BACKEND=lancedb            # the feature is off by default
 uv run python examples/09_semantic_search.py  # weights (~90MB) download on first run
 ```
 
-Embeddings are **best-effort on the write path**: without the extra, generation
-still works and simply stores no vector. Reading is not: `semantic_search` raises
-`EmbeddingUnavailable` instead of answering `[]` for a search it could not run, so
-an empty list always means "nothing matched". After installing,
+Semantic search is **off by default** — example 09 needs `LEXI_VECTOR_BACKEND`
+set and both extras installed. Embeddings stay **best-effort on the write path**:
+with the feature off (or the extra absent) generation still works and simply stores
+no vector. Reading is not best-effort: `semantic_search` raises a
+`SemanticSearchUnavailable` subclass instead of answering `[]` for a search it could
+not run, so an empty list always means "nothing matched". Once enabled,
 `backfill_embeddings()` vectorizes any senses generated earlier. Tune via
 `LEXI_EMBEDDING_*` in `.env`.
 

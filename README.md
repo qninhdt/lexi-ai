@@ -57,14 +57,38 @@ management.
 
 ```bash
 uv sync                      # create .venv and install runtime + dev deps
-uv sync --extra embeddings   # optional: local sense embeddings (torch, ~200MB)
-uv sync --extra lancedb      # optional: durable vector index for semantic search
+uv sync --extra embeddings --extra lancedb   # optional: semantic search
 ```
 
-Semantic search needs both: the `embeddings` extra to encode, and a vector index to
-rank. Without them it returns nothing rather than failing — set
-`LEXI_VECTOR_BACKEND=memory` for a non-durable in-process index if you would rather
-not install LanceDB.
+### Semantic search is opt-in
+
+Everything above works on a plain `uv sync`. Ranking senses by meaning is a
+separate feature, **off by default**, because it costs two heavy optional
+dependencies (an encoder, ~200MB, and a vector index, ~300MB) that most callers
+never want. Turn it on with both halves:
+
+```bash
+uv sync --extra embeddings --extra lancedb   # encoder + durable index
+export LEXI_VECTOR_BACKEND=lancedb           # default is "none"
+```
+
+While it is off, generation and lexical search behave normally and simply store no
+vectors. `semantic_search()` and `backfill_embeddings()` raise
+`SemanticSearchDisabled` — they never return an empty result, because "the feature
+is off" must not be readable as "this word is not in the dictionary". Selecting a
+backend whose extra is missing fails immediately when the `Lexicon` is built, with
+the install command in the message.
+
+To degrade gracefully, catch the one base class:
+
+```python
+from lexi_ai.domain.errors import SemanticSearchUnavailable
+
+try:
+    hits = await reader.semantic_search(query)
+except SemanticSearchUnavailable:
+    hits = await reader.search(query)   # fall back to lexical, knowingly
+```
 
 ## Usage
 

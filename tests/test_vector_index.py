@@ -12,7 +12,13 @@ import importlib.util
 import pytest
 
 from lexi_ai.config import Settings
+from lexi_ai.domain.errors import (
+    SemanticSearchDisabled,
+    SemanticSearchUnavailable,
+    VectorBackendUnavailable,
+)
 from lexi_ai.domain.models import VectorRecord
+from lexi_ai.embeddings import EmbeddingUnavailable
 from lexi_ai.infrastructure.vectors import build_vector_index
 from lexi_ai.infrastructure.vectors.memory_index import InMemoryVectorIndex
 
@@ -131,14 +137,38 @@ def test_backend_selection_is_settings_only():
 
 
 @lancedb_only
-def test_lancedb_is_the_declared_default_backend(tmp_path):
-    """The durable backend is the default; the test tier opts out via env."""
+def test_semantic_search_is_off_by_default():
+    """Opt-in feature: neither optional dependency is needed out of the box."""
+    assert Settings.model_fields["vector_backend"].default == "none"
+    assert build_vector_index(Settings(vector_backend="none")) is None
+
+
+def test_lancedb_is_the_backend_to_enable_for_durability(tmp_path):
     from lexi_ai.infrastructure.vectors.lancedb_index import LanceDbVectorIndex
 
-    assert Settings.model_fields["vector_backend"].default == "lancedb"
     built = build_vector_index(Settings(vector_backend="lancedb", vector_path=str(tmp_path)))
 
     assert isinstance(built, LanceDbVectorIndex)
+
+
+def test_enabling_a_backend_without_its_extra_fails_at_construction(monkeypatch):
+    """Opting in is the moment to complain, not the first query hours later."""
+    monkeypatch.setattr(
+        "lexi_ai.infrastructure.vectors.importlib.util.find_spec", lambda _name: None
+    )
+
+    with pytest.raises(VectorBackendUnavailable) as excinfo:
+        build_vector_index(Settings(vector_backend="lancedb"))
+
+    # The message must carry the fix, not just the diagnosis.
+    assert "--extra lancedb" in str(excinfo.value)
+
+
+def test_every_unavailable_reason_shares_one_catchable_base():
+    """A caller degrades with one `except`, so it cannot miss a reason."""
+    assert issubclass(SemanticSearchDisabled, SemanticSearchUnavailable)
+    assert issubclass(VectorBackendUnavailable, SemanticSearchUnavailable)
+    assert issubclass(EmbeddingUnavailable, SemanticSearchUnavailable)
 
 
 def test_an_unknown_backend_fails_loudly():

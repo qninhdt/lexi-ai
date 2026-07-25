@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models, session_scope
+from lexi_ai.domain.errors import SemanticSearchDisabled
 from lexi_ai.domain.models import VectorRecord
 from lexi_ai.embeddings import Embedder, EmbeddingUnavailable
 from lexi_ai.facades import LexiconEngine, LexiconReader
@@ -32,6 +33,10 @@ from lexi_ai.normalize import match_key
 from lexi_ai.read_models import Entry, SenseView
 from lexi_ai.references.cambridge import CamRef
 from lexi_ai.references.loader import ReferenceBundle
+
+# `vectors=None` means the semantic feature is OFF, a state these tests exercise,
+# so the helpers below cannot treat it as "not supplied".
+_UNSET = object()
 
 
 @pytest.fixture
@@ -153,7 +158,7 @@ def _make_lexicon(
     results_by_word,
     embedder=None,
     example_batch=None,
-    vectors=None,
+    vectors=_UNSET,
 ):
     session_factory = create_session_factory(engine)
     cambridge = FakeCambridge(cam_words)
@@ -165,7 +170,7 @@ def _make_lexicon(
         generator,
         engine=engine,
         embedder=embedder,
-        vectors=vectors or InMemoryVectorIndex(),
+        vectors=InMemoryVectorIndex() if vectors is _UNSET else vectors,
     )
     return lex, generator, session_factory
 
@@ -616,7 +621,7 @@ def _def_entry(norm: str, definition: str) -> GeneratedEntry:
     )
 
 
-def _pet_lexicon(engine, embedder, vectors=None):
+def _pet_lexicon(engine, embedder, vectors=_UNSET):
     return _make_lexicon(
         engine,
         cam_words={
@@ -698,6 +703,22 @@ async def test_generate_survives_an_unreachable_vector_index(engine):
     with pytest.raises(RuntimeError, match="index unreachable"):
         await lex.reader().semantic_search("pet")
     with pytest.raises(RuntimeError, match="index unreachable"):
+        await lex.engine().backfill_embeddings()
+
+
+async def test_the_dictionary_works_with_semantic_search_disabled(engine):
+    """The default install: everything except semantic search behaves normally."""
+    lex, gen, _sf = _pet_lexicon(engine, _fake_embedder(), vectors=None)
+
+    entry = await lex.engine().generate((await lex.reader().search("dog"))[0])
+    assert entry.display == "dog"  # generation is untouched by the feature switch
+    assert gen.calls == 1
+    assert [r.display for r in await lex.reader().search("dog")][0] == "dog"  # lexical search
+    assert await lex.engine().delete_entry(entry.word_id) is True  # delete has no index to touch
+
+    with pytest.raises(SemanticSearchDisabled):
+        await lex.reader().semantic_search("pet")
+    with pytest.raises(SemanticSearchDisabled):
         await lex.engine().backfill_embeddings()
 
 

@@ -2,9 +2,9 @@
 
 LanceDB is a synchronous, file-based store, so every call here is wrapped in
 :func:`asyncio.to_thread` — the blocking detail stays inside the adapter and the
-port stays async. ``lancedb`` and ``pyarrow`` are imported lazily so a base
-install without the extra pays nothing and fails only if a vector is actually
-touched (where the caller's best-effort handling degrades semantic search).
+port stays async. ``lancedb`` and ``pyarrow`` are imported lazily to keep module
+import cheap; the extra's presence is checked up front by ``build_vector_index``,
+so reaching this module means the dependency is there.
 
 The table is created on the first write, with a fixed-width vector column: the
 dimension is a schema fact in Lance, so it comes from the first batch and a later

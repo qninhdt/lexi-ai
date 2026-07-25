@@ -10,6 +10,7 @@ again, so a caller cannot accidentally regenerate an entry it already has.
 
 from collections.abc import Callable
 
+from lexi_ai.domain.errors import SemanticSearchDisabled
 from lexi_ai.domain.models import SemanticSenseRow
 from lexi_ai.domain.ports import UnitOfWork, VectorIndex
 from lexi_ai.normalize import render
@@ -29,7 +30,7 @@ class SearchService:
         uow_factory: Callable[[], UnitOfWork],
         loader,  # noqa: ANN001 - the reference loader (Cambridge + WordNet)
         embedder,  # noqa: ANN001 - the encoder; only model_name and embed_one are used
-        vectors: VectorIndex,
+        vectors: VectorIndex | None,
     ) -> None:
         self._uow = uow_factory
         self._loader = loader
@@ -110,11 +111,19 @@ class SearchService:
         different geometry.
 
         RAISES on encoder or index failure — a missing extra, a model that will not
-        load, a device error, an unreachable index. An empty list means exactly one
-        thing: nothing matched. Swallowing the failure instead would report "no
-        results" for a broken installation, which reads as "this word is not in the
-        dictionary" and is indistinguishable from the truthful answer.
+        load, a device error, an unreachable index — and ``SemanticSearchDisabled``
+        when the feature is off. An empty list means exactly one thing: nothing
+        matched. Swallowing the failure instead would report "no results" for a
+        broken or unconfigured installation, which reads as "this word is not in
+        the dictionary" and is indistinguishable from the truthful answer.
         """
+        if self._vectors is None:
+            raise SemanticSearchDisabled(
+                "semantic_search() is an opt-in feature and is off. Enable it with "
+                "LEXI_VECTOR_BACKEND=lancedb (durable, needs the '[lancedb]' extra) "
+                "or 'memory' (non-durable, tests only), plus the '[embeddings]' "
+                "extra for the encoder"
+            )
         if k <= 0:
             return []
         query_vector = await self._embedder.embed_one(query)

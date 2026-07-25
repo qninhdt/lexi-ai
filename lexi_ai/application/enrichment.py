@@ -13,6 +13,7 @@ pointing at a sense the model never saw.
 
 from collections.abc import Callable, Sequence
 
+from lexi_ai.domain.errors import SemanticSearchDisabled
 from lexi_ai.domain.hashing import sense_content_hash
 from lexi_ai.domain.models import ResolveDecision, VectorRecord
 from lexi_ai.domain.ports import UnitOfWork, VectorIndex
@@ -36,7 +37,7 @@ class EnrichmentService:
         read_senses: Callable[[Sequence[int]], object],
         themed_examples: Callable[..., object],
         max_examples_per_call: int,
-        vectors: VectorIndex,
+        vectors: VectorIndex | None,
     ) -> None:
         self._uow = uow_factory
         self._embedder = embedder
@@ -94,8 +95,15 @@ class EnrichmentService:
         RAISES on encoder or index failure. This is the operation whose entire
         purpose is to make the index correct, so a caller must be able to tell
         "nothing needed doing" from "the index is unreachable"; both would
-        otherwise be a return of zero.
+        otherwise be a return of zero. With semantic search switched off it raises
+        ``SemanticSearchDisabled`` for the same reason: reconciling an index that
+        does not exist is not a success.
         """
+        if self._vectors is None:
+            raise SemanticSearchDisabled(
+                "backfill_embeddings() needs semantic search enabled: set "
+                "LEXI_VECTOR_BACKEND=lancedb (durable) or 'memory' (tests only)"
+            )
         await self._prune_orphan_vectors()
         return await self.embed_missing(limit=limit)
 
@@ -109,7 +117,14 @@ class EnrichmentService:
         must survive all of that swallows it at ITS call site (see
         ``Lexicon._embed_words``); callers who asked for embedding on purpose get
         the error.
+
+        Returns zero without touching the encoder when semantic search is off. This
+        runs on every generation, so "the feature is disabled" must be a cheap
+        no-op rather than an exception raised and swallowed once per word — and it
+        must not drag in the encoder that a disabled feature never needs.
         """
+        if self._vectors is None:
+            return 0
         model = self._embedder.model_name
         stored = await self._vectors.ids({"model": model})
         async with self._uow() as uow:

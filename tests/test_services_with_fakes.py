@@ -23,6 +23,7 @@ from lexi_ai.application.enrichment import EnrichmentService
 from lexi_ai.application.search import SearchService
 from lexi_ai.application.tags import TagService
 from lexi_ai.application.themes import ThemeService
+from lexi_ai.domain.errors import SemanticSearchDisabled
 from lexi_ai.domain.models import SemanticSenseRow, VectorHit
 from lexi_ai.read_models import Entry, SenseView
 
@@ -292,6 +293,17 @@ async def test_semantic_search_asks_for_more_than_k_to_absorb_stale_vectors():
     assert index.queried[0][1] > 3
 
 
+async def test_semantic_search_raises_when_the_feature_is_disabled():
+    """Off is not empty: a caller must not read "disabled" as "no such word"."""
+    service = SearchService(FakeUnitOfWork(), _unused, FakeEmbedder(), None)
+
+    with pytest.raises(SemanticSearchDisabled) as excinfo:
+        await service.semantic_search("q")
+
+    # The message must name the switch, since nothing in the call site hints at it.
+    assert "LEXI_VECTOR_BACKEND" in str(excinfo.value)
+
+
 async def test_semantic_search_raises_when_the_encoder_is_unavailable():
     """A broken encoder must not read as "no match" — that is a wrong answer."""
 
@@ -324,7 +336,12 @@ async def test_semantic_search_is_empty_when_the_index_holds_nothing():
 # --- enrichment -------------------------------------------------------------
 
 
-def _enrichment(uow, *, embedder=None, index=None, generator=None, judge=None):
+# `index=None` means semantic search is DISABLED, which is a state under test —
+# so it cannot be spelled `index or FakeVectorIndex()`.
+_UNSET = object()
+
+
+def _enrichment(uow, *, embedder=None, index=_UNSET, generator=None, judge=None):
     return EnrichmentService(
         uow,
         embedder or FakeEmbedder(),
@@ -333,7 +350,7 @@ def _enrichment(uow, *, embedder=None, index=None, generator=None, judge=None):
         _unused,
         _unused,
         12,
-        index or FakeVectorIndex(),
+        FakeVectorIndex() if index is _UNSET else index,
     )
 
 
@@ -368,6 +385,32 @@ async def test_embedding_skips_senses_the_index_already_holds():
 
     assert await service.embed_missing() == 1
     assert [record.id for record in index.upserted[0]] == ["9"]
+
+
+async def test_the_embed_hook_is_a_silent_no_op_when_the_feature_is_disabled():
+    """This runs on every generation, so disabled must cost nothing at all.
+
+    Not an exception raised and swallowed once per word, and specifically without
+    touching the encoder — a disabled feature must not pull in torch.
+    """
+
+    class ExplodingEmbedder:
+        model_name = "never-asked"
+
+        async def embed(self, _texts):
+            raise AssertionError("the encoder must not be reached when disabled")
+
+    uow = FakeUnitOfWork(senses=FakeRepo(needing_embedding=[_need(7)]))
+
+    assert await _enrichment(uow, embedder=ExplodingEmbedder(), index=None).embed_missing() == 0
+
+
+async def test_the_backfill_raises_when_the_feature_is_disabled():
+    """Reconciling an index that does not exist is not a success."""
+    uow = FakeUnitOfWork(senses=FakeRepo(needing_embedding=[_need(7)]))
+
+    with pytest.raises(SemanticSearchDisabled):
+        await _enrichment(uow, index=None).backfill_embeddings()
 
 
 async def test_embedding_raises_when_the_index_is_unreachable():

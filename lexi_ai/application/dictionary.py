@@ -20,7 +20,7 @@ class DictionaryService:
         self,
         uow_factory: Callable[[], UnitOfWork],
         resolve_theme: Callable[[str | int], object],
-        vectors: VectorIndex,
+        vectors: VectorIndex | None,
     ) -> None:
         self._uow = uow_factory
         self._vectors = vectors
@@ -125,7 +125,13 @@ class DictionaryService:
         return deleted
 
     async def _forget_vectors(self, sense_ids: list[int]) -> None:
-        """Best-effort removal of vectors for senses that no longer exist."""
+        """Best-effort removal of vectors for senses that no longer exist.
+
+        A no-op when semantic search is off — there is no index to forget from,
+        and a delete must not start failing because of a feature nobody enabled.
+        """
+        if self._vectors is None:
+            return
         try:
             await self._vectors.delete([str(sense_id) for sense_id in sense_ids])
         except Exception:  # noqa: BLE001 - orphans are tolerated; the backfill prunes them
