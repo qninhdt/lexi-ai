@@ -6,7 +6,7 @@ each test (via ``poolclass=StaticPool``) so the schema persists across sessions.
 
 import pytest
 from sqlalchemy import event, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import selectinload
 from sqlalchemy.pool import StaticPool
@@ -151,8 +151,8 @@ async def test_entry_link_unique_triple(session_factory):
             b = await _make_word(session, match_key="b", norm="b")
             session.add_all(
                 [
-                    WordRelation(from_word_id=a.id, to_word_id=b.id, rel_type="synonym"),
-                    WordRelation(from_word_id=a.id, to_word_id=b.id, rel_type="synonym"),
+                    WordRelation(from_word_id=a.id, to_word_id=b.id, rel_type="word_family"),
+                    WordRelation(from_word_id=a.id, to_word_id=b.id, rel_type="word_family"),
                 ]
             )
             await session.flush()
@@ -406,3 +406,72 @@ def test_question_orm_has_new_columns_and_idempotency_constraint():
         "difficulty_level",
         "content_hash",
     )
+
+
+
+# --- controlled vocabularies enforced by the column type -------------------
+#
+# These columns were plain strings whose only guard was the LLM output schema,
+# which covers the generation path and nothing else. Any other writer could store
+# a drifted value, and a drifted label fails quietly: the relation
+# part-of-speech filter compares labels, so a stored "adj" mis-filters instead of
+# raising. The column now rejects it, whoever writes.
+
+
+async def test_word_status_rejects_a_value_outside_the_vocabulary(session_factory):
+    with pytest.raises(StatementError, match="words.status"):
+        async with session_scope(session_factory) as session:
+            session.add(Word(norm="x", match_key="x", status="finished"))
+            await session.flush()
+
+
+async def test_sense_pos_rejects_a_drifted_label(session_factory):
+    async with session_scope(session_factory) as session:
+        word = await _make_word(session, match_key="p", norm="p")
+        word_id = word.id
+
+    with pytest.raises(StatementError, match="senses.pos"):
+        async with session_scope(session_factory) as session:
+            session.add(Sense(word_id=word_id, definition="d", tier="core", pos="adj"))
+            await session.flush()
+
+
+async def test_sense_relation_rejects_a_word_level_relation_type(session_factory):
+    """The two relation tables carry different vocabularies.
+
+    A sense-level type in the word table (or the reverse) is a mis-levelled edge:
+    it would never be disambiguated, and the read model would surface it from the
+    wrong side.
+    """
+    async with session_scope(session_factory) as session:
+        word = await _make_word(
+            session, match_key="r", norm="r", senses=[Sense(definition="d", tier="core")]
+        )
+        await session.flush()
+        sense_id = word.senses[0].id
+        word_id = word.id
+
+    with pytest.raises(StatementError, match="sense_relation.rel_type"):
+        async with session_scope(session_factory) as session:
+            session.add(
+                SenseRelation(
+                    from_sense_id=sense_id,
+                    to_word_id=word_id,
+                    rel_type="word_family",
+                    gloss="g",
+                )
+            )
+            await session.flush()
+
+
+async def test_grammar_rejects_a_token_outside_the_vocabulary(session_factory):
+    async with session_scope(session_factory) as session:
+        word = await _make_word(session, match_key="g", norm="g")
+        word_id = word.id
+
+    with pytest.raises(StatementError, match="senses.grammar"):
+        async with session_scope(session_factory) as session:
+            session.add(
+                Sense(word_id=word_id, definition="d", tier="core", grammar=["not a label"])
+            )
+            await session.flush()

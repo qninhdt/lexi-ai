@@ -403,7 +403,7 @@ async def test_collocations_no_detached_load(engine):
 # --- write-path sanity: grammar stored comma-joined, empty -> None ---------
 
 
-async def test_grammar_stored_joined_empty_is_none(engine):
+async def test_grammar_round_trips_as_a_list_and_empty_reads_back_empty(engine):
     sf = create_session_factory(engine)
     repo = PersistenceDriver(sf)
     await repo.persist_result(_result("go", grammar=["intransitive"]))
@@ -414,8 +414,10 @@ async def test_grammar_stored_joined_empty_is_none(engine):
     async with create_session_factory(engine)() as s:
         go = (await s.execute(select(Sense).join(Word).where(Word.norm == "go"))).scalar_one()
         stay = (await s.execute(select(Sense).join(Word).where(Word.norm == "stay"))).scalar_one()
-    assert go.grammar == "intransitive"
-    assert stay.grammar is None  # empty list -> None, not "" (clean [] on read)
+    # The column type owns the encoding, so callers see a list on both sides and an
+    # unset value reads back as [] rather than None or "".
+    assert go.grammar == ["intransitive"]
+    assert stay.grammar == []
 
 
 async def test_word_family_count_and_no_self_link(engine):

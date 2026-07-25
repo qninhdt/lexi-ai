@@ -359,9 +359,9 @@ class SqlSenseRepo:
     ) -> Sense:
         """Map one generated sense onto a row, cleaning every free-text field.
 
-        ``grammar`` is a set of schema-validated tokens joined with a comma; no token
-        contains a comma, which a test guards. ``register`` and ``connotation`` are
-        validated enum values or ``None``.
+        ``grammar`` is a set of schema-validated tokens; the column type validates
+        them again on write and handles the encoding, so no caller joins by hand.
+        ``register`` and ``connotation`` are validated enum values or ``None``.
         """
         return Sense(
             word_id=word_id,
@@ -371,7 +371,7 @@ class SqlSenseRepo:
             pos=generated.pos,
             cefr_level=self._resolve_cefr(generated, cefr_map),
             guideword=clean_opt(generated.guideword, MAX_GUIDEWORD),
-            grammar=",".join(generated.grammar) or None,
+            grammar=list(generated.grammar),
             register=generated.register,
             connotation=generated.connotation,
             ipa_uk=clean_opt(generated.ipa_uk, MAX_IPA),

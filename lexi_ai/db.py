@@ -24,15 +24,32 @@ from lexi_ai.infrastructure.db.models import Asset, Base
 
 
 def _enable_sqlite_fk(engine: AsyncEngine) -> None:
-    """Turn on FK enforcement for SQLite connections (no-op elsewhere)."""
+    """Make SQLite behave transactionally (no-op on other backends).
+
+    Two driver defaults need correcting, both invisible until something fails:
+
+    * SQLite does not enforce foreign keys, or ``ON DELETE CASCADE``, unless the
+      pragma is set per connection.
+    * pysqlite opens its own implicit transaction, which breaks SAVEPOINT: a write
+      made inside ``begin_nested()`` stays committed even when the enclosing
+      session rolls back. Several repositories insert inside a savepoint to recover
+      from a concurrent unique-key winner, so without this a failed multi-step
+      write would leak committed stub rows. Handing transaction control back to
+      SQLAlchemy and emitting BEGIN explicitly is the documented remedy.
+    """
     if not engine.url.get_backend_name().startswith("sqlite"):
         return
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_pragma(dbapi_conn, _record):  # noqa: ANN001
+        dbapi_conn.isolation_level = None  # stop pysqlite's implicit BEGIN
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+
+    @event.listens_for(engine.sync_engine, "begin")
+    def _emit_begin(conn):  # noqa: ANN001
+        conn.exec_driver_sql("BEGIN")
 
 
 def create_engine(settings: Settings | None = None) -> AsyncEngine:

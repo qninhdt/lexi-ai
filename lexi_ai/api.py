@@ -536,7 +536,7 @@ class Lexicon:
                 for f in sorted(s.forms, key=lambda f: f.form_order)
             ],
             guideword=s.guideword,
-            grammar=s.grammar.split(",") if s.grammar else [],
+            grammar=list(s.grammar),
             register=s.register,
             connotation=s.connotation,
             collocations=[
@@ -1641,9 +1641,7 @@ class Lexicon:
                         for f in sorted(s.forms, key=lambda f: f.form_order)
                     ],
                     guideword=s.guideword,
-                    # Stored comma-joined (a join of validated tokens or None);
-                    # split back to a list, None -> [].
-                    grammar=s.grammar.split(",") if s.grammar else [],
+                    grammar=list(s.grammar),
                     register=s.register,
                     connotation=s.connotation,
                     collocations=[

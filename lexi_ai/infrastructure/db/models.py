@@ -31,6 +31,28 @@ from sqlalchemy.orm import (
     relationship,
 )
 
+from lexi_ai.constants import (
+    ALIAS_TYPES,
+    ASSET_KINDS,
+    CONNOTATIONS,
+    DIALECTS,
+    ENTRY_TYPES,
+    GRAMMAR_LABELS,
+    INFLECTION_LABELS,
+    INTERACTION_MODES,
+    POS_TAGS,
+    QUESTION_TYPES,
+    REFERENCE_SOURCES,
+    REGISTERS,
+    RENDER_FORMATS,
+    SENSE_REL_TYPES,
+    SOURCE_KINDS,
+    STATUSES,
+    TIER_SET,
+    WORD_REL_TYPES,
+)
+from lexi_ai.infrastructure.db.types import Vocabulary, VocabularyList
+
 
 class Base(DeclarativeBase):
     pass
@@ -49,8 +71,10 @@ class Word(Base):
     norm: Mapped[str] = mapped_column(Text, nullable=False)
     # Lossy, CODE-computed (Phase 1). UNIQUE = durable dedup + concurrency guard.
     match_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True, index=True)
-    entry_type: Mapped[str | None] = mapped_column(String(32))
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    entry_type: Mapped[str | None] = mapped_column(Vocabulary(32, ENTRY_TYPES, "words.entry_type"))
+    status: Mapped[str] = mapped_column(
+        Vocabulary(16, STATUSES, "words.status"), nullable=False, default="pending"
+    )
     # Monotonic service-generation fence.  A worker may publish a replacement
     # graph only while it still owns this value; ordinary library calls do not
     # need to provide a fence.
@@ -106,8 +130,10 @@ class WordAlias(Base):
     word_id: Mapped[int] = mapped_column(ForeignKey("words.id", ondelete="CASCADE"), nullable=False)
     alias_norm: Mapped[str] = mapped_column(Text, nullable=False)
     alias_match_key: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
-    type: Mapped[str] = mapped_column(String(32), nullable=False)
-    dialect: Mapped[str | None] = mapped_column(String(8))
+    type: Mapped[str] = mapped_column(
+        Vocabulary(32, ALIAS_TYPES, "word_aliases.type"), nullable=False
+    )
+    dialect: Mapped[str | None] = mapped_column(Vocabulary(8, DIALECTS, "word_aliases.dialect"))
 
     word: Mapped["Word"] = relationship(back_populates="aliases")
 
@@ -135,7 +161,9 @@ class WordRelation(Base):
     to_word_id: Mapped[int] = mapped_column(
         ForeignKey("words.id", ondelete="CASCADE"), nullable=False
     )
-    rel_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    rel_type: Mapped[str] = mapped_column(
+        Vocabulary(32, WORD_REL_TYPES, "word_relation.rel_type"), nullable=False
+    )
 
     from_word: Mapped["Word"] = relationship(
         back_populates="links_out", foreign_keys=[from_word_id]
@@ -184,7 +212,9 @@ class SenseRelation(Base):
     # Target SENSE: filled by WSD (resolved); SET NULL when the target sense is
     # deleted/regenerated (Case 2). NULL = not-yet / no-longer resolved.
     to_sense_id: Mapped[int | None] = mapped_column(ForeignKey("senses.id", ondelete="SET NULL"))
-    rel_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    rel_type: Mapped[str] = mapped_column(
+        Vocabulary(32, SENSE_REL_TYPES, "sense_relation.rel_type"), nullable=False
+    )
     # LM description of the TARGET's intended meaning — the load-bearing signal WSD
     # uses to pick the right target sense. Non-empty (Phase 3 skips empty edges).
     gloss: Mapped[str] = mapped_column(Text, nullable=False)
@@ -208,9 +238,9 @@ class Sense(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     word_id: Mapped[int] = mapped_column(ForeignKey("words.id", ondelete="CASCADE"), nullable=False)
     definition: Mapped[str] = mapped_column(Text, nullable=False)
-    tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    tier: Mapped[str] = mapped_column(Vocabulary(16, TIER_SET, "senses.tier"), nullable=False)
     sense_order: Mapped[int] = mapped_column(Integer, default=0)
-    pos: Mapped[str | None] = mapped_column(String(32))
+    pos: Mapped[str | None] = mapped_column(Vocabulary(32, POS_TAGS, "senses.pos"))
     # Cambridge-first, LLM fallback (decision #13).
     cefr_level: Mapped[str | None] = mapped_column(String(8))
     # IPA pronunciation per POS (senses carry pos; Cambridge entries are POS-grouped,
@@ -224,9 +254,17 @@ class Sense(Base):
     # queried alone), split back to a list on read; ``register``/``connotation``
     # are single closed-vocab enum tokens; ``guideword`` is a short free label.
     guideword: Mapped[str | None] = mapped_column(String(64))
-    grammar: Mapped[str | None] = mapped_column(String(128))
-    register: Mapped[str | None] = mapped_column(String(32))
-    connotation: Mapped[str | None] = mapped_column(String(16))
+    grammar: Mapped[list[str]] = mapped_column(
+        VocabularyList(128, GRAMMAR_LABELS, "senses.grammar"),
+        # Stored NULL when empty, so the annotation is a list but the column is
+        # nullable; the type maps NULL back to [] on read.
+        nullable=True,
+        default=list,
+    )
+    register: Mapped[str | None] = mapped_column(Vocabulary(32, REGISTERS, "senses.register"))
+    connotation: Mapped[str | None] = mapped_column(
+        Vocabulary(16, CONNOTATIONS, "senses.connotation")
+    )
     # ``domain`` = open-ended subject-area label (computing, medicine, law) — free
     # text, not an enum (the field set is unbounded). ``usage_note`` = one-line
     # usage / confusable hint ("don't confuse with affect"). Both sanitized on write.
@@ -284,7 +322,9 @@ class SenseReference(Base):
     sense_id: Mapped[int] = mapped_column(
         ForeignKey("senses.id", ondelete="CASCADE"), nullable=False
     )
-    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    source: Mapped[str] = mapped_column(
+        Vocabulary(16, REFERENCE_SOURCES, "sense_reference.source"), nullable=False
+    )
     # cambridge sense id | wordnet synset key
     source_ref: Mapped[str] = mapped_column(String(255), nullable=False)
 
@@ -337,7 +377,9 @@ class SenseForm(Base):
     sense_id: Mapped[int] = mapped_column(
         ForeignKey("senses.id", ondelete="CASCADE"), nullable=False
     )
-    inf: Mapped[str] = mapped_column(String(24), nullable=False)  # ∈ INFLECTION_LABELS
+    inf: Mapped[str] = mapped_column(
+        Vocabulary(24, INFLECTION_LABELS, "sense_forms.inf"), nullable=False
+    )
     surface: Mapped[str] = mapped_column(Text, nullable=False)
     form_order: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -475,9 +517,11 @@ class Asset(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)  # ∈ SOURCE_KINDS
+    source_kind: Mapped[str] = mapped_column(
+        Vocabulary(32, SOURCE_KINDS, "assets.source_kind"), nullable=False
+    )
     source_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # ∈ ASSET_KINDS
+    kind: Mapped[str] = mapped_column(Vocabulary(16, ASSET_KINDS, "assets.kind"), nullable=False)
     params: Mapped[str] = mapped_column(String(64), nullable=False)
     # sha256 of the source text at write time — VERIFIED on read, never identity.
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -515,10 +559,16 @@ class Question(Base):
     )
     # Nullable: a whole-word question targets no single sense.
     sense_id: Mapped[int | None] = mapped_column(ForeignKey("senses.id", ondelete="CASCADE"))
-    type_id: Mapped[str] = mapped_column(String(32), nullable=False)
-    render_format: Mapped[str] = mapped_column(String(16), nullable=False)
+    type_id: Mapped[str] = mapped_column(
+        Vocabulary(32, QUESTION_TYPES, "questions.type_id"), nullable=False
+    )
+    render_format: Mapped[str] = mapped_column(
+        Vocabulary(16, RENDER_FORMATS, "questions.render_format"), nullable=False
+    )
     difficulty_level: Mapped[int] = mapped_column(Integer, nullable=False)
-    interaction_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    interaction_mode: Mapped[str] = mapped_column(
+        Vocabulary(16, INTERACTION_MODES, "questions.interaction_mode"), nullable=False
+    )
     payload: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
