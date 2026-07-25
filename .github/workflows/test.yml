@@ -10,9 +10,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v9
         with:
           enable-cache: true
       - name: Set up Python
@@ -33,9 +33,9 @@ jobs:
     # No network, no service containers, no LLM — providers are faked at the port.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v9
         with:
           enable-cache: true
       - name: Set up Python
@@ -70,9 +70,9 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v9
         with:
           enable-cache: true
       - name: Set up Python
@@ -109,9 +109,9 @@ jobs:
       LEXI_DB_URL: postgresql+asyncpg://lexi:lexi@localhost:5432/lexi_test
       LEXI_DB_SCHEMA: lexi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v9
         with:
           enable-cache: true
       - name: Set up Python
