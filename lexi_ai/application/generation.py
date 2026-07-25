@@ -171,9 +171,7 @@ class GenerationService:
             return match_key(source.display), source.display, source.cambridge_id
         raise ValueError("SearchResult has neither lexi_word_id nor cambridge_id")
 
-    async def _run(
-        self, word: str, cambridge_id: int | None, *, fence, method: str | None
-    ):  # noqa: ANN001, ANN202 - returns the provider's GeneratedResult
+    async def _run(self, word: str, cambridge_id: int | None, *, fence, method: str | None):  # noqa: ANN001, ANN202 - returns the provider's GeneratedResult
         """Build the reference bundle, generate, publish, then enrich.
 
         Enrichment runs AFTER the publish commits: embedding and relation resolution

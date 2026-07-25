@@ -66,9 +66,7 @@ class ContextualMCQ:
             return None
         if level == 1:
             stem = f"Which word means: {sense.definition}"
-            distractors = await ctx.distractors.for_word(
-                entry, k=_MCQ_OPTIONS - 1, pos=sense.pos
-            )
+            distractors = await ctx.distractors.for_word(entry, k=_MCQ_OPTIONS - 1, pos=sense.pos)
         else:
             if ctx.llm is None:
                 return None
@@ -111,9 +109,7 @@ class ContextualMCQ:
                 break
             dedup.take(candidate)
         if len(dedup.items) < wanted:
-            for candidate in await ctx.distractors.for_word(
-                entry, k=wanted, pos=sense.pos
-            ):
+            for candidate in await ctx.distractors.for_word(entry, k=wanted, pos=sense.pos):
                 if dedup.take(candidate) and len(dedup.items) >= wanted:
                     break
         return dedup.items[:wanted]

@@ -23,9 +23,7 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
-    return (
-        os.environ.get("LEXI_DB_URL") or config.get_main_option("sqlalchemy.url")
-    )
+    return os.environ.get("LEXI_DB_URL") or config.get_main_option("sqlalchemy.url")
 
 
 def _schema() -> str:

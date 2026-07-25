@@ -91,6 +91,3 @@ class UseInSentencePayload(BaseModel):
     prompt: str = Field(min_length=1, max_length=512)
     target_norm: str = Field(min_length=1, max_length=128)
     rubric: str = Field(min_length=1, max_length=512)
-
-
-

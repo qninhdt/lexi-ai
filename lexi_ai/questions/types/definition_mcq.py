@@ -52,9 +52,7 @@ class DefinitionMCQ:
         sense = next((item for item in entry.senses if item.sense_id == sense_id), None)
         if sense is None:
             return None
-        distractors = await ctx.distractors.for_word(
-            entry, k=_MCQ_OPTIONS - 1, pos=sense.pos
-        )
+        distractors = await ctx.distractors.for_word(entry, k=_MCQ_OPTIONS - 1, pos=sense.pos)
         return _mcq_question(
             entry,
             sense,

@@ -150,9 +150,7 @@ class AssessmentType(Protocol):
 class ExposureType(Protocol):
     info: QuestionTypeInfo
 
-    async def retrieve(
-        self, ctx: QuestionContext, query: QuestionQuery
-    ) -> PersistedQuestion: ...
+    async def retrieve(self, ctx: QuestionContext, query: QuestionQuery) -> PersistedQuestion: ...
 
 
 QuestionType: TypeAlias = AssessmentType | ExposureType

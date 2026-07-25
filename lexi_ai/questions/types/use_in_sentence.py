@@ -45,9 +45,7 @@ class UseInSentence:
             produced[key] = 1
         return PrepareReport(produced)
 
-    def _build(
-        self, ctx: QuestionContext, sense_id: int, level: int
-    ) -> PersistedQuestion | None:
+    def _build(self, ctx: QuestionContext, sense_id: int, level: int) -> PersistedQuestion | None:
         entry = ctx.entry
         if entry is None:
             return None

@@ -286,7 +286,6 @@ EXPOSURE_LEVEL = 0
 INTERACTION_MODES = frozenset({"exposure", "assessment"})
 
 
-
 # senses.forms inflection labels. The generation prompt marks example targets and
 # emits a per-sense form table using EXACTLY these labels; the write path and the
 # schema import this one set so the two can never drift (like GRAMMAR_LABELS).

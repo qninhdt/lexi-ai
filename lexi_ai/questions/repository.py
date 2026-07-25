@@ -91,9 +91,7 @@ class QuestionRepository:
             )
             if excluded_ids:
                 stmt = stmt.where(QuestionRow.id.not_in(excluded_ids))
-            result = await session.execute(
-                stmt.order_by(QuestionRow.id).limit(1)
-            )
+            result = await session.execute(stmt.order_by(QuestionRow.id).limit(1))
             row = result.scalar_one_or_none()
             return _to_persisted(row) if row is not None else None
 
@@ -115,9 +113,7 @@ class QuestionRepository:
             stmt = select(QuestionRow).where(QuestionRow.sense_id == sense_id)
             if type_id is not None:
                 stmt = stmt.where(QuestionRow.type_id == type_id)
-            rows = (
-                await session.execute(stmt.order_by(QuestionRow.id.desc()))
-            ).scalars().all()
+            rows = (await session.execute(stmt.order_by(QuestionRow.id.desc()))).scalars().all()
             return [_to_persisted(row) for row in rows]
 
     async def get(self, question_id: int) -> PersistedQuestion | None:
@@ -127,9 +123,7 @@ class QuestionRepository:
 
     async def delete(self, question_id: int) -> bool:
         async with session_scope(self._session_factory) as session:
-            result = await session.execute(
-                delete(QuestionRow).where(QuestionRow.id == question_id)
-            )
+            result = await session.execute(delete(QuestionRow).where(QuestionRow.id == question_id))
             return (result.rowcount or 0) > 0
 
 

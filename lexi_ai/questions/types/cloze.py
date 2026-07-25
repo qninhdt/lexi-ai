@@ -69,9 +69,7 @@ class Cloze:
             return None
         word_bank: list[str] = []
         if level == 2:
-            distractors = await ctx.distractors.for_word(
-                entry, k=_MCQ_OPTIONS - 1, pos=sense.pos
-            )
+            distractors = await ctx.distractors.for_word(entry, k=_MCQ_OPTIONS - 1, pos=sense.pos)
             word_bank, _ = _shuffled_options(
                 entry.display,
                 distractors,

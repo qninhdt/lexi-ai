@@ -64,9 +64,7 @@ class QuestionEngine:
         """Return the capability info for every registered type in registry order."""
         return [question_type.info for question_type in REGISTRY.values()]
 
-    async def prepare(
-        self, entry: Entry, demands: Sequence[QuestionDemand]
-    ) -> PrepareReport:
+    async def prepare(self, entry: Entry, demands: Sequence[QuestionDemand]) -> PrepareReport:
         """Best-effort preparation across assessment types.
 
         A plugin failure is logged and contributes zero rather than blocking

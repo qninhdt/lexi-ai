@@ -92,9 +92,7 @@ class QuestionService:
     async def retrieve_exposure(self, sense_id: int) -> PresentedQuestion:
         return await self._engine.retrieve_exposure(sense_id)
 
-    async def evaluate(
-        self, question_id: int, submission: AnswerSubmission
-    ) -> Evaluation | None:
+    async def evaluate(self, question_id: int, submission: AnswerSubmission) -> Evaluation | None:
         """Grade a submission, or report a miss for an unknown question."""
         persisted = await self._repository.get(question_id)
         if persisted is None:

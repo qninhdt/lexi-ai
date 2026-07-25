@@ -18,9 +18,7 @@ class Flashcard:
         difficulty_levels=frozenset({0}),
     )
 
-    async def retrieve(
-        self, ctx: QuestionContext, query: QuestionQuery
-    ) -> PersistedQuestion:
+    async def retrieve(self, ctx: QuestionContext, query: QuestionQuery) -> PersistedQuestion:
         if query.difficulty_level != 0:
             raise ValueError("flashcard retrieval requires difficulty level 0")
         if ctx.sense_loader is None:

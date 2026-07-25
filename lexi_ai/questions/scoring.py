@@ -61,9 +61,7 @@ async def grade_single_choice(
     return _graded(submission.question_id, correct, reveal=reveal)
 
 
-async def grade_text_span(
-    persisted: PersistedQuestion, submission: AnswerSubmission
-) -> Evaluation:
+async def grade_text_span(persisted: PersistedQuestion, submission: AnswerSubmission) -> Evaluation:
     """Grade text against the lemma and any accepted inflected surfaces."""
     grading = to_grading(persisted.render_kind, persisted.payload)
     accepted = {match_key(grading.answer_norm)}
