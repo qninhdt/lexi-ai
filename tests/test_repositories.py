@@ -17,7 +17,7 @@ from lexi_ai.db import create_session_factory, init_models
 from lexi_ai.domain.models import ThemeRecord, WordRecord
 from lexi_ai.generation.schemas import GeneratedEntry, GeneratedResult
 from lexi_ai.infrastructure.db.uow import SqlAlchemyUnitOfWork
-from lexi_ai.normalize import match_key
+from lexi_ai.normalize import match_key, render
 from tests.support.persistence_driver import PersistenceDriver
 
 
@@ -428,3 +428,58 @@ async def test_stats_counts_every_aggregate_in_one_snapshot(repo, uow):
     assert snapshot.themes == 1
     assert snapshot.themed_words == 0
     assert snapshot.questions == 0
+
+
+
+# --- lookup reads backing search --------------------------------------------
+
+
+async def test_generated_by_cambridge_returns_the_stored_lemma_not_a_display(repo, uow):
+    """The row carries the raw lemma; rendering is the caller's job.
+
+    This distinction is easy to lose. A lemma keeps placeholders like ``{sb}`` that a
+    caller must never show, so search renders before building a hit. A reader that
+    forwarded ``norm`` straight to ``display`` would leak the placeholder, and most
+    words look identical either way, so nothing else would notice.
+    """
+    entry = GeneratedEntry(
+        norm="ask {sb} out",
+        entry_type="phrase",
+        senses=[{"definition": "invite someone", "tier": "core", "pos": "verb"}],
+    )
+    await repo.persist_result(GeneratedResult(units=[entry]), cambridge_word_id=4242)
+
+    async with uow() as work:
+        found = await work.words.generated_by_cambridge([4242])
+
+    assert found[4242].norm == "ask {sb} out"
+    assert render(found[4242].norm) == "ask somebody out"
+
+
+async def test_resolve_key_matches_a_headword_and_an_alias(repo, uow):
+    await _publish(
+        repo,
+        GeneratedEntry(
+            norm="color",
+            entry_type="word",
+            senses=[{"definition": "hue", "tier": "core", "pos": "noun"}],
+            aliases=[{"alias_norm": "colour", "type": "spelling_uk", "dialect": "uk"}],
+        ),
+    )
+
+    async with uow() as work:
+        by_headword = await work.words.resolve_key(match_key("color"))
+        by_alias = await work.words.resolve_key(match_key("colour"))
+
+    assert [row.status for row in by_headword] == ["done"]
+    assert by_alias == by_headword  # the alias resolves to the same word
+
+
+async def test_norm_and_cambridge_reports_provenance(repo, uow):
+    await repo.persist_result(GeneratedResult(units=[_entry("anchored")]), cambridge_word_id=77)
+
+    async with uow() as work:
+        word_id = (await work.words.listing())[0].word_id
+        norm, cambridge_id = await work.words.norm_and_cambridge(word_id)
+
+    assert (norm, cambridge_id) == ("anchored", 77)

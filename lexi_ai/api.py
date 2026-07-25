@@ -18,21 +18,22 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from lexi_ai.application.assets import AssetService
 from lexi_ai.application.dictionary import DictionaryService
+from lexi_ai.application.enrichment import EnrichmentService
 from lexi_ai.application.generation_writer import GenerationWriter
 from lexi_ai.application.questions import QuestionService
+from lexi_ai.application.search import SearchService
 from lexi_ai.application.tags import TagService
 from lexi_ai.application.themes import ThemeService
 from lexi_ai.assets.repository import AssetRepository
 from lexi_ai.config import Settings, get_settings
 from lexi_ai.constants import canonical_cambridge_ref
 from lexi_ai.db import create_engine, create_session_factory, init_models
-from lexi_ai.domain.hashing import sense_content_hash
 from lexi_ai.domain.models import WordListing
 from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
 from lexi_ai.generation.schemas import ExampleBatch
 from lexi_ai.infrastructure.db.uow import SqlAlchemyUnitOfWork
-from lexi_ai.normalize import match_key, render
+from lexi_ai.normalize import match_key
 from lexi_ai.read_models import (
     Asset,
     BatchResult,
@@ -47,7 +48,6 @@ from lexi_ai.read_models import (
 from lexi_ai.references.cambridge import CambridgeSource
 from lexi_ai.references.loader import ReferenceBundle, ReferenceLoader
 from lexi_ai.references.wordnet import WordNetSource
-from lexi_ai.vectors import cosine, pack_vector, unpack_vector
 
 if TYPE_CHECKING:
     from lexi_ai.contracts.questions import (
@@ -340,60 +340,7 @@ class Lexicon:
         generated hit (shown once, as generated), so nothing is offered for
         regeneration by mistake.
         """
-        exact = await self._loader.cambridge.resolve_exact(query)
-        exact_ids = {ref.word_id for ref in exact}
-        ranked = await self._loader.cambridge.rank_similar(query)
-        # (cambridge_id, display, entry_type, score) — exact first at 1.0, then
-        # fuzzy; dedup by cambridge_id preserving the best (first) score.
-        refs: list[tuple[int, str, str | None, float]] = [
-            (r.word_id, r.display_form, r.entry_type, 1.0) for r in exact
-        ]
-        refs += [
-            (r.word_id, r.display_form, r.entry_type, score)
-            for r, score in ranked
-            if r.word_id not in exact_ids
-        ]
-        seen_ids: set[int] = set()
-        deduped: list[tuple[int, str, str | None, float]] = []
-        for cid, display, entry_type, score in refs:
-            if cid not in seen_ids:
-                seen_ids.add(cid)
-                deduped.append((cid, display, entry_type, score))
-
-        # A reference is "already generated" if a word carries its cambridge_id
-        # provenance (robust to display/norm key differences). Fold those into a
-        # single generated hit per lexi word so nothing is re-offered.
-        generated = await self._generated_by_cambridge([cid for cid, _, _, _ in deduped])
-        glosses = await self._loader.cambridge.first_definitions([cid for cid, _, _, _ in deduped])
-        results: list[SearchResult] = []
-        seen_lexi: set[int] = set()
-        for cid, display, entry_type, score in deduped:
-            hit = generated.get(cid)
-            if hit is not None:
-                lexi_id, gen_display, gen_type = hit
-                if lexi_id in seen_lexi:
-                    continue  # two Cambridge ids fold to one generated word
-                seen_lexi.add(lexi_id)
-                results.append(
-                    SearchResult(
-                        display=gen_display,
-                        entry_type=gen_type,
-                        score=score,
-                        lexi_word_id=lexi_id,
-                    )
-                )
-            else:
-                results.append(
-                    SearchResult(
-                        display=display,
-                        entry_type=entry_type,
-                        score=score,
-                        cambridge_id=cid,
-                        gloss=glosses.get(cid),
-                    )
-                )
-        results.sort(key=lambda r: (-r.score, r.display))
-        return results
+        return await self._search().search(query)
 
     async def get_entry(self, word_id: int, theme: str | int | None = None) -> Entry:
         """Load a generated entry by its dictionary id. Never generates (FREE).
@@ -451,22 +398,7 @@ class Lexicon:
         Unknown ``sense_id`` raises ``ValueError``; no LLM configured raises
         ``ValueError``.
         """
-        if theme is not None:
-            return await self._add_themed_examples(sense_id, n, theme)
-        async with self._uow() as uow:
-            ctx = await uow.senses.example_context(sense_id)
-        if ctx is None:
-            raise ValueError(f"unknown sense_id: {sense_id}")
-        context, existing = ctx
-        # Clamp to ExampleBatch's schema ceiling: a larger n would prompt for more
-        # than the model can validly return, wasting the structured-output retries.
-        n = min(n, _MAX_EXAMPLES_PER_CALL)
-        if n > 0:
-            batch = await self._example_generator().generate_examples(context, existing, n)
-            async with self._uow() as uow:
-                await uow.senses.append_examples(sense_id, batch.examples)
-                await uow.commit()
-        return (await self.get_senses([sense_id]))[0]
+        return await self._enrichment().add_examples(sense_id, n, theme)
 
     def _example_generator(self) -> Generator:
         """The neutral generator, used for targeted example augmentation. Reuses
@@ -530,10 +462,7 @@ class Lexicon:
         order (``value`` is ``None`` for an unknown id — that is a valid answer,
         not a failure). Never generates (FREE)."""
 
-        async def _one(word_id: int) -> str | None:
-            return await self.get_status(word_id)
-
-        return await self._gather_batch(word_ids, _one)
+        return await self._dictionary().statuses(word_ids)
 
     async def semantic_search(self, query: str, k: int = 10) -> list[SemanticHit]:
         """Rank already-generated senses by meaning similarity to ``query``.
@@ -544,32 +473,7 @@ class Lexicon:
         an empty list when nothing is embedded yet (e.g. the ``[embeddings]``
         extra isn't installed) or ``k <= 0``.
         """
-        if k <= 0:
-            return []
-        async with self._uow() as uow:
-            rows = await uow.senses.embedded(self._embedder.model_name)
-        if not rows:
-            return []
-        try:
-            qvec = await self._embedder.embed_one(query)
-        except Exception:  # noqa: BLE001 - best-effort: search degrades to [] on embed failure
-            return []
-        scored = sorted(
-            ((cosine(qvec, unpack_vector(row.embedding)), row) for row in rows),
-            key=lambda s: -s[0],
-        )
-        return [
-            SemanticHit(
-                lexi_word_id=row.word_id,
-                display=render(row.norm),
-                entry_type=row.entry_type,
-                score=score,
-                sense=SenseView(
-                    definition=row.definition, tier=row.tier, pos=None, cefr_level=None
-                ),
-            )
-            for score, row in scored[:k]
-        ]
+        return await self._search().semantic_search(query, k)
 
     async def backfill_embeddings(self, *, limit: int | None = None) -> int:
         """Embed done senses that lack a current-model vector. Returns count embedded.
@@ -579,7 +483,7 @@ class Lexicon:
         model). Idempotent: a second call with everything embedded returns 0. No
         LLM. Best-effort: returns 0 if the embeddings extra is unavailable.
         """
-        return await self._embed_missing(limit=limit)
+        return await self._enrichment().backfill_embeddings(limit=limit)
 
     async def list_tags(self) -> list[TagCount]:
         """Every topic tag with its live member count (over ``done`` words),
@@ -702,6 +606,22 @@ class Lexicon:
         return self._theme_meta_gen
 
     # --- cached assets ----------------------------------------------------
+
+    def _search(self) -> SearchService:
+        """The lookup service, rebuilt per call over this Lexicon's collaborators."""
+        return SearchService(self._uow, self._loader, self._embedder)
+
+    def _enrichment(self) -> EnrichmentService:
+        """The enrichment service, rebuilt per call over this Lexicon's collaborators."""
+        return EnrichmentService(
+            self._uow,
+            self._embedder,
+            self._example_generator,
+            lambda: self._wsd,
+            self.get_senses,
+            self._add_themed_examples,
+            _MAX_EXAMPLES_PER_CALL,
+        )
 
     def _tags(self) -> TagService:
         """The tag curation service, rebuilt per call."""
@@ -1062,7 +982,7 @@ class Lexicon:
         # pending sense-relation edge pointing AT them can now be reconciled.
         # Coverage grows with traffic — no scheduler needed. Best-effort: a WSD
         # failure must never fail an already-persisted generation.
-        await self._resolve_inbound([w.id for w in words])
+        await self._enrichment().resolve_inbound([w.id for w in words])
         return result
 
     # --- WSD relation resolution (Phase 4) --------------------------------
@@ -1080,139 +1000,13 @@ class Lexicon:
         Complements the automatic inbound hook in :meth:`_run_generation` — this
         is for words done BEFORE the feature existed, or a hook that was skipped.
         """
-        return await self._resolve_core(batch_size, word_ids=None)
-
-    async def _resolve_inbound(self, word_ids: list[int]) -> list[BatchResult]:
-        """Best-effort resolve of edges pointing at the just-generated ``word_ids``.
-
-        Wraps :meth:`_resolve_core` and swallows every error: the generation that
-        triggered this hook is already committed, so a WSD hiccup (LLM down, judge
-        error) must degrade to "leave the edges pending", never propagate.
-        """
-        if not word_ids:
-            return []
-        try:
-            return await self._resolve_core(len(word_ids) * self._WSD_INBOUND_FACTOR, word_ids)
-        except Exception:  # noqa: BLE001 - inbound resolve is strictly best-effort
-            return []
-
-    # A generated word may be the target of many pending edges; give the inbound
-    # hook headroom over the raw word count, still clamped by the hard ceiling.
-    _WSD_INBOUND_FACTOR = 20
-
-    async def _resolve_core(self, batch_size: int, word_ids: list[int] | None) -> list[BatchResult]:
-        """Shared resolve engine for both the hook and the public batch API.
-
-        Steps: clamp ``batch_size`` ([F9]) → read the pending queue → per edge,
-        POS-filter candidates ([F2]) and build a :class:`WsdTask` → ONE judge call
-        → validate each ``chosen_index`` against the (deterministically-ordered)
-        candidate list ([F3]) → apply as conditional, per-savepoint writes ([F6]/
-        [F7]). Degrades to ``[]`` when no judge is configured.
-        """
-        judge = self._wsd
-        if judge is None:
-            return []
-        from lexi_ai.domain.models import ResolveDecision
-        from lexi_ai.generation.schemas import WsdCandidate, WsdTask
-        from lexi_ai.generation.wsd import WSD_BATCH_CEIL, pos_filtered_candidates
-
-        capped = max(1, min(batch_size, WSD_BATCH_CEIL))
-        async with self._uow() as uow:
-            tasks = await uow.senses.pending_relations(capped, word_ids=word_ids)
-        if not tasks:
-            return []
-
-        # Build judge tasks, remembering the POS-filtered candidate order PER edge
-        # so the judge's ``chosen_index`` maps back to the exact sense it saw ([F3]).
-        filtered_by_edge: dict[int, list] = {}
-        wsd_tasks: list[WsdTask] = []
-        for task in tasks:
-            cands = pos_filtered_candidates(task.source_pos, task.candidates)
-            filtered_by_edge[task.edge_id] = cands
-            wsd_tasks.append(
-                WsdTask(
-                    rel_type=task.rel_type,
-                    gloss=task.gloss,
-                    source_def=task.source_def,
-                    candidates=[
-                        WsdCandidate(index=i, definition=c.definition) for i, c in enumerate(cands)
-                    ],
-                )
-            )
-
-        choices = await judge.judge(wsd_tasks)
-
-        decisions: list[ResolveDecision] = []
-        for task, choice in zip(tasks, choices, strict=True):
-            cands = filtered_by_edge[task.edge_id]
-            idx = choice.chosen_index
-            # [F3] Never trust the model index: out-of-range / None ⇒ unresolvable.
-            if idx is None or not (0 <= idx < len(cands)):
-                decisions.append(ResolveDecision(task.edge_id, None, None))
-            else:
-                chosen = cands[idx]
-                decisions.append(
-                    ResolveDecision(
-                        task.edge_id,
-                        chosen.sense_id,
-                        sense_content_hash(chosen.definition),
-                    )
-                )
-
-        async with self._uow() as uow:
-            outcomes = await uow.senses.apply_resolutions(decisions)
-            await uow.commit()
-        return [
-            BatchResult(key=o.edge_id, value=o.state)
-            if o.error is None
-            else BatchResult(key=o.edge_id, error=o.error)
-            for o in outcomes
-        ]
+        return await self._enrichment().resolve_relations(batch_size)
 
     # --- embeddings -------------------------------------------------------
 
     async def _embed_words(self, word_ids: list[int]) -> int:
-        """Embed the senses of the given words, best-effort. Returns count embedded."""
-        return await self._embed_missing(word_ids=word_ids)
-
-    async def _embed_missing(
-        self, word_ids: list[int] | None = None, limit: int | None = None
-    ) -> int:
-        """Embed senses lacking a current-model vector; persist packed bytes.
-
-        Shared by the post-generation hook (``word_ids`` set) and
-        :meth:`backfill_embeddings` (``word_ids`` None). Best-effort: ANY embedding
-        failure (extra missing, model load, OOM, device, a misbehaving encoder)
-        embeds nothing and returns 0 — an embedding error must never fail an
-        already-persisted generation.
-        """
-        async with self._uow() as uow:
-            pending = await uow.senses.needing_embedding(
-                self._embedder.model_name, word_ids=word_ids, limit=limit
-            )
-        if not pending:
-            return 0
-        texts = [self._embed_text(norm, definition) for _sid, norm, definition in pending]
-        try:
-            vectors = await self._embedder.embed(texts)
-            if not vectors:
-                return 0
-            dim = len(vectors[0])
-            packed = [
-                (sid, pack_vector(vec))
-                for (sid, _norm, _definition), vec in zip(pending, vectors, strict=True)
-            ]
-        except Exception:  # noqa: BLE001 - best-effort: never fail generation on embed
-            return 0
-        async with self._uow() as uow:
-            written = await uow.senses.store_embeddings(packed, self._embedder.model_name, dim)
-            await uow.commit()
-        return written
-
-    @staticmethod
-    def _embed_text(norm: str, definition: str) -> str:
-        """The text embedded for one sense: display headword + its definition."""
-        return f"{render(norm)}: {definition}"
+        """Embed the senses of the given words, best-effort."""
+        return await self._enrichment().embed_missing(word_ids=word_ids)
 
     async def _entry_for_key(self, key: str, result) -> Entry:
         """Return the entry for the just-generated key, or the first unit as fallback."""
