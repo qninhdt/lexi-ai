@@ -102,3 +102,18 @@ def test_the_composition_root_serves_no_use_case_itself():
     """
     leaked = (_operations(LexiconReader) | _operations(LexiconEngine)) & _operations(Lexicon)
     assert leaked == {"close", "init"}, leaked
+
+
+def test_both_facades_of_one_lexicon_share_its_process_scoped_state():
+    """The reader and the engine must be views on ONE graph, not two.
+
+    Each facade used to carry a `from_settings` of its own, which built a second
+    Lexicon: two database engines and — the actual bug — two single-flight lock
+    registries, so the same word could be generated twice concurrently. Building
+    now starts at `Lexicon.from_settings()` and both facades wrap that one graph.
+    """
+    from unittest.mock import MagicMock
+
+    lexicon = Lexicon(MagicMock(), MagicMock(), MagicMock(), vectors=MagicMock())
+
+    assert lexicon.reader()._lexicon is lexicon.engine()._lexicon is lexicon

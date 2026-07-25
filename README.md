@@ -68,15 +68,18 @@ not install LanceDB.
 
 ```python
 import asyncio
-from lexi_ai import LexiconEngine, LexiconReader
+from lexi_ai import Lexicon
 
 async def main():
-    # Two facades, one capability boundary. The reader can only read; the engine is
-    # the only object that can change a row or spend a model call. A read-only
-    # process constructs the reader alone and cannot generate by accident.
-    work = LexiconEngine.from_settings()   # reads LEXI_* env / .env
+    # One graph, two facades over it. The reader can only read; the engine is the
+    # only object that can change a row or spend a model call. A read-only process
+    # takes just the reader and cannot generate by accident.
+    #
+    # Build the graph once: it owns the database engine and the process-scoped
+    # locks that make one word generate exactly once.
+    lex = Lexicon.from_settings()   # reads LEXI_* env / .env
+    read, work = lex.reader(), lex.engine()
     await work.init()
-    read = LexiconReader.from_settings()
 
     # Search (free) → generate (spends tokens once) → cached thereafter.
     results = await read.search("serendipity")
@@ -121,8 +124,10 @@ async def main():
 asyncio.run(main())
 ```
 
-`Lexicon` remains available as the composition root — it wires the object graph and
-hands out `reader()` and `engine()` — but it exposes no use case of its own.
+`Lexicon` is the composition root: it wires the object graph and hands out
+`reader()`/`engine()`, but exposes no use case of its own. Build it once per process
+— it owns the database engine and the locks that collapse duplicate generation, so a
+second instance would silently undo both.
 
 Configuration is env-driven (prefix `LEXI_`): `LLM_BASE_URL`, `LLM_API_KEY`,
 `LLM_MODEL`, `DB_URL`, `CAMBRIDGE_DB_PATH`. Copy `examples/.env.example` to `.env`

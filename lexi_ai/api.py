@@ -36,6 +36,7 @@ from lexi_ai.assets.repository import AssetRepository
 from lexi_ai.config import Settings, get_settings
 from lexi_ai.db import create_engine, create_session_factory, init_models
 from lexi_ai.embeddings import Embedder
+from lexi_ai.facades import LexiconEngine, LexiconReader
 from lexi_ai.generation.generator import Generator
 from lexi_ai.generation.schemas import MAX_EXAMPLES_PER_CALL
 from lexi_ai.infrastructure.db.uow import SqlAlchemyUnitOfWork
@@ -48,7 +49,6 @@ from lexi_ai.references.wordnet import WordNetSource
 
 if TYPE_CHECKING:
     from lexi_ai.domain.ports import VectorIndex
-    from lexi_ai.facades import LexiconEngine, LexiconReader
     from lexi_ai.generation.wsd import WsdJudge
     from lexi_ai.read_models import Entry
 
@@ -120,14 +120,10 @@ class Lexicon:
 
     def reader(self) -> LexiconReader:
         """The provider-free public read facade over this graph."""
-        from lexi_ai.facades import LexiconReader
-
         return LexiconReader(self)
 
     def engine(self) -> LexiconEngine:
         """The provider-enabled public work facade over this graph."""
-        from lexi_ai.facades import LexiconEngine
-
         return LexiconEngine(self)
 
     async def init(self) -> None:

@@ -11,8 +11,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from lexi_ai.config import Settings
-
 if TYPE_CHECKING:
     from lexi_ai.api import Lexicon
     from lexi_ai.contracts.questions import (
@@ -38,13 +36,6 @@ class LexiconEngine:
 
     def __init__(self, lexicon: Lexicon):
         self._lexicon = lexicon
-
-    @classmethod
-    def from_settings(cls, settings: Settings | None = None) -> LexiconEngine:
-        """Build an engine over its own object graph, from configuration."""
-        from lexi_ai.api import Lexicon
-
-        return cls(Lexicon.from_settings(settings))
 
     async def init(self) -> None:
         """Create the generated-DB schema (idempotent)."""

@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from lexi_ai.config import Settings
-
 if TYPE_CHECKING:
     from lexi_ai.api import Lexicon
     from lexi_ai.application.questions import QuestionService
@@ -38,13 +36,6 @@ class LexiconReader:
 
     def __init__(self, lexicon: Lexicon):
         self._lexicon = lexicon
-
-    @classmethod
-    def from_settings(cls, settings: Settings | None = None) -> LexiconReader:
-        """Build a reader over its own object graph, from configuration."""
-        from lexi_ai.api import Lexicon
-
-        return cls(Lexicon.from_settings(settings))
 
     async def close(self) -> None:
         """Release the database engine behind this reader."""
