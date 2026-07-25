@@ -88,9 +88,12 @@ uv sync --extra embeddings                    # torch + transformers (~200MB, CP
 uv run python examples/09_semantic_search.py  # weights (~90MB) download on first run
 ```
 
-Embeddings are **best-effort**: without the extra, generation still works and
-`semantic_search` returns `[]`. After installing, `backfill_embeddings()`
-vectorizes any senses generated earlier. Tune via `LEXI_EMBEDDING_*` in `.env`.
+Embeddings are **best-effort on the write path**: without the extra, generation
+still works and simply stores no vector. Reading is not: `semantic_search` raises
+`EmbeddingUnavailable` instead of answering `[]` for a search it could not run, so
+an empty list always means "nothing matched". After installing,
+`backfill_embeddings()` vectorizes any senses generated earlier. Tune via
+`LEXI_EMBEDDING_*` in `.env`.
 
 ## Topic tags (example 10)
 

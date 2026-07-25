@@ -90,6 +90,11 @@ class EnrichmentService:
         in a top-k answer.
 
         Idempotent: with everything embedded and nothing stale, this returns zero.
+
+        RAISES on encoder or index failure. This is the operation whose entire
+        purpose is to make the index correct, so a caller must be able to tell
+        "nothing needed doing" from "the index is unreachable"; both would
+        otherwise be a return of zero.
         """
         await self._prune_orphan_vectors()
         return await self.embed_missing(limit=limit)
@@ -99,15 +104,14 @@ class EnrichmentService:
     ) -> int:
         """Encode and store vectors for senses the index has no current vector for.
 
-        ANY encoder or index failure returns zero rather than raising: the extra may
-        be uninstalled, the model may fail to load, the device may be out of memory.
-        None of that may fail an already-persisted generation.
+        Raises on encoder or index failure: the extra may be uninstalled, the model
+        may fail to load, the device may be out of memory. The generation hook that
+        must survive all of that swallows it at ITS call site (see
+        ``Lexicon._embed_words``); callers who asked for embedding on purpose get
+        the error.
         """
         model = self._embedder.model_name
-        try:
-            stored = await self._vectors.ids({"model": model})
-        except Exception:  # noqa: BLE001 - best-effort: an unreachable index embeds nothing
-            return 0
+        stored = await self._vectors.ids({"model": model})
         async with self._uow() as uow:
             candidates = await uow.senses.needing_embedding(
                 word_ids=list(word_ids) if word_ids is not None else None,
@@ -119,37 +123,36 @@ class EnrichmentService:
         if not pending:
             return 0
         texts = [self._embed_text(row.norm, row.definition) for row in pending]
-        try:
-            vectors = await self._embedder.embed(texts)
-            if not vectors:
-                return 0
-            return await self._vectors.upsert(
-                [
-                    VectorRecord(id=str(row.sense_id), vector=vector, meta={"model": model})
-                    for row, vector in zip(pending, vectors, strict=True)
-                ]
-            )
-        except Exception:  # noqa: BLE001 - best-effort: never fail generation on embed
+        vectors = await self._embedder.embed(texts)
+        if not vectors:
             return 0
+        return await self._vectors.upsert(
+            [
+                VectorRecord(id=str(row.sense_id), vector=vector, meta={"model": model})
+                for row, vector in zip(pending, vectors, strict=True)
+            ]
+        )
 
     async def _prune_orphan_vectors(self) -> int:
-        """Drop vectors whose sense is gone. Best-effort, like everything here."""
-        try:
-            stored = await self._vectors.ids()
-            if not stored:
-                return 0
-            async with self._uow() as uow:
-                live = await uow.senses.live_sense_ids()
-            orphans = [
-                stored_id
-                for stored_id in stored
-                if not stored_id.isdigit() or int(stored_id) not in live
-            ]
-            if not orphans:
-                return 0
-            return await self._vectors.delete(orphans)
-        except Exception:  # noqa: BLE001 - best-effort: a prune failure is not a caller error
+        """Drop vectors whose sense is gone.
+
+        A delete or a regeneration leaves the old vector behind, and it would
+        otherwise consume a slot in a top-k answer. Raises like its only caller,
+        ``backfill_embeddings``.
+        """
+        stored = await self._vectors.ids()
+        if not stored:
             return 0
+        async with self._uow() as uow:
+            live = await uow.senses.live_sense_ids()
+        orphans = [
+            stored_id
+            for stored_id in stored
+            if not stored_id.isdigit() or int(stored_id) not in live
+        ]
+        if not orphans:
+            return 0
+        return await self._vectors.delete(orphans)
 
     @staticmethod
     def _embed_text(norm: str, definition: str) -> str:

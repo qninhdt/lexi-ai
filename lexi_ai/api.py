@@ -241,8 +241,17 @@ class Lexicon:
         )
 
     async def _embed_words(self, word_ids: list[int]) -> int:
-        """Embed the senses of the given words, best-effort (generation hook)."""
-        return await self.enrichment().embed_missing(word_ids=word_ids)
+        """Embed the senses of the given words as a post-commit generation hook.
+
+        The ONE place a vector failure is swallowed. The entry is already persisted
+        and the LLM call is already paid for; a missing embeddings extra or a device
+        error must not turn that into a failed generation. The vectors stay missing
+        and `backfill_embeddings()` — which does raise — reconciles them later.
+        """
+        try:
+            return await self.enrichment().embed_missing(word_ids=word_ids)
+        except Exception:  # noqa: BLE001 - see the docstring: generation is already paid for
+            return 0
 
     # --- questions --------------------------------------------------------
 

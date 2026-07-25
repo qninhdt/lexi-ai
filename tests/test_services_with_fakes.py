@@ -292,7 +292,9 @@ async def test_semantic_search_asks_for_more_than_k_to_absorb_stale_vectors():
     assert index.queried[0][1] > 3
 
 
-async def test_semantic_search_degrades_when_the_encoder_is_unavailable():
+async def test_semantic_search_raises_when_the_encoder_is_unavailable():
+    """A broken encoder must not read as "no match" — that is a wrong answer."""
+
     class DeadEmbedder:
         model_name = "fake-model"
 
@@ -301,11 +303,20 @@ async def test_semantic_search_degrades_when_the_encoder_is_unavailable():
 
     service = SearchService(FakeUnitOfWork(), _unused, DeadEmbedder(), FakeVectorIndex())
 
-    assert await service.semantic_search("q") == []
+    with pytest.raises(RuntimeError, match="extra not installed"):
+        await service.semantic_search("q")
 
 
-async def test_semantic_search_degrades_when_the_index_is_unreachable():
+async def test_semantic_search_raises_when_the_index_is_unreachable():
     service = SearchService(FakeUnitOfWork(), _unused, FakeEmbedder(), BrokenVectorIndex())
+
+    with pytest.raises(RuntimeError):
+        await service.semantic_search("q")
+
+
+async def test_semantic_search_is_empty_when_the_index_holds_nothing():
+    """The one legitimate empty answer: the search ran and matched nothing."""
+    service = SearchService(FakeUnitOfWork(), _unused, FakeEmbedder(), FakeVectorIndex(hits=[]))
 
     assert await service.semantic_search("q") == []
 
@@ -359,13 +370,15 @@ async def test_embedding_skips_senses_the_index_already_holds():
     assert [record.id for record in index.upserted[0]] == ["9"]
 
 
-async def test_embedding_writes_nothing_when_the_index_is_unreachable():
+async def test_embedding_raises_when_the_index_is_unreachable():
+    """Zero must mean "nothing needed doing", so an unreachable index cannot return 0."""
     uow = FakeUnitOfWork(senses=FakeRepo(needing_embedding=[_need(7)]))
 
-    assert await _enrichment(uow, index=BrokenVectorIndex()).embed_missing() == 0
+    with pytest.raises(RuntimeError):
+        await _enrichment(uow, index=BrokenVectorIndex()).embed_missing()
 
 
-async def test_a_failing_encoder_never_propagates_out_of_embedding():
+async def test_a_failing_encoder_propagates_out_of_embedding():
     class DeadEmbedder:
         model_name = "fake-model"
 
@@ -374,7 +387,8 @@ async def test_a_failing_encoder_never_propagates_out_of_embedding():
 
     uow = FakeUnitOfWork(senses=FakeRepo(needing_embedding=[_need(7)]))
 
-    assert await _enrichment(uow, embedder=DeadEmbedder()).embed_missing() == 0
+    with pytest.raises(RuntimeError, match="CUDA"):
+        await _enrichment(uow, embedder=DeadEmbedder()).embed_missing()
 
 
 async def test_the_backfill_prunes_vectors_whose_sense_no_longer_exists():

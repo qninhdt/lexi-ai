@@ -14,13 +14,24 @@ Flow:
   2. semantic_search(query) -> senses closest in MEANING to the query (FREE)
   3. backfill_embeddings() -> fills any vectors skipped when the extra was absent
 
-If the ``[embeddings]`` extra is not installed, generation still works and
-semantic_search returns [] — the script tells you how to enable it.
+If the ``[embeddings]`` extra is not installed, generation still works (vectors
+are best-effort on the write path) but ``semantic_search`` RAISES
+``EmbeddingUnavailable`` rather than answering "no match" for a search it never
+ran. Handling that named exception — as this script does — is the intended way to
+degrade; an empty list always means the search ran and matched nothing.
 """
 
 import asyncio
 
 from _common import aclose, build_lexicon, lookup, print_hits
+
+from lexi_ai.embeddings import EmbeddingUnavailable
+
+_INSTALL_HINT = (
+    "\nSemantic search needs the local encoder. Install it with:\n"
+    "    uv sync --extra embeddings --extra lancedb\n"
+    "then re-run — backfill_embeddings() will vectorize the senses generated above."
+)
 
 SEED_WORDS = ["serendipity", "meticulous", "car", "happy", "melancholy"]
 QUERIES = [
@@ -41,25 +52,20 @@ async def main() -> None:
             made = entry.display if entry else "(no match)"
             print(f"  · {word:<12} -> {made}")
 
-        # 2. Fill any vectors that were skipped (e.g. extra installed just now).
-        filled = await lex.engine().backfill_embeddings()
-        if filled:
-            print(f"\nbackfill_embeddings(): embedded {filled} sense(s)")
+        try:
+            # 2. Fill any vectors that were skipped (e.g. extra installed just now).
+            filled = await lex.engine().backfill_embeddings()
+            if filled:
+                print(f"\nbackfill_embeddings(): embedded {filled} sense(s)")
 
-        # 3. Search by meaning — FREE, never generates a dictionary entry.
-        for query in QUERIES:
-            print(f"\n=== semantic_search({query!r}) ===")
-            hits = await lex.reader().semantic_search(query, k=5)
-            print_hits(hits)
-
-        # Nudge if nothing is embedded (extra not installed).
-        probe = await lex.reader().semantic_search(QUERIES[0], k=1)
-        if not probe:
-            print(
-                "\nNo vectors yet. Install the local embeddings model with:\n"
-                "    uv sync --extra embeddings\n"
-                "then re-run — backfill_embeddings() will vectorize existing senses."
-            )
+            # 3. Search by meaning — FREE, never generates a dictionary entry.
+            for query in QUERIES:
+                print(f"\n=== semantic_search({query!r}) ===")
+                # An empty result here means no sense was close enough — the
+                # encoder and index both worked.
+                print_hits(await lex.reader().semantic_search(query, k=5))
+        except EmbeddingUnavailable:
+            print(_INSTALL_HINT)
     finally:
         await aclose(lex)
 

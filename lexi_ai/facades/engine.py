@@ -125,9 +125,10 @@ class LexiconEngine:
     async def backfill_embeddings(self, *, limit: int | None = None) -> int:
         """Embed done senses lacking a current-model vector; returns the count.
 
-        Fills gaps left by best-effort generation (extra missing at the time) or by
-        an embedding-model change. Idempotent, no LLM, and returns 0 rather than
-        failing when the embeddings extra is unavailable.
+        Fills gaps left by the generation hook (which stays best-effort so a vector
+        failure cannot fail a paid generation) or by an embedding-model change.
+        Idempotent and no LLM, but it RAISES when the encoder or index is broken:
+        zero must mean "nothing needed doing", not "the index is unreachable".
         """
         return await self._lexicon.enrichment().backfill_embeddings(limit=limit)
 

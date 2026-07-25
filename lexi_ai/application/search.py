@@ -109,19 +109,18 @@ class SearchService:
         models yields nothing until a backfill runs rather than ranking against a
         different geometry.
 
-        Degrades to an empty list — never raises — when the encoder is unavailable,
-        the index backend is not installed, or nothing has been embedded yet. A
-        caller that needs results regardless should fall back to :meth:`search`.
+        RAISES on encoder or index failure — a missing extra, a model that will not
+        load, a device error, an unreachable index. An empty list means exactly one
+        thing: nothing matched. Swallowing the failure instead would report "no
+        results" for a broken installation, which reads as "this word is not in the
+        dictionary" and is indistinguishable from the truthful answer.
         """
         if k <= 0:
             return []
-        try:
-            query_vector = await self._embedder.embed_one(query)
-            hits = await self._vectors.query(
-                query_vector, k + _OVERFETCH, {"model": self._embedder.model_name}
-            )
-        except Exception:  # noqa: BLE001 - best-effort: degrade to [] on encoder/index failure
-            return []
+        query_vector = await self._embedder.embed_one(query)
+        hits = await self._vectors.query(
+            query_vector, k + _OVERFETCH, {"model": self._embedder.model_name}
+        )
         scores = {hit.id: hit.score for hit in hits}
         sense_ids = [int(hit.id) for hit in hits if hit.id.isdigit()]
         if not sense_ids:

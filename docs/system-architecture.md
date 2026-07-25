@@ -421,9 +421,13 @@ now explicit: a missing or stale vector is a tolerated transient, never a failur
   `delete_entry` forgets vectors immediately, and the backfill prunes the rest so
   orphans cannot crowd real hits out of a top-k.
 
-Every path degrades rather than raising: an unreachable index or an unavailable
-encoder makes `semantic_search` return `[]` and `backfill_embeddings` return `0`. A
-caller that must have results falls back to lexical `search`.
+Failures surface; only the generation hook swallows them. `semantic_search` and
+`backfill_embeddings` RAISE when the encoder or index is broken — an empty result
+means "nothing matched" and a `0` means "nothing needed doing", so neither can be
+confused with a broken installation. The single exception is the post-commit
+embed hook (`Lexicon._embed_words`): the entry is persisted and the LLM call is
+already paid for, so a vector failure there is swallowed and the backfill
+reconciles it later.
 
 **Backends** are a settings switch (`LEXI_VECTOR_BACKEND`), not a code change:
 `lancedb` (default — embedded, on disk, ANN, needs the `[lancedb]` extra) or

@@ -29,7 +29,9 @@ cost zero tokens.
 - **Topic tags & semantic search** — browse words by open-vocabulary topic tags,
   or rank senses by meaning with local embeddings and a vector index (optional
   extras). Vectors live outside the primary database and are reconciled by
-  `backfill_embeddings`, so a missing one degrades search rather than breaking it.
+  `backfill_embeddings`. Generation never fails over a missing vector, but
+  `semantic_search` raises if the encoder or index is broken rather than
+  answering "no match".
 - **Themes** — restyle an entry's definitions and examples in a named voice
   ("Harry Potter", "humorous") authored via `create_theme`. Themed content
   overlays the neutral entry (the canonical `match_key` invariant is untouched)

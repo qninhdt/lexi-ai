@@ -17,7 +17,7 @@ from sqlalchemy.pool import StaticPool
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.domain.models import VectorRecord
-from lexi_ai.embeddings import Embedder
+from lexi_ai.embeddings import Embedder, EmbeddingUnavailable
 from lexi_ai.facades import LexiconEngine, LexiconReader
 from lexi_ai.generation.schemas import (
     ExampleBatch,
@@ -665,8 +665,10 @@ async def test_generate_survives_embedder_error(engine):
     assert entry.display == "dog"
     assert gen.calls == 1
     assert await lex._vectors.ids() == set()  # embed failed, generation succeeded
-    # semantic_search also degrades to [] rather than raising on the same embedder.
-    assert await lex.reader().semantic_search("pet") == []
+    # Reading is not the write path: the same broken embedder must surface, not
+    # answer "no match" for a query it never actually ran.
+    with pytest.raises(RuntimeError, match="CUDA"):
+        await lex.reader().semantic_search("pet")
 
 
 async def test_generate_survives_an_unreachable_vector_index(engine):
@@ -692,8 +694,11 @@ async def test_generate_survives_an_unreachable_vector_index(engine):
     entry = await lex.engine().generate((await lex.reader().search("dog"))[0])
 
     assert entry.display == "dog"
-    assert await lex.reader().semantic_search("pet") == []
-    assert await lex.engine().backfill_embeddings() == 0
+    # …but neither the read nor the explicit reconciliation may pretend to work.
+    with pytest.raises(RuntimeError, match="index unreachable"):
+        await lex.reader().semantic_search("pet")
+    with pytest.raises(RuntimeError, match="index unreachable"):
+        await lex.engine().backfill_embeddings()
 
 
 async def test_semantic_search_ranks_by_meaning(engine):
@@ -720,12 +725,21 @@ async def test_semantic_search_respects_k(engine):
 
 
 async def test_semantic_search_empty_when_nothing_embedded(engine):
-    # No embedder available (extra missing): generation still works (best-effort),
-    # nothing is indexed, and semantic_search returns [] rather than raising.
+    """A working encoder over an empty index: [] is the truthful answer here."""
     lex, _gen, _sf = _pet_lexicon(engine, embedder=None)
     await lex.engine().generate((await lex.reader().search("dog"))[0])
-    assert await lex._vectors.ids() == set()
+    assert await lex._vectors.ids() == set()  # generation ran with no encoder
+    lex._embedder = _fake_embedder()  # encoder now healthy, index still empty
     assert await lex.reader().semantic_search("pet") == []
+
+
+async def test_semantic_search_raises_when_the_encoder_is_missing(engine):
+    """A missing [embeddings] extra is a broken installation, not an empty result."""
+    lex, _gen, _sf = _pet_lexicon(engine, embedder=None)
+    await lex.engine().generate((await lex.reader().search("dog"))[0])
+
+    with pytest.raises(EmbeddingUnavailable):
+        await lex.reader().semantic_search("pet")
 
 
 async def test_semantic_search_drops_a_vector_whose_sense_is_gone(engine):

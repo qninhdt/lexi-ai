@@ -63,8 +63,12 @@ class LexiconReader:
 
         Embeds the query locally and ranks every done sense carrying a current-model
         vector, best first. Free — only the short query is embedded, never a whole
-        entry. Empty when nothing is embedded yet (e.g. the ``[embeddings]`` extra
-        is not installed) or ``k <= 0``.
+        entry. Empty when nothing matched, when nothing has been embedded yet, or
+        when ``k <= 0``.
+
+        Raises if the encoder or the index is broken (the ``[embeddings]`` extra is
+        not installed, the model will not load, the index is unreachable). An empty
+        result therefore means "no match", never "semantic search is down".
         """
         return await self._lexicon.lookup().semantic_search(query, k)
 
