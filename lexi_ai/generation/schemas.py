@@ -395,3 +395,10 @@ class ExampleGenContext:
     guideword: str | None
     tier: str
     forms: list[tuple[str, str]] = field(default_factory=list)
+
+
+# Upper bound for a single add_examples call, derived from the schema's own
+# max_length so the two can never drift: prompting for more than the schema
+# accepts would guarantee a validation failure and burn the structured-output
+# retries.
+MAX_EXAMPLES_PER_CALL: int = ExampleBatch.model_fields["examples"].metadata[0].max_length

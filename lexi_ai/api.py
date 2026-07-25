@@ -37,7 +37,7 @@ from lexi_ai.config import Settings, get_settings
 from lexi_ai.db import create_engine, create_session_factory, init_models
 from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
-from lexi_ai.generation.schemas import ExampleBatch
+from lexi_ai.generation.schemas import MAX_EXAMPLES_PER_CALL
 from lexi_ai.infrastructure.db.uow import SqlAlchemyUnitOfWork
 from lexi_ai.infrastructure.providers import ProviderRegistry
 from lexi_ai.infrastructure.question_engine_factory import QuestionEngineFactory
@@ -51,11 +51,6 @@ if TYPE_CHECKING:
     from lexi_ai.facades import LexiconEngine, LexiconReader
     from lexi_ai.generation.wsd import WsdJudge
     from lexi_ai.read_models import Entry
-
-# Upper bound for a single add_examples call, taken from ExampleBatch's own
-# max_length so the two never drift: prompting for more than the schema accepts
-# would guarantee a validation failure and burn the structured-output retries.
-MAX_EXAMPLES_PER_CALL = ExampleBatch.model_fields["examples"].metadata[0].max_length
 
 
 class Lexicon:
