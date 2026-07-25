@@ -128,9 +128,7 @@ class PersistenceDriver:
 
     # --- senses -------------------------------------------------------------
 
-    async def apply_resolutions(
-        self, decisions: Iterable[ResolveDecision]
-    ) -> list[ResolveOutcome]:
+    async def apply_resolutions(self, decisions: Iterable[ResolveDecision]) -> list[ResolveOutcome]:
         async with self.uow() as uow:
             outcomes = await uow.senses.apply_resolutions(decisions)
             await uow.commit()

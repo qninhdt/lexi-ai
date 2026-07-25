@@ -22,14 +22,14 @@ async def main(word: str, n: int) -> None:
 
     # Count actual LLM generations by wrapping the bound generator.
     calls = 0
-    original = lex._generator.generate
+    original = lex._providers.generator.generate
 
     async def counting_generate(bundle):
         nonlocal calls
         calls += 1
         return await original(bundle)
 
-    lex._generator.generate = counting_generate  # type: ignore[method-assign]
+    lex._providers.generator.generate = counting_generate  # type: ignore[method-assign]
 
     try:
         print(f"=== {n} concurrent lookups of {word!r} (all miss at once) ===")

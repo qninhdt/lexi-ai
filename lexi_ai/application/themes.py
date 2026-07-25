@@ -26,12 +26,14 @@ class ThemeService:
         metadata_generator: Callable[[], object],
         read_senses: Callable[[Sequence[int]], object],
         word_status: Callable[[int], object],
+        max_examples_per_call: int,
     ) -> None:
         self._uow = uow_factory
         self._themed_generator = themed_generator
         self._metadata_generator = metadata_generator
         self._read_senses = read_senses
         self._word_status = word_status
+        self._max_examples = max_examples_per_call
 
     async def create(
         self,
@@ -164,3 +166,33 @@ class ThemeService:
         if themed is not None:
             base.definition, base.examples = themed
         return base
+
+    async def append_examples(self, sense_id: int, n: int, theme: str | int) -> SenseView:
+        """Append up to ``n`` in-voice examples to a sense's themed overlay.
+
+        The overlay must already exist (the word themed via generate): a missing
+        theme, or a sense with no themed row for that theme, raises rather than
+        silently theming the whole word as a side effect of asking for examples.
+        """
+        theme_id, style_prompt = await self.resolve_or_raise(theme)
+        async with self._uow() as uow:
+            context = await uow.senses.example_context(sense_id)
+            if context is None:
+                raise ValueError(f"unknown sense_id: {sense_id}")
+            overlay = await uow.themes.overlay_for_sense(sense_id, theme_id)
+        if overlay is None:
+            raise ValueError(
+                f"sense {sense_id} has no themed overlay for theme {theme!r}; "
+                "theme the word first via generate(theme=)"
+            )
+        themed_sense_id, existing_themed = overlay
+        facts, _neutral_examples = context
+        n = min(n, self._max_examples)
+        if n > 0:
+            batch = await self._themed_generator().generate_examples(
+                style_prompt, facts, existing_themed, n
+            )
+            async with self._uow() as uow:
+                await uow.themes.append_themed_examples(themed_sense_id, batch.examples)
+                await uow.commit()
+        return await self.sense_view(sense_id, theme_id)

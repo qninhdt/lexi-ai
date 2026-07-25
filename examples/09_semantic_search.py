@@ -41,18 +41,18 @@ async def main() -> None:
             print(f"  · {word:<12} -> {made}")
 
         # 2. Fill any vectors that were skipped (e.g. extra installed just now).
-        filled = await lex.backfill_embeddings()
+        filled = await lex.engine().backfill_embeddings()
         if filled:
             print(f"\nbackfill_embeddings(): embedded {filled} sense(s)")
 
         # 3. Search by meaning — FREE, never generates a dictionary entry.
         for query in QUERIES:
             print(f"\n=== semantic_search({query!r}) ===")
-            hits = await lex.semantic_search(query, k=5)
+            hits = await lex.reader().semantic_search(query, k=5)
             print_hits(hits)
 
         # Nudge if nothing is embedded (extra not installed).
-        probe = await lex.semantic_search(QUERIES[0], k=1)
+        probe = await lex.reader().semantic_search(QUERIES[0], k=1)
         if not probe:
             print(
                 "\nNo vectors yet. Install the local embeddings model with:\n"

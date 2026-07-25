@@ -332,7 +332,6 @@ def test_schema_compiles_on_both_dialects():
             assert "CREATE TABLE" in ddl
 
 
-
 # --- question type contracts ---------------------------------------------
 
 
@@ -406,7 +405,6 @@ def test_question_orm_has_new_columns_and_idempotency_constraint():
         "difficulty_level",
         "content_hash",
     )
-
 
 
 # --- controlled vocabularies enforced by the column type -------------------

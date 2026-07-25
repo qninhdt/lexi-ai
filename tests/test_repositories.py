@@ -430,7 +430,6 @@ async def test_stats_counts_every_aggregate_in_one_snapshot(repo, uow):
     assert snapshot.questions == 0
 
 
-
 # --- lookup reads backing search --------------------------------------------
 
 

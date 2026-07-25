@@ -73,7 +73,7 @@ async def _reading_lexicon(engine, repo) -> Lexicon:
 
 async def _relations_for(lex, word_id):
     """The relations on the FIRST sense of the entry (the seeded emitter)."""
-    entry = await lex.get_entry(word_id)
+    entry = await lex.reader().get_entry(word_id)
     return entry.senses[0].relations
 
 
@@ -246,7 +246,7 @@ async def test_get_senses_carries_relations(engine):
     async with sf() as s:
         sense_id = (await s.execute(select(Sense.id))).scalars().first()
     lex = await _reading_lexicon(engine, repo)
-    views = await lex.get_senses([sense_id])
+    views = await lex.reader().get_senses([sense_id])
 
     assert len(views) == 1
     rels = views[0].relations
@@ -273,7 +273,7 @@ async def test_entry_links_still_word_level(engine):
         )
     )
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get_entry(words[0].id)
+    entry = await lex.reader().get_entry(words[0].id)
 
     fam = [ln for ln in entry.links if ln.rel_type == "word_family"]
     assert len(fam) == 1

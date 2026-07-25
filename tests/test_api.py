@@ -17,6 +17,7 @@ from sqlalchemy.pool import StaticPool
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.embeddings import Embedder
+from lexi_ai.facades import LexiconEngine, LexiconReader
 from lexi_ai.generation.schemas import (
     ExampleBatch,
     GeneratedEntry,
@@ -161,22 +162,22 @@ async def test_search_then_generate_then_hit(engine):
         norm_by_id={1: "color"},
         results_by_word={match_key("color"): GeneratedResult(units=[_entry("color")])},
     )
-    results = await lex.search("color")
+    results = await lex.reader().search("color")
     assert len(results) == 1
     assert not results[0].generated
     assert results[0].cambridge_id == 1
 
-    entry = await lex.generate(results[0])
+    entry = await lex.engine().generate(results[0])
     assert isinstance(entry, Entry)
     assert entry.display == "color"
     assert gen.calls == 1
 
     # Search again: the word is now generated (flagged), not re-offered.
-    again = await lex.search("color")
+    again = await lex.reader().search("color")
     assert again[0].generated
     assert again[0].lexi_word_id is not None
     # Generating the generated hit is a no-op (no LLM).
-    entry2 = await lex.generate(again[0])
+    entry2 = await lex.engine().generate(again[0])
     assert entry2.norm == "color"
     assert gen.calls == 1
 
@@ -196,19 +197,19 @@ async def test_homographs_converge_on_one_entry(engine):
             match_key("shame on you"): GeneratedResult(units=[_entry("shame on you")])
         },
     )
-    results = await lex.search("shame on you")
+    results = await lex.reader().search("shame on you")
     exact = [r for r in results if r.score == 1.0]
     assert len(exact) == 2  # two distinct Cambridge entries, not yet generated
 
-    await lex.generate(exact[0])
+    await lex.engine().generate(exact[0])
     assert gen.calls == 1
     # The other homograph is now a cache hit (its word already exists), and the
     # display folds to a single generated result — no second row, no re-generation.
-    after = await lex.search("shame on you")
+    after = await lex.reader().search("shame on you")
     generated_hits = [r for r in after if r.generated]
     assert len(generated_hits) == 1
-    await lex.generate(exact[1])  # the second suggestion → cache hit
-    await lex.generate(generated_hits[0])
+    await lex.engine().generate(exact[1])  # the second suggestion → cache hit
+    await lex.engine().generate(generated_hits[0])
     assert gen.calls == 1  # nothing regenerated
 
     async with session_scope(session_factory) as session:
@@ -238,8 +239,8 @@ async def test_surface_variants_converge(engine):
     )
     norms = set()
     for variant in ("look after", "look after somebody", "look after sb"):
-        hit = (await lex.search(variant))[0]
-        norms.add((await lex.generate(hit)).norm)
+        hit = (await lex.reader().search(variant))[0]
+        norms.add((await lex.engine().generate(hit)).norm)
     assert norms == {"look after {sb}"}
     assert gen.calls == 1
     async with session_scope(session_factory) as session:
@@ -256,8 +257,8 @@ async def test_concurrent_generate_once(engine):
         norm_by_id={7: "book"},
         results_by_word={match_key("book"): GeneratedResult(units=[_entry("book")])},
     )
-    hit = (await lex.search("book"))[0]
-    entries = await asyncio.gather(*[lex.generate(hit) for _ in range(5)])
+    hit = (await lex.reader().search("book"))[0]
+    entries = await asyncio.gather(*[lex.engine().generate(hit) for _ in range(5)])
     assert all(isinstance(e, Entry) for e in entries)
     assert gen.calls == 1  # per-key lock + double-check
 
@@ -271,10 +272,10 @@ async def test_lock_dict_does_not_grow(engine):
             match_key(w): GeneratedResult(units=[_entry(w)]) for w in ("alpha", "beta", "gamma")
         },
     )
-    hits = {w: (await lex.search(w))[0] for w in ("alpha", "beta", "gamma")}
+    hits = {w: (await lex.reader().search(w))[0] for w in ("alpha", "beta", "gamma")}
     for w in ("alpha", "beta", "gamma"):
-        await lex.generate(hits[w])
-    await asyncio.gather(*[lex.generate(hits["alpha"]) for _ in range(4)])
+        await lex.engine().generate(hits[w])
+    await asyncio.gather(*[lex.engine().generate(hits["alpha"]) for _ in range(4)])
     assert gen.calls == 3
     assert len(lex._locks) == 0  # every lock evicted
 
@@ -286,16 +287,16 @@ async def test_get_and_status_by_lexi_id(engine):
         norm_by_id={1: "color"},
         results_by_word={match_key("color"): GeneratedResult(units=[_entry("color")])},
     )
-    hit = (await lex.search("color"))[0]
-    entry = await lex.generate(hit)
-    lexi_id = (await lex.search("color"))[0].lexi_word_id
+    hit = (await lex.reader().search("color"))[0]
+    entry = await lex.engine().generate(hit)
+    lexi_id = (await lex.reader().search("color"))[0].lexi_word_id
     assert lexi_id is not None
 
-    fetched = await lex.get_entry(lexi_id)
+    fetched = await lex.reader().get_entry(lexi_id)
     assert fetched.norm == entry.norm
-    assert await lex.get_status(lexi_id) == "done"
+    assert await lex.reader().get_status(lexi_id) == "done"
     # Unknown id → None, no crash.
-    assert await lex.get_status(999999) is None
+    assert await lex.reader().get_status(999999) is None
 
 
 async def test_search_finds_custom_word(engine):
@@ -308,7 +309,7 @@ async def test_search_finds_custom_word(engine):
             match_key("doomscrolling"): GeneratedResult(units=[_entry("doomscrolling")])
         },
     )
-    entry = await lex.generate("doomscrolling")
+    entry = await lex.engine().generate("doomscrolling")
     assert entry.norm == "doomscrolling"
     assert gen.calls == 1
     async with session_scope(lex._session_factory) as session:
@@ -327,7 +328,7 @@ async def test_generate_custom_no_overwrite(engine):
             match_key("doomscrolling"): GeneratedResult(units=[_entry("doomscrolling")])
         },
     )
-    first = await lex.generate("doomscrolling")
+    first = await lex.engine().generate("doomscrolling")
     assert gen.calls == 1
     async with session_scope(session_factory) as session:
         before = (
@@ -336,7 +337,7 @@ async def test_generate_custom_no_overwrite(engine):
         updated_before = before.updated_at
 
     # Same custom string again: cache-first, no regeneration, row untouched.
-    second = await lex.generate("doomscrolling")
+    second = await lex.engine().generate("doomscrolling")
     assert second.norm == first.norm
     assert gen.calls == 1
     async with session_scope(session_factory) as session:
@@ -353,13 +354,13 @@ async def test_force_regenerates(engine):
         norm_by_id={1: "color"},
         results_by_word={match_key("color"): GeneratedResult(units=[_entry("color")])},
     )
-    hit = (await lex.search("color"))[0]
-    await lex.generate(hit)
+    hit = (await lex.reader().search("color"))[0]
+    await lex.engine().generate(hit)
     assert gen.calls == 1
     # Without force: cache hit. With force: regenerate.
-    await lex.generate((await lex.search("color"))[0])
+    await lex.engine().generate((await lex.reader().search("color"))[0])
     assert gen.calls == 1
-    await lex.generate((await lex.search("color"))[0], force=True)
+    await lex.engine().generate((await lex.reader().search("color"))[0], force=True)
     assert gen.calls == 2
 
 
@@ -374,8 +375,8 @@ async def test_display_is_rendered_from_norm(engine):
             )
         },
     )
-    hit = (await lex.search("act on behalf of somebody"))[0]
-    entry = await lex.generate(hit)
+    hit = (await lex.reader().search("act on behalf of somebody"))[0]
+    entry = await lex.engine().generate(hit)
     assert entry.display == "act on behalf of somebody"
     assert entry.norm == "act on behalf of {sb}"
 
@@ -396,8 +397,8 @@ async def test_senses_sorted_by_tier(engine):
         norm_by_id={3: "run"},
         results_by_word={match_key("run"): GeneratedResult(units=[multi])},
     )
-    hit = (await lex.search("run"))[0]
-    entry = await lex.generate(hit)
+    hit = (await lex.reader().search("run"))[0]
+    entry = await lex.engine().generate(hit)
     assert [s.tier for s in entry.senses] == ["core", "common", "rare"]
 
 
@@ -409,8 +410,8 @@ async def test_split_page_units_persist(engine):
         norm_by_id={20: "idiom one"},
         results_by_word={match_key("idiom one"): split},
     )
-    hit = (await lex.search("idiom one"))[0]
-    entry = await lex.generate(hit)
+    hit = (await lex.reader().search("idiom one"))[0]
+    entry = await lex.engine().generate(hit)
     assert isinstance(entry, Entry)
     assert gen.calls == 1
     async with session_scope(session_factory) as session:
@@ -472,7 +473,7 @@ async def test_idiom_is_first_class_learnable_content(engine):
         },
     )
 
-    host_entry = await lex.generate((await lex.search("kick"))[0])
+    host_entry = await lex.engine().generate((await lex.reader().search("kick"))[0])
 
     # The idiom surfaces on the host as a relation link carrying a generatable
     # handle: display, rel_type, plus the linked word's id + status.
@@ -483,7 +484,7 @@ async def test_idiom_is_first_class_learnable_content(engine):
 
     # The idiom already exists as a pending, browsable stub (lazy-generation
     # queue): it shows up in the whole-dictionary browse filtered to pending.
-    pending = await lex.list_entries(status="pending")
+    pending = await lex.reader().list_entries(status="pending")
     stub_hits = [r for r in pending if r.display == "kick the bucket"]
     assert len(stub_hits) == 1
     assert stub_hits[0].lexi_word_id is not None
@@ -493,8 +494,8 @@ async def test_idiom_is_first_class_learnable_content(engine):
     # by generating its norm as a custom string — which converges on the existing
     # stub row by match_key and yields FULL sense content, keeping entry_type.
     # It is a first-class entry, not merely a pointer.
-    assert await lex.search("kick the bucket") == []
-    idiom_entry = await lex.generate("kick the bucket")
+    assert await lex.reader().search("kick the bucket") == []
+    idiom_entry = await lex.engine().generate("kick the bucket")
     assert idiom_entry.entry_type == "idiom"
     assert idiom_entry.norm == "kick the bucket"
     assert [s.definition for s in idiom_entry.senses] == ["to die"]
@@ -545,19 +546,19 @@ async def test_entry_link_carries_generatable_handle(engine):
         },
     )
 
-    host_entry = await lex.generate((await lex.search("kick"))[0])
+    host_entry = await lex.engine().generate((await lex.reader().search("kick"))[0])
     (link,) = [ln for ln in host_entry.links if ln.norm == "kick the bucket"]
     # The pending idiom is reachable by its handle, not by search.
     assert link.status == "pending"
-    idiom_entry = await lex.generate("kick the bucket")
+    idiom_entry = await lex.engine().generate("kick the bucket")
 
     # After generation the same link reports done, and its word_id addresses the
     # generated entry directly (get_entry, no LLM, no search).
-    host_again = await lex.get_entry(host_entry.word_id)
+    host_again = await lex.reader().get_entry(host_entry.word_id)
     (link2,) = [ln for ln in host_again.links if ln.norm == "kick the bucket"]
     assert link2.status == "done"
     assert link2.word_id == idiom_entry.word_id
-    fetched = await lex.get_entry(link2.word_id)
+    fetched = await lex.reader().get_entry(link2.word_id)
     assert fetched.entry_type == "idiom"
     assert [s.definition for s in fetched.senses] == ["to die"]
 
@@ -627,7 +628,7 @@ def _pet_lexicon(engine, embedder):
 async def test_generate_embeds_each_sense(engine):
     lex, _gen, session_factory = _pet_lexicon(engine, _fake_embedder())
     for w in ("dog", "cat", "automobile"):
-        await lex.generate((await lex.search(w))[0])
+        await lex.engine().generate((await lex.reader().search(w))[0])
     async with session_scope(session_factory) as session:
         rows = (
             await session.execute(
@@ -649,85 +650,85 @@ async def test_generate_survives_embedder_error(engine):
 
     embedder = Embedder(encode=boom, model_name="boom", dim=8)
     lex, gen, session_factory = _pet_lexicon(engine, embedder)
-    entry = await lex.generate((await lex.search("dog"))[0])
+    entry = await lex.engine().generate((await lex.reader().search("dog"))[0])
     assert entry.display == "dog"
     assert gen.calls == 1
     async with session_scope(session_factory) as session:
         blob = (await session.execute(select(Sense.embedding))).scalar_one()
     assert blob is None  # embed failed, but generation succeeded
     # semantic_search also degrades to [] rather than raising on the same embedder.
-    assert await lex.semantic_search("pet") == []
+    assert await lex.reader().semantic_search("pet") == []
 
 
 async def test_semantic_search_ranks_by_meaning(engine):
     lex, _gen, _sf = _pet_lexicon(engine, _fake_embedder())
     for w in ("dog", "cat", "automobile"):
-        await lex.generate((await lex.search(w))[0])
-    hits = await lex.semantic_search("a pet animal", k=3)
+        await lex.engine().generate((await lex.reader().search(w))[0])
+    hits = await lex.reader().semantic_search("a pet animal", k=3)
     assert len(hits) == 3
     # Pet definitions must rank above the vehicle one; scores are non-increasing.
     assert hits[-1].display == "automobile"
     assert [h.score for h in hits] == sorted((h.score for h in hits), reverse=True)
     assert all(isinstance(h.lexi_word_id, int) for h in hits)
     # The hit's word id resolves via the normal read path.
-    top = await lex.get_entry(hits[0].lexi_word_id)
+    top = await lex.reader().get_entry(hits[0].lexi_word_id)
     assert top.display == hits[0].display
 
 
 async def test_semantic_search_respects_k(engine):
     lex, _gen, _sf = _pet_lexicon(engine, _fake_embedder())
     for w in ("dog", "cat", "automobile"):
-        await lex.generate((await lex.search(w))[0])
-    assert len(await lex.semantic_search("pet", k=1)) == 1
-    assert await lex.semantic_search("pet", k=0) == []
+        await lex.engine().generate((await lex.reader().search(w))[0])
+    assert len(await lex.reader().semantic_search("pet", k=1)) == 1
+    assert await lex.reader().semantic_search("pet", k=0) == []
 
 
 async def test_semantic_search_empty_when_nothing_embedded(engine):
     # No embedder available (extra missing): generation still works (best-effort),
     # senses carry no vector, and semantic_search returns [].
     lex, _gen, session_factory = _pet_lexicon(engine, embedder=None)
-    await lex.generate((await lex.search("dog"))[0])
+    await lex.engine().generate((await lex.reader().search("dog"))[0])
     async with session_scope(session_factory) as session:
         blob = (await session.execute(select(Sense.embedding))).scalar_one()
     assert blob is None
-    assert await lex.semantic_search("pet") == []
+    assert await lex.reader().semantic_search("pet") == []
 
 
 async def test_backfill_fills_then_idempotent(engine):
     # Generate with no embedder (vectors null), then 'install' one and backfill.
     lex, _gen, session_factory = _pet_lexicon(engine, embedder=None)
     for w in ("dog", "cat", "automobile"):
-        await lex.generate((await lex.search(w))[0])
+        await lex.engine().generate((await lex.reader().search(w))[0])
     lex._embedder = _fake_embedder()
-    assert await lex.backfill_embeddings() == 3
+    assert await lex.engine().backfill_embeddings() == 3
     async with session_scope(session_factory) as session:
         rows = (await session.execute(select(Sense.embedding))).scalars().all()
     assert all(b is not None for b in rows)
     # Everything embedded now → second backfill is a no-op.
-    assert await lex.backfill_embeddings() == 0
+    assert await lex.engine().backfill_embeddings() == 0
     # And semantic search now works.
-    assert len(await lex.semantic_search("pet", k=2)) == 2
+    assert len(await lex.reader().semantic_search("pet", k=2)) == 2
 
 
 async def test_backfill_reembeds_on_model_change(engine):
     lex, _gen, _sf = _pet_lexicon(engine, _fake_embedder("m1"))
-    await lex.generate((await lex.search("dog"))[0])
+    await lex.engine().generate((await lex.reader().search("dog"))[0])
     # Switch model: the m1 vector is stale, so search under m2 sees nothing…
     lex._embedder = _fake_embedder("m2")
-    assert await lex.semantic_search("pet") == []
+    assert await lex.reader().semantic_search("pet") == []
     # …until backfill re-embeds it under the new model.
-    assert await lex.backfill_embeddings() == 1
-    hits = await lex.semantic_search("pet")
+    assert await lex.engine().backfill_embeddings() == 1
+    hits = await lex.reader().semantic_search("pet")
     assert len(hits) == 1 and hits[0].display == "dog"
 
 
 async def test_backfill_limit(engine):
     lex, _gen, _sf = _pet_lexicon(engine, embedder=None)
     for w in ("dog", "cat", "automobile"):
-        await lex.generate((await lex.search(w))[0])
+        await lex.engine().generate((await lex.reader().search(w))[0])
     lex._embedder = _fake_embedder()
-    assert await lex.backfill_embeddings(limit=2) == 2
-    assert await lex.backfill_embeddings() == 1  # the remaining one
+    assert await lex.engine().backfill_embeddings(limit=2) == 2
+    assert await lex.engine().backfill_embeddings() == 1  # the remaining one
 
 
 def _entry_with_topics(norm, topics) -> GeneratedEntry:
@@ -754,11 +755,11 @@ async def test_generate_exposes_topics_and_injects_vocab(engine):
             ),
         },
     )
-    entry = await lex.generate((await lex.search("bank"))[0])
+    entry = await lex.engine().generate((await lex.reader().search("bank"))[0])
     assert [(t.name, t.title) for t in entry.topics] == [("business", "Business & Finance")]
 
     # The second generation must SEE the existing vocab injected for reuse.
-    await lex.generate((await lex.search("apple"))[0])
+    await lex.engine().generate((await lex.reader().search("apple"))[0])
     assert ("business", "Business & Finance") in gen.last_existing_tags
 
 
@@ -769,11 +770,11 @@ async def test_get_senses_resolves_by_id(engine):
         norm_by_id={1: "color"},
         results_by_word={match_key("color"): GeneratedResult(units=[_entry("color")])},
     )
-    entry = await lex.generate((await lex.search("color"))[0])
+    entry = await lex.engine().generate((await lex.reader().search("color"))[0])
     sense_ids = [s.sense_id for s in entry.senses]
     assert sense_ids and all(sid is not None for sid in sense_ids)
 
-    views = await lex.get_senses(sense_ids)
+    views = await lex.reader().get_senses(sense_ids)
     assert len(views) == len(sense_ids)
     assert views[0].definition == "def of color"
     assert views[0].sense_id == sense_ids[0]
@@ -786,9 +787,9 @@ async def test_get_senses_empty_and_missing(engine):
         norm_by_id={1: "color"},
         results_by_word={match_key("color"): GeneratedResult(units=[_entry("color")])},
     )
-    assert await lex.get_senses([]) == []
+    assert await lex.reader().get_senses([]) == []
     # Unknown ids are skipped, not errored.
-    assert await lex.get_senses([999999]) == []
+    assert await lex.reader().get_senses([999999]) == []
 
 
 # --- add_examples (targeted neutral augmentation) -------------------------
@@ -812,7 +813,7 @@ async def _seed_sense_with_examples(engine, existing: list[str], embedder=None):
             ]
         ),
     )
-    entry = await lex.generate((await lex.search("color"))[0])
+    entry = await lex.engine().generate((await lex.reader().search("color"))[0])
     sense_id = entry.senses[0].sense_id
     async with session_scope(session_factory) as session:
         for order, text in enumerate(existing):
@@ -825,7 +826,7 @@ async def test_add_examples_appends_without_touching_existing(engine):
     lex, gen, session_factory, sense_id = await _seed_sense_with_examples(
         engine, ["An existing example.", "A second one."]
     )
-    view = await lex.add_examples(sense_id, n=2)
+    view = await lex.engine().add_examples(sense_id, n=2)
     # Old two kept, two new appended, order contiguous.
     assert view.examples[:2] == ["An existing example.", "A second one."]
     assert len(view.examples) == 4
@@ -844,7 +845,7 @@ async def test_add_examples_appends_without_touching_existing(engine):
 
 async def test_add_examples_returns_sense_view_with_all_examples(engine):
     lex, _gen, _sf, sense_id = await _seed_sense_with_examples(engine, ["Old."])
-    view = await lex.add_examples(sense_id, n=2)
+    view = await lex.engine().add_examples(sense_id, n=2)
     assert isinstance(view, SenseView)
     assert view.sense_id == sense_id
     assert len(view.examples) == 3
@@ -854,7 +855,7 @@ async def test_add_examples_feeds_existing_to_generator(engine):
     lex, gen, _sf, sense_id = await _seed_sense_with_examples(
         engine, ["First existing.", "Second existing."]
     )
-    await lex.add_examples(sense_id, n=2)
+    await lex.engine().add_examples(sense_id, n=2)
     # Soft dedup: the generator saw the existing examples + the requested n.
     assert gen.last_existing == ["First existing.", "Second existing."]
     assert gen.last_n == 2
@@ -862,7 +863,7 @@ async def test_add_examples_feeds_existing_to_generator(engine):
 
 async def test_add_examples_new_examples_carry_parseable_tags(engine):
     lex, _gen, _sf, sense_id = await _seed_sense_with_examples(engine, [])
-    view = await lex.add_examples(sense_id, n=2)
+    view = await lex.engine().add_examples(sense_id, n=2)
     # The appended examples carry <t inf> tags the markup reader can parse.
     tagged = [e for e in view.examples if "<t inf=" in e]
     assert len(tagged) == 2
@@ -874,7 +875,7 @@ async def test_add_examples_new_examples_carry_parseable_tags(engine):
 
 async def test_add_examples_zero_is_noop(engine):
     lex, gen, _sf, sense_id = await _seed_sense_with_examples(engine, ["Only one."])
-    view = await lex.add_examples(sense_id, n=0)
+    view = await lex.engine().add_examples(sense_id, n=0)
     assert view.examples == ["Only one."]
     assert gen.example_calls == 0  # no LLM call for n<=0
 
@@ -883,7 +884,7 @@ async def test_add_examples_clamps_n_to_schema_ceiling(engine):
     # n above ExampleBatch's 12-item ceiling is clamped so the model is never
     # prompted for more than it can validly return (avoids a schema-reject retry).
     lex, gen, _sf, sense_id = await _seed_sense_with_examples(engine, [])
-    await lex.add_examples(sense_id, n=100)
+    await lex.engine().add_examples(sense_id, n=100)
     assert gen.last_n == 12
 
 
@@ -895,7 +896,7 @@ async def test_add_examples_unknown_sense_raises(engine):
         results_by_word={match_key("color"): GeneratedResult(units=[_entry("color")])},
     )
     with pytest.raises(ValueError):
-        await lex.add_examples(999999, n=2)
+        await lex.engine().add_examples(999999, n=2)
 
 
 async def test_add_examples_does_not_reembed(engine):
@@ -911,7 +912,7 @@ async def test_add_examples_does_not_reembed(engine):
                 select(Sense.embedding, Sense.embedding_model).where(Sense.id == sense_id)
             )
         ).one()
-    await lex.add_examples(sense_id, n=2)
+    await lex.engine().add_examples(sense_id, n=2)
     async with session_scope(session_factory) as session:
         after = (
             await session.execute(
@@ -1005,7 +1006,7 @@ async def test_stats_matches_seeded_fixture(engine):
         )
         await session.flush()
 
-    stats = await lex.stats()
+    stats = await lex.reader().stats()
     assert stats.words_by_status == {"done": 2, "pending": 1, "error": 1}
     assert stats.senses == 3
     assert stats.examples == 3
@@ -1018,7 +1019,7 @@ async def test_stats_matches_seeded_fixture(engine):
 
 async def test_stats_empty_dictionary(engine):
     lex, _gen, _sf = _make_lexicon(engine, cam_words={}, norm_by_id={}, results_by_word={})
-    stats = await lex.stats()
+    stats = await lex.reader().stats()
     assert stats.words_by_status == {}
     assert stats.senses == 0
     assert stats.examples == 0
@@ -1027,7 +1028,6 @@ async def test_stats_empty_dictionary(engine):
     assert stats.themed_words == 0
     assert stats.assets_by_kind == {}
     assert stats.questions == 0
-
 
 
 # --- public question API -------------------------------------------------
@@ -1055,32 +1055,31 @@ def test_question_public_exports_and_score_is_internal():
     assert not hasattr(lexi_ai, "QuestionTypeDescriptor")
 
 
-def test_lexicon_has_new_question_methods_and_removed_legacy_names():
+def test_the_question_surface_lives_on_the_facades_not_the_composition_root():
     expected = {
         "question_types",
-        "prepare_questions",
         "get_question",
         "list_questions_for_sense",
         "retrieve_question",
         "retrieve_exposure",
         "evaluate_answer",
     }
-    assert all(hasattr(Lexicon, name) for name in expected)
+    assert all(hasattr(LexiconReader, name) for name in expected)
+    assert all(hasattr(LexiconEngine, name) for name in expected | {"prepare_questions"})
+    # The composition root wires the contexts; it does not serve questions itself.
+    assert not any(hasattr(Lexicon, name) for name in expected | {"prepare_questions"})
     assert not any(
-        hasattr(Lexicon, name)
-        for name in ("generate_questions_for_sense", "grade_question")
+        hasattr(LexiconEngine, name) for name in ("generate_questions_for_sense", "grade_question")
     )
 
 
 async def test_reader_and_worker_question_engines_have_separate_judge_contexts(engine):
-    lex, _gen, _sf = _make_lexicon(
-        engine, cam_words={}, norm_by_id={}, results_by_word={}
-    )
+    lex, _gen, _sf = _make_lexicon(engine, cam_words={}, norm_by_id={}, results_by_word={})
     judge = object()
-    lex._build_judge_llm = lambda: judge
+    lex._providers.judge_llm = lambda: judge
 
-    reader_engine = lex.reader_questions
-    worker_engine = lex.worker_questions
+    reader_engine = lex._question_engines.engine(providers=False)
+    worker_engine = lex._question_engines.engine(providers=True)
 
     assert reader_engine is not worker_engine
     assert reader_engine._judge is None
@@ -1127,16 +1126,14 @@ async def test_evaluate_answer_refetches_authoritative_question_by_public_id(eng
         interaction="assessment",
         payload={"stem": "?", "options": ["eloquent"], "correct_index": 0},
     )
-    lex, _gen, _sf = _make_lexicon(
-        engine, cam_words={}, norm_by_id={}, results_by_word={}
-    )
+    lex, _gen, _sf = _make_lexicon(engine, cam_words={}, norm_by_id={}, results_by_word={})
     repository = _QuestionRepositorySpy(authoritative)
     question_engine = _QuestionEngineSpy()
-    lex._question_repo = repository
-    lex._worker_questions = question_engine
+    lex._question_engines._repo = repository
+    lex._question_engines.worker = question_engine
 
     submission = AnswerSubmission(question_id="41", response=ChoiceResponse(selected_index=0))
-    evaluation = await lex.evaluate_answer(41, submission)
+    evaluation = await lex.engine().evaluate_answer(41, submission)
 
     assert evaluation.status == "graded"
     assert repository.requested_ids == [41]
@@ -1146,17 +1143,14 @@ async def test_evaluate_answer_refetches_authoritative_question_by_public_id(eng
 async def test_evaluate_answer_returns_none_for_unknown_question(engine):
     from lexi_ai.contracts.questions import AnswerSubmission, TextResponse
 
-    lex, _gen, _sf = _make_lexicon(
-        engine, cam_words={}, norm_by_id={}, results_by_word={}
-    )
-    lex._question_repo = _QuestionRepositorySpy(None)
+    lex, _gen, _sf = _make_lexicon(engine, cam_words={}, norm_by_id={}, results_by_word={})
+    lex._question_engines._repo = _QuestionRepositorySpy(None)
     question_engine = _QuestionEngineSpy()
-    lex._worker_questions = question_engine
+    lex._question_engines.worker = question_engine
 
     submission = AnswerSubmission(question_id="999", response=TextResponse(text="answer"))
-    assert await lex.evaluate_answer(999, submission) is None
+    assert await lex.engine().evaluate_answer(999, submission) is None
     assert question_engine.evaluated == []
-
 
 
 async def test_close_disposes_owned_engine():

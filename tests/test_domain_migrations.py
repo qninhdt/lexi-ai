@@ -83,9 +83,7 @@ def test_schema_has_exactly_one_revision():
     baseline is generated from it.
     """
     revisions = sorted(
-        path.name
-        for path in (MIGRATIONS / "versions").glob("*.py")
-        if path.name != "__init__.py"
+        path.name for path in (MIGRATIONS / "versions").glob("*.py") if path.name != "__init__.py"
     )
 
     assert revisions == ["20260724_01_lexi_domain_schema.py"]
@@ -121,7 +119,6 @@ def test_online_migrations_use_a_committing_engine_transaction():
     assert call.func.attr == "begin"
 
 
-
 def _reflected_question_schema(connection):
     inspector = inspect(connection)
     columns = {
@@ -153,9 +150,7 @@ async def test_postgres_question_schema_matches_orm(pg_session_factory):
         connection = await session.connection()
         actual = await connection.run_sync(_reflected_question_schema)
 
-    expected_columns = {
-        column.name: column.nullable for column in Question.__table__.columns
-    }
+    expected_columns = {column.name: column.nullable for column in Question.__table__.columns}
     expected_primary_key = tuple(column.name for column in Question.__table__.primary_key)
     expected_foreign_keys = {
         (

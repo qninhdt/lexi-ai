@@ -94,7 +94,6 @@ def test_sense_rel_types_are_the_semantic_relations():
     }
 
 
-
 # --- question engine contracts -------------------------------------------
 
 
@@ -110,9 +109,6 @@ def test_question_engine_vocabularies_are_canonical():
     assert DIFFICULTY_LEVELS == {0, 1, 2, 3, 4}
     assert EXPOSURE_LEVEL == 0
     assert INTERACTION_MODES == {"exposure", "assessment"}
-
-
-
 
 
 def test_legacy_question_vocabularies_are_removed():

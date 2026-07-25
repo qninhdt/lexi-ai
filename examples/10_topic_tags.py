@@ -43,7 +43,7 @@ async def main() -> None:
 
         # 2. Browse the topic index — FREE, never generates.
         print("\n=== list_tags() (topic — title — live member count) ===")
-        tags = await lex.list_tags()
+        tags = await lex.reader().list_tags()
         if not tags:
             print("  (no topics yet — the LLM may not have assigned any)")
         for t in tags:
@@ -54,7 +54,7 @@ async def main() -> None:
         if tags:
             top = tags[0]
             print(f"\n=== list_entries_by_tag({top.name!r}) ===")
-            for hit in await lex.list_entries_by_tag(top.name):
+            for hit in await lex.reader().list_entries_by_tag(top.name):
                 print(f"   · {hit.display}  ({hit.entry_type})")
     finally:
         await aclose(lex)

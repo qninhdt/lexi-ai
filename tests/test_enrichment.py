@@ -150,7 +150,7 @@ async def test_confused_with_links(engine):
     repo = PersistenceDriver(sf)
     words = await repo.persist_result(_result("affect", related=[("effect", "confused_with")]))
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get_entry(words[0].id)
+    entry = await lex.reader().get_entry(words[0].id)
 
     confused = [ln for ln in entry.links if ln.rel_type == "confused_with"]
     assert len(confused) == 1
@@ -193,7 +193,7 @@ async def test_hypernym_hyponym_sense_relations(engine):
 
     # Word-level links list stays empty — these are NOT word relations anymore.
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get_entry(words[0].id)
+    entry = await lex.reader().get_entry(words[0].id)
     assert all(ln.rel_type not in ("hypernym", "hyponym") for ln in entry.links)
 
 
@@ -287,7 +287,7 @@ async def test_sense_labels_round_trip(engine):
         )
     )
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get_entry(words[0].id)
+    entry = await lex.reader().get_entry(words[0].id)
     sense = entry.senses[0]
 
     assert sense.guideword == "PUT"
@@ -302,7 +302,7 @@ async def test_ipa_surfaces_on_sense_view(engine):
     repo = PersistenceDriver(sf)
     words = await repo.persist_result(_result("lead", ipa_uk="liːd", ipa_us="liːd"))
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get_entry(words[0].id)
+    entry = await lex.reader().get_entry(words[0].id)
     sense = entry.senses[0]
 
     assert sense.ipa_uk == "liːd"
@@ -344,7 +344,7 @@ async def test_collocations_ordered_and_sanitized(engine):
         )
     )
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get_entry(words[0].id)
+    entry = await lex.reader().get_entry(words[0].id)
     cols = entry.senses[0].collocations
 
     # NUL/newline collapsed to a space, whitespace-only dropped, order preserved.
@@ -372,7 +372,7 @@ async def test_empty_enrichment_persists_done(engine):
     assert words[0].status == "done"
 
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get_entry(words[0].id)
+    entry = await lex.reader().get_entry(words[0].id)
     sense = entry.senses[0]
     assert sense.guideword is None
     assert sense.grammar == []
@@ -394,7 +394,7 @@ async def test_collocations_no_detached_load(engine):
     repo = PersistenceDriver(sf)
     words = await repo.persist_result(_result("draw", collocations=["draw a line", "draw water"]))
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get_entry(words[0].id)
+    entry = await lex.reader().get_entry(words[0].id)
 
     # No DetachedInstanceError / MissingGreenlet on this access.
     assert entry.senses[0].collocations == ["draw a line", "draw water"]
@@ -453,7 +453,7 @@ async def test_forms_round_trip_ordered(engine):
         )
     )
     lex = await _reading_lexicon(engine, repo)
-    entry = await lex.get_entry(words[0].id)
+    entry = await lex.reader().get_entry(words[0].id)
     forms = entry.senses[0].forms
 
     # Full paradigm surfaces in emit order, each (inf, surface) preserved.
@@ -503,7 +503,7 @@ async def test_domain_and_usage_note_round_trip(engine):
         )
     )
     lex = await _reading_lexicon(engine, repo)
-    sense = (await lex.get_entry(words[0].id)).senses[0]
+    sense = (await lex.reader().get_entry(words[0].id)).senses[0]
 
     assert sense.domain == "computing"
     assert sense.usage_note == "In tech, distinct from 'cash' (money)."
@@ -518,9 +518,9 @@ async def test_domain_usage_note_sanitized_and_empty_is_none(engine):
     plain = await repo.persist_result(_result("bare"))  # neither field
     lex = await _reading_lexicon(engine, repo)
 
-    marked = (await lex.get_entry(words[0].id)).senses[0]
+    marked = (await lex.reader().get_entry(words[0].id)).senses[0]
     assert marked.domain == "med icine"  # NUL collapsed to space
     assert marked.usage_note == "line one"  # newline collapsed
 
-    bare = (await lex.get_entry(plain[0].id)).senses[0]
+    bare = (await lex.reader().get_entry(plain[0].id)).senses[0]
     assert bare.domain is None and bare.usage_note is None

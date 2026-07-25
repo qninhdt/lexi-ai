@@ -288,7 +288,7 @@ async def _seed_browse(engine):
 
 async def test_list_tags_counts_and_ordering(engine):
     lex = await _seed_browse(engine)
-    tags = await lex.list_tags()
+    tags = await lex.reader().list_tags()
     counts = {t.name: t.count for t in tags}
     # business=2 (bank+stock), car (first-seen 'Cars')=2 (stock+apple), food=1
     assert counts == {"business": 2, "Cars": 2, "food": 1}
@@ -300,37 +300,37 @@ async def test_tagcount_hides_internal_tag_key(engine):
     import dataclasses
 
     lex = await _seed_browse(engine)
-    tags = await lex.list_tags()
+    tags = await lex.reader().list_tags()
     assert {f.name for f in dataclasses.fields(TagCount)} == {"name", "title", "count"}
     assert not hasattr(tags[0], "tag_key")
 
 
 async def test_words_by_tag_resolves_via_tag_key(engine):
     lex = await _seed_browse(engine)
-    upper = await lex.list_entries_by_tag("Business")
-    lower = await lex.list_entries_by_tag("business")
+    upper = await lex.reader().list_entries_by_tag("Business")
+    lower = await lex.reader().list_entries_by_tag("business")
     assert [r.lexi_word_id for r in upper] == [r.lexi_word_id for r in lower]
     assert {r.display for r in upper} == {"bank", "stock"}
     # plural query hits the singular 'car' key
-    cars = await lex.list_entries_by_tag("cars")
+    cars = await lex.reader().list_entries_by_tag("cars")
     assert {r.display for r in cars} == {"stock", "apple"}
 
 
 async def test_words_by_tag_returns_searchresult_hits(engine):
     lex = await _seed_browse(engine)
-    hits = await lex.list_entries_by_tag("business")
+    hits = await lex.reader().list_entries_by_tag("business")
     assert all(isinstance(h, SearchResult) and h.generated for h in hits)
 
 
 async def test_words_by_tag_honors_limit(engine):
     lex = await _seed_browse(engine)
-    assert len(await lex.list_entries_by_tag("business", limit=1)) == 1
+    assert len(await lex.reader().list_entries_by_tag("business", limit=1)) == 1
 
 
 async def test_count_and_members_agree(engine):
     lex = await _seed_browse(engine)
-    tags = {t.name: t.count for t in await lex.list_tags()}
-    members = await lex.list_entries_by_tag("business")
+    tags = {t.name: t.count for t in await lex.reader().list_tags()}
+    members = await lex.reader().list_entries_by_tag("business")
     assert tags["business"] == len(members)  # same population (both done-only)
 
 
@@ -343,7 +343,7 @@ async def test_orphan_tag_absent_from_list_and_vocab(engine):
     await repo.persist_result(_result("solo", [("food", "Food")]))  # drop niche
 
     lex = Lexicon(sf, None, None, engine=engine)  # type: ignore[arg-type]
-    names = {t.name for t in await lex.list_tags()}
+    names = {t.name for t in await lex.reader().list_tags()}
     assert "niche" not in names
     vocab = {n for n, _ in await repo.all_tags()}
     assert "niche" not in vocab  # not re-injected

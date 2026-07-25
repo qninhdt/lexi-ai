@@ -35,6 +35,14 @@ class DictionaryService:
         theme_id = None
         if theme is not None:
             theme_id, _style = await self._resolve_theme(theme)
+        return await self.entry_by_theme_id(word_id, theme_id)
+
+    async def entry_by_theme_id(self, word_id: int, theme_id: int | None = None) -> Entry:
+        """One entry by id, overlaid with an ALREADY RESOLVED theme id.
+
+        The generation path resolves the theme itself (it needs the style prompt
+        anyway), so it enters here and skips a redundant resolve round trip.
+        """
         async with self._uow() as uow:
             overlay = (
                 await uow.themes.overlay_for_word(word_id, theme_id)

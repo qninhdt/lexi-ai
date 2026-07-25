@@ -123,7 +123,7 @@ async def test_list_themes(repo):
 
 
 async def test_api_create_and_list_theme(lexicon):
-    created = await lexicon.create_theme(
+    created = await lexicon.engine().create_theme(
         "Humorous", "be funny", description="funny voice", tone="funny,playful"
     )
     assert created.key == "humorous"
@@ -132,5 +132,5 @@ async def test_api_create_and_list_theme(lexicon):
     assert created.description == "funny voice"
     assert created.tone == "funny,playful"
 
-    listed = await lexicon.list_themes()
+    listed = await lexicon.reader().list_themes()
     assert [t.key for t in listed] == ["humorous"]

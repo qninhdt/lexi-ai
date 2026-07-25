@@ -189,7 +189,7 @@ async def test_resolve_picks_pos_matched_sense(engine):
 
     judge = _FakeJudge(WsdBatch(choices=[WsdChoice(chosen_index=0)]))
     lex = await _lexicon(engine, repo, judge)
-    results = await lex.resolve_relations()
+    results = await lex.engine().resolve_relations()
 
     assert len(results) == 1
     assert results[0].value == "resolved"
@@ -213,7 +213,7 @@ async def test_resolve_skips_pending_target(engine):
     )
     judge = _FakeJudge(WsdBatch(choices=[WsdChoice(chosen_index=0)]))
     lex = await _lexicon(engine, repo, judge)
-    results = await lex.resolve_relations()
+    results = await lex.engine().resolve_relations()
 
     assert results == []  # nothing eligible
     assert judge.calls == 0  # judge never invoked (queue empty)
@@ -238,7 +238,7 @@ async def test_resolve_unresolvable_on_no_match(engine):
 
     judge = _FakeJudge(WsdBatch(choices=[WsdChoice(chosen_index=None)]))  # "none"
     lex = await _lexicon(engine, repo, judge)
-    results = await lex.resolve_relations()
+    results = await lex.engine().resolve_relations()
     assert results[0].value == "unresolvable"
 
     edge = await _edge(sf)
@@ -248,7 +248,7 @@ async def test_resolve_unresolvable_on_no_match(engine):
     # A second pass must NOT re-touch it (unresolvable is a terminal stop).
     judge2 = _FakeJudge(WsdBatch(choices=[WsdChoice(chosen_index=0)]))
     lex2 = await _lexicon(engine, repo, judge2)
-    assert await lex2.resolve_relations() == []
+    assert await lex2.engine().resolve_relations() == []
     assert judge2.calls == 0
 
 
@@ -287,7 +287,7 @@ async def test_mark_unresolvable_stamps_naive_utc(engine):
     )
     judge = _FakeJudge(WsdBatch(choices=[WsdChoice(chosen_index=None)]))  # "none"
     lex = await _lexicon(engine, repo, judge)
-    assert (await lex.resolve_relations())[0].value == "unresolvable"
+    assert (await lex.engine().resolve_relations())[0].value == "unresolvable"
 
     edge = await _edge(sf)
     assert edge.resolve_attempted_at is not None
@@ -318,7 +318,7 @@ async def test_resolve_regenerate_race_noop(engine):
     # Resolve it once (edge leaves pending).
     judge = _FakeJudge(WsdBatch(choices=[WsdChoice(chosen_index=0)]))
     lex = await _lexicon(engine, repo, judge)
-    await lex.resolve_relations()
+    await lex.engine().resolve_relations()
     edge = await _edge(sf)
     first_target = edge.to_sense_id
     assert first_target is not None
@@ -408,7 +408,7 @@ async def test_resolve_pos_no_match_goes_to_judge(engine):
     )
     judge = _FakeJudge(WsdBatch(choices=[WsdChoice(chosen_index=0)]))
     lex = await _lexicon(engine, repo, judge)
-    results = await lex.resolve_relations()
+    results = await lex.engine().resolve_relations()
 
     assert judge.calls == 1
     # Both noun candidates were shown despite the verb source (no POS hard-drop).
@@ -442,7 +442,7 @@ async def test_wsd_index_out_of_range(engine):
     )
     judge = _FakeJudge(WsdBatch(choices=[WsdChoice(chosen_index=99)]))  # out of range
     lex = await _lexicon(engine, repo, judge)
-    results = await lex.resolve_relations()
+    results = await lex.engine().resolve_relations()
 
     assert results[0].value == "unresolvable"
     edge = await _edge(sf)
@@ -466,7 +466,7 @@ async def test_batch_size_clamped(engine, monkeypatch):
     monkeypatch.setattr(SqlSenseRepo, "pending_relations", _spy)
     judge = _FakeJudge(WsdBatch(choices=[]))
     lex = await _lexicon(engine, repo, judge)
-    await lex.resolve_relations(batch_size=1000)
+    await lex.engine().resolve_relations(batch_size=1000)
     assert captured["batch_size"] == WSD_BATCH_CEIL
 
 
@@ -497,7 +497,7 @@ async def test_generate_target_triggers_inbound_resolve(engine):
         wsd_judge=judge,  # type: ignore[arg-type]
     )
     # Generating 'dark' through the API path fires the inbound hook.
-    await lex._run_generation("dark", None)  # type: ignore[attr-defined]
+    await lex.generation()._run("dark", None, fence=None, method=None)  # type: ignore[attr-defined]
 
     edge2 = await _edge(sf)
     assert edge2.to_sense_id is not None  # auto-resolved by the hook

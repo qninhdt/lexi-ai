@@ -55,8 +55,7 @@ def test_no_grading_field_names_on_presentation_types():
         for f in dataclasses.fields(cls):
             low = f.name.lower()
             assert not any(b in low for b in _BANNED), (
-                f"{cls.__name__}.{f.name} looks like a grading field on a "
-                f"presentation type"
+                f"{cls.__name__}.{f.name} looks like a grading field on a presentation type"
             )
 
 
@@ -69,9 +68,7 @@ def test_grading_spec_not_public_in_contracts():
         "RubricGrading",
         "StoredQuestion",
     ):
-        assert not hasattr(contracts, name), (
-            f"{name} must NOT be public in lexi_ai.contracts"
-        )
+        assert not hasattr(contracts, name), f"{name} must NOT be public in lexi_ai.contracts"
     # It lives only in the internal domain module.
     dom = importlib.import_module("lexi_ai.domain.questions")
     assert hasattr(dom, "GradingSpec")

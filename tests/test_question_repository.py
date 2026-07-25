@@ -73,9 +73,7 @@ async def test_insert_round_trips_carrier_maps_id_and_is_idempotent(question_rep
     assert count == 1
     # Storage stays FLAT with the SAME canonical json + content_hash (unchanged).
     assert row.render_format == "single_choice"
-    assert row.payload == (
-        '{"correct_index":1,"options":["b","a"],"stem":"Meaning?"}'
-    )
+    assert row.payload == ('{"correct_index":1,"options":["b","a"],"stem":"Meaning?"}')
     assert len(row.content_hash) == 64
 
 
@@ -139,9 +137,7 @@ async def test_retrieve_one_is_exact_ordered_and_honors_exclusions(question_repo
 
     assert await repo.retrieve_one(sense_id, 1, "definition_mcq", frozenset()) == wanted
     assert (
-        await repo.retrieve_one(
-            sense_id, 1, "definition_mcq", frozenset({wanted.question_id})
-        )
+        await repo.retrieve_one(sense_id, 1, "definition_mcq", frozenset({wanted.question_id}))
         is None
     )
     assert await repo.retrieve_one(sense_id, 2, "definition_mcq", frozenset()) is None

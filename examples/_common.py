@@ -78,10 +78,10 @@ async def lookup(lex: Lexicon, raw: str) -> Entry | None:
     returns the created/loaded :class:`Entry`, or ``None`` when nothing matches
     (the caller can then fall back to ``generate(raw)`` for a custom entry).
     """
-    results = await lex.search(raw)
+    results = await lex.reader().search(raw)
     if not results:
         return None
-    return await lex.generate(results[0])
+    return await lex.engine().generate(results[0])
 
 
 # --- pretty printers ------------------------------------------------------

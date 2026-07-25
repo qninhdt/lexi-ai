@@ -60,54 +60,61 @@ uv sync --extra embeddings   # optional: local sense embeddings (torch, ~200MB)
 
 ```python
 import asyncio
-from lexi_ai import Lexicon
+from lexi_ai import LexiconEngine, LexiconReader
 
 async def main():
-    lex = Lexicon.from_settings()   # reads LEXI_* env / .env
-    await lex.init()
+    # Two facades, one capability boundary. The reader can only read; the engine is
+    # the only object that can change a row or spend a model call. A read-only
+    # process constructs the reader alone and cannot generate by accident.
+    work = LexiconEngine.from_settings()   # reads LEXI_* env / .env
+    await work.init()
+    read = LexiconReader.from_settings()
 
     # Search (free) → generate (spends tokens once) → cached thereafter.
-    results = await lex.search("serendipity")
-    entry = await lex.generate(results[0])
+    results = await read.search("serendipity")
+    entry = await work.generate(results[0])
     print(entry.display, entry.senses[0].definition)
 
     # Question engine: inspect capabilities, prepare persisted assessments,
     # retrieve one exact question, then evaluate by durable question id.
-    from lexi_ai import QuestionDemand
+    from lexi_ai import PrepareDemand
 
-    question_types = lex.question_types()
+    question_types = work.question_types()
     sense_id = entry.senses[0].sense_id
-    report = await lex.prepare_questions(
+    report = await work.prepare_questions(
         entry.word_id,
-        [QuestionDemand(sense_id, difficulty_level=1, expected_count=1)],
+        [PrepareDemand(sense_id=str(sense_id), difficulty_level=1, expected_count=1)],
     )
-    question = await lex.retrieve_question(
+    question = await read.retrieve_question(
         sense_id,
         difficulty_level=1,
         excluded_ids=frozenset(),
         type_id="definition_mcq",
     )
     if question is not None:
-        evaluation = await lex.evaluate_answer(
+        # Grading a rubric type needs the judge, so it goes through the engine.
+        evaluation = await work.evaluate_answer(
             question.question_id, question.payload["correct_index"]
         )
         print(question.type_id, question.render_format, evaluation.status)
 
     # Themes: author a voice once (LLM-expanded if description/tone are omitted,
     # generated in-line the first time a word is fetched under it), read the overlay.
-    theme = await lex.create_theme("Pirate", "narrate like a salty pirate")
-    themed = await lex.generate(results[0], theme=theme.key)
+    theme = await work.create_theme("Pirate", "narrate like a salty pirate")
+    themed = await work.generate(results[0], theme=theme.key)
     print(themed.senses[0].definition)                   # restyled definition
 
     # Cached assets (reference-addressed by sense id): a repeat call is free.
-    sense_id = entry.senses[0].sense_id
-    print(await lex.translate_sense(sense_id, "vi"))     # real, LLM-backed
+    print(await work.translate_sense(sense_id, "vi"))     # real, LLM-backed
     # TTS is real when LEXI_TTS_* is configured (OpenAI-compatible /audio/speech);
     # unconfigured, the stub raises rather than caching fake audio.
-    clip = await lex.tts_sense(sense_id)                 # Asset (file_path to the clip)
+    clip = await work.tts_sense(sense_id)                # Asset (file_path to the clip)
 
 asyncio.run(main())
 ```
+
+`Lexicon` remains available as the composition root — it wires the object graph and
+hands out `reader()` and `engine()` — but it exposes no use case of its own.
 
 Configuration is env-driven (prefix `LEXI_`): `LLM_BASE_URL`, `LLM_API_KEY`,
 `LLM_MODEL`, `DB_URL`, `CAMBRIDGE_DB_PATH`. Copy `examples/.env.example` to `.env`

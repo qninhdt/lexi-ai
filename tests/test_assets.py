@@ -417,8 +417,8 @@ async def test_translate_sense_caches(session_factory, tmp_path):
     sid = await _make_sense(session_factory, "a small domestic cat")
     tr = FakeTranslator()
     lex = _lexicon(session_factory, tmp_path, translator=tr)
-    first = await lex.translate_sense(sid, "vi")
-    second = await lex.translate_sense(sid, "vi")
+    first = await lex.engine().translate_sense(sid, "vi")
+    second = await lex.engine().translate_sense(sid, "vi")
     assert first == second == "vi:a small domestic cat"
     assert tr.calls == 1  # second call is a cache hit
 
@@ -427,14 +427,14 @@ async def test_translate_field_delegates_to_sense_def(session_factory, tmp_path)
     sid = await _make_sense(session_factory, "def text")
     tr = FakeTranslator()
     lex = _lexicon(session_factory, tmp_path, translator=tr)
-    assert await lex.translate_field("sense_def", sid, "vi") == "vi:def text"
+    assert await lex.engine().translate_field("sense_def", sid, "vi") == "vi:def text"
 
 
 async def test_translate_bad_ref_raises(session_factory, tmp_path):
     tr = FakeTranslator()
     lex = _lexicon(session_factory, tmp_path, translator=tr)
     with pytest.raises(ValueError):
-        await lex.translate_field("sense_def", 999999, "vi")
+        await lex.engine().translate_field("sense_def", 999999, "vi")
     assert tr.calls == 0
 
 
@@ -451,7 +451,7 @@ async def test_translate_no_llm_raises(session_factory, tmp_path, monkeypatch):
     )
     monkeypatch.setenv("LEXI_LLM_API_KEY", "")
     with pytest.raises(ValueError):
-        await lex.translate_sense(sid, "vi")
+        await lex.engine().translate_sense(sid, "vi")
 
 
 # --- API surface: tts (stub + fake real provider) --------------------------
@@ -472,10 +472,10 @@ async def test_tts_sense_real_provider_round_trip(session_factory, tmp_path):
     sid = await _make_sense(session_factory, "a small domestic cat")
     provider = FakeRealTTS()
     lex = _lexicon(session_factory, tmp_path, tts=provider)
-    first = await lex.tts_sense(sid, voice="alloy", fmt="mp3")
+    first = await lex.engine().tts_sense(sid, voice="alloy", fmt="mp3")
     assert first.file_path is not None
     assert (tmp_path / first.file_path).read_bytes() == b"AUDIO(alloy/mp3):a small domestic cat"
-    second = await lex.tts_sense(sid, voice="alloy", fmt="mp3")
+    second = await lex.engine().tts_sense(sid, voice="alloy", fmt="mp3")
     assert second.file_path == first.file_path
     assert provider.calls == 1  # cache hit
 
@@ -484,7 +484,7 @@ async def test_tts_stub_miss_raises_no_row(session_factory, tmp_path):
     sid = await _make_sense(session_factory)
     lex = _lexicon(session_factory, tmp_path)  # default StubTTSProvider
     with pytest.raises(NotImplementedError):
-        await lex.tts_sense(sid, voice="alloy", fmt="mp3")
+        await lex.engine().tts_sense(sid, voice="alloy", fmt="mp3")
     async with session_scope(session_factory) as session:
         rows = (await session.execute(select(AssetRow))).scalars().all()
     assert rows == []
@@ -495,7 +495,7 @@ async def test_tts_empty_source_short_circuits(session_factory, tmp_path):
     sid = await _make_sense(session_factory, "   ")
     provider = FakeRealTTS()
     lex = _lexicon(session_factory, tmp_path, tts=provider)
-    asset = await lex.tts_sense(sid, voice="alloy", fmt="mp3")
+    asset = await lex.engine().tts_sense(sid, voice="alloy", fmt="mp3")
     assert not asset.ready
     assert provider.calls == 0
 
@@ -599,7 +599,7 @@ async def test_tts_provider_selection_real_when_configured(session_factory, tmp_
     monkeypatch.setenv("LEXI_TTS_API_KEY", "sk-test")
     monkeypatch.setenv("LEXI_TTS_MODEL", "tts-1")
     lex = _lexicon(session_factory, tmp_path)  # no injected provider
-    assert isinstance(lex._tts_provider(), OpenAICompatibleTTSProvider)
+    assert isinstance(lex._providers.tts_provider(), OpenAICompatibleTTSProvider)
 
 
 async def test_tts_provider_selection_stub_when_unconfigured(
@@ -610,7 +610,7 @@ async def test_tts_provider_selection_stub_when_unconfigured(
     monkeypatch.setenv("LEXI_TTS_BASE_URL", "")
     monkeypatch.setenv("LEXI_TTS_API_KEY", "")
     lex = _lexicon(session_factory, tmp_path)
-    assert isinstance(lex._tts_provider(), StubTTSProvider)
+    assert isinstance(lex._providers.tts_provider(), StubTTSProvider)
 
 
 async def test_tts_provider_selection_real_when_only_base_url(
@@ -623,7 +623,7 @@ async def test_tts_provider_selection_real_when_only_base_url(
     monkeypatch.setenv("LEXI_TTS_BASE_URL", "http://localhost:8080/v1")
     monkeypatch.setenv("LEXI_TTS_API_KEY", "")
     lex = _lexicon(session_factory, tmp_path)
-    assert isinstance(lex._tts_provider(), OpenAICompatibleTTSProvider)
+    assert isinstance(lex._providers.tts_provider(), OpenAICompatibleTTSProvider)
 
 
 async def test_tts_empty_audio_raises_no_cache(session_factory, tmp_path):
@@ -692,7 +692,7 @@ async def test_tts_many_order_aligned(session_factory, tmp_path):
     provider = FakeRealTTS()
     lex = _lexicon(session_factory, tmp_path, tts=provider)
     refs = [("sense_def", s1), ("sense_def", s2)]
-    results = await lex.tts_many(refs, voice="alloy", fmt="mp3")
+    results = await lex.engine().tts_many(refs, voice="alloy", fmt="mp3")
     # One order-aligned BatchResult per ref, all ok, key echoes the input.
     assert [r.key for r in results] == refs
     assert all(r.ok for r in results)
@@ -706,16 +706,16 @@ async def test_tts_many_cache_first_per_ref(session_factory, tmp_path):
     sid = await _make_sense(session_factory, "a cached definition")
     provider = FakeRealTTS()
     lex = _lexicon(session_factory, tmp_path, tts=provider)
-    await lex.tts_field("sense_def", sid, voice="alloy", fmt="mp3")
+    await lex.engine().tts_field("sense_def", sid, voice="alloy", fmt="mp3")
     assert provider.calls == 1
-    results = await lex.tts_many([("sense_def", sid)], voice="alloy", fmt="mp3")
+    results = await lex.engine().tts_many([("sense_def", sid)], voice="alloy", fmt="mp3")
     assert results[0].ok and results[0].value.file_path is not None
     assert provider.calls == 1  # served from cache, no new synth
 
 
 async def test_tts_many_empty_is_empty(session_factory, tmp_path):
     lex = _lexicon(session_factory, tmp_path, tts=FakeRealTTS())
-    assert await lex.tts_many([]) == []
+    assert await lex.engine().tts_many([]) == []
 
 
 async def test_tts_many_one_failure_does_not_abort(session_factory, tmp_path):
@@ -723,7 +723,7 @@ async def test_tts_many_one_failure_does_not_abort(session_factory, tmp_path):
     provider = FakeRealTTS()
     lex = _lexicon(session_factory, tmp_path, tts=provider)
     # A bad ref (no source row) fails that item only; the good one still resolves.
-    results = await lex.tts_many([("sense_def", 999999), ("sense_def", sid)])
+    results = await lex.engine().tts_many([("sense_def", 999999), ("sense_def", sid)])
     assert not results[0].ok and results[0].error
     assert results[1].ok and results[1].value.file_path is not None
 
@@ -732,7 +732,7 @@ async def test_tts_many_stub_reports_per_item_error(session_factory, tmp_path):
     # Unconfigured TTS (stub) raises per item; the batch reports it, never aborts.
     sid = await _make_sense(session_factory, "a definition")
     lex = _lexicon(session_factory, tmp_path)  # default StubTTSProvider
-    results = await lex.tts_many([("sense_def", sid)])
+    results = await lex.engine().tts_many([("sense_def", sid)])
     assert len(results) == 1
     assert not results[0].ok and results[0].error
 

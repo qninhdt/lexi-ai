@@ -12,6 +12,7 @@ raises rather than caching fake audio.
 
 from collections.abc import Awaitable, Callable, Sequence
 
+from lexi_ai.application.batching import gather_batch
 from lexi_ai.assets.repository import AssetRepository, content_hash, normalize_asset_params
 from lexi_ai.read_models import Asset, BatchResult
 
@@ -26,7 +27,7 @@ class AssetService:
         tts_factory: Callable[[], object],
         voice: str,
         fmt: str,
-        gather: Callable[..., Awaitable[list[BatchResult]]],
+        gather: Callable[..., Awaitable[list[BatchResult]]] = gather_batch,
     ) -> None:
         self._assets = assets
         # Factories rather than instances: a provider is built from settings on first

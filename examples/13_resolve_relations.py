@@ -94,7 +94,7 @@ async def main() -> None:
         await _dump_edges(lex)
 
         print("\n=== manual resolve_relations() batch (mop-up / live judge) ===")
-        results = await lex.resolve_relations(batch_size=20)
+        results = await lex.engine().resolve_relations(batch_size=20)
         if not results:
             print("  (no pending edges left — the inbound hook resolved them all)")
         for r in results:

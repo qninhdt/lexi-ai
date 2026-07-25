@@ -228,7 +228,7 @@ async def test_generate_theme_metadata(session_factory):
         )
     )
     lex = _lexicon(session_factory, theme_meta_gen=gen)
-    theme = await lex.create_theme("pirate", "speak like a pirate")
+    theme = await lex.engine().create_theme("pirate", "speak like a pirate")
     assert theme.name == "The Salty Pirate Captain"
     assert theme.key == "pirate"
     assert theme.description == "Salty sea-themed dictionary entries."
@@ -261,10 +261,12 @@ async def test_generate_theme_end_to_end(session_factory):
             )
         ),
     )
-    await lex.create_theme("Bard", "speak like a bard", description="poetic", tone="bardic")
+    await lex.engine().create_theme(
+        "Bard", "speak like a bard", description="poetic", tone="bardic"
+    )
 
     source = SearchResult(display="dragon", entry_type="word", lexi_word_id=word_id)
-    entry = await lex.generate(source, theme="bard")
+    entry = await lex.engine().generate(source, theme="bard")
     assert isinstance(entry, Entry)
     assert gen.calls == 1
     # The generator saw the neutral FACTS, never the neutral examples.
@@ -316,12 +318,12 @@ async def test_concurrent_same_word_theming_runs_llm_once(session_factory):
             )
         ),
     )
-    await lex.create_theme("Bard", "speak like a bard")
+    await lex.engine().create_theme("Bard", "speak like a bard")
 
     source = SearchResult(display="dragon", entry_type="word", lexi_word_id=word_id)
     results = await asyncio.gather(
-        lex.generate(source, theme="bard"),
-        lex.generate(source, theme="bard"),
+        lex.engine().generate(source, theme="bard"),
+        lex.engine().generate(source, theme="bard"),
     )
     assert gen.calls == 1  # single-flighted: the second waiter adopted the overlay
     for entry in results:
@@ -372,11 +374,11 @@ async def test_generate_theme_requires_done_word(session_factory):
         wid = word.id
     gen = FakeThemedGenerator(ThemedResult(senses=[ThemedSenseSchema(definition="x")]))
     lex = _lexicon(session_factory, gen)
-    await lex.create_theme("Bard", "voice", description="voice", tone="tone")
+    await lex.engine().create_theme("Bard", "voice", description="voice", tone="tone")
 
     source = SearchResult(display="pending", entry_type="word", lexi_word_id=wid)
     with pytest.raises(ValueError, match="is not done"):
-        await lex.generate(source, theme="bard")
+        await lex.engine().generate(source, theme="bard")
 
 
 async def test_generate_theme_unknown_theme_raises(session_factory):
@@ -388,7 +390,7 @@ async def test_generate_theme_unknown_theme_raises(session_factory):
 
     source = SearchResult(display="dragon", entry_type="word", lexi_word_id=word_id)
     with pytest.raises(ValueError, match="unknown theme"):
-        await lex.generate(source, theme="nonexistent")
+        await lex.engine().generate(source, theme="nonexistent")
 
 
 # --- read overlay (Phase 3) -----------------------------------------------
@@ -397,7 +399,7 @@ async def test_generate_theme_unknown_theme_raises(session_factory):
 async def test_get_neutral_unchanged(session_factory):
     word_id, _ = await _make_done_word(session_factory)
     lex = _lexicon(session_factory)
-    entry = await lex.get_entry(word_id)
+    entry = await lex.reader().get_entry(word_id)
     assert entry.senses[0].definition == "neutral def 0"
     assert entry.senses[0].examples == ["neutral example 0"]
 
@@ -405,7 +407,7 @@ async def test_get_neutral_unchanged(session_factory):
 async def test_get_theme_none_is_neutral(session_factory):
     word_id, _ = await _make_done_word(session_factory)
     lex = _lexicon(session_factory)
-    entry = await lex.get_entry(word_id, theme=None)
+    entry = await lex.reader().get_entry(word_id, theme=None)
     assert entry.senses[0].definition == "neutral def 0"
 
 
@@ -413,7 +415,7 @@ async def test_get_unknown_theme_raises(session_factory):
     word_id, _ = await _make_done_word(session_factory)
     lex = _lexicon(session_factory)
     with pytest.raises(ValueError):
-        await lex.get_entry(word_id, theme="ghost")
+        await lex.reader().get_entry(word_id, theme="ghost")
 
 
 async def test_get_per_sense_fallback(session_factory, repo):
@@ -426,7 +428,7 @@ async def test_get_per_sense_fallback(session_factory, repo):
         )
         await session.flush()
     lex = _lexicon(session_factory)
-    entry = await lex.get_entry(word_id, theme="bard")
+    entry = await lex.reader().get_entry(word_id, theme="bard")
     assert entry.senses[0].definition == "themed only 0"  # themed
     assert entry.senses[1].definition == "neutral def 1"  # fallback
 
@@ -437,11 +439,11 @@ async def test_get_and_generate_by_theme_id(session_factory, repo):
 
     # Resolve by integer ID
     lex = _lexicon(session_factory)
-    entry = await lex.get_entry(word_id, theme=theme.id)
+    entry = await lex.reader().get_entry(word_id, theme=theme.id)
     assert entry.senses[0].definition == "neutral def 0"
 
     # Resolve by string ID
-    entry2 = await lex.get_entry(word_id, theme=str(theme.id))
+    entry2 = await lex.reader().get_entry(word_id, theme=str(theme.id))
     assert entry2.senses[0].definition == "neutral def 0"
 
 
@@ -458,7 +460,7 @@ async def test_numeric_theme_name_resolves_by_key_not_id(session_factory, repo):
 
     # And the whole get_entry path resolves the numeric NAME by key.
     lex = _lexicon(session_factory)
-    entry = await lex.get_entry(word_id, theme="1984")
+    entry = await lex.reader().get_entry(word_id, theme="1984")
     assert entry.senses[0].definition == "neutral def 0"
 
 
@@ -504,7 +506,7 @@ async def test_themed_add_examples_appends_in_voice(session_factory, repo):
         ),
     )
     lex = _lexicon(session_factory, gen)
-    view = await lex.add_examples(sense_id, n=2, theme="bard")
+    view = await lex.engine().add_examples(sense_id, n=2, theme="bard")
     # Returned view carries the THEMED definition + themed examples (old + new).
     assert view.definition == "a mighty wyrm"
     assert view.examples[0] == "Lo, a wyrm of old!"
@@ -545,7 +547,7 @@ async def test_themed_add_examples_carry_parseable_tags(session_factory, repo):
         ),
     )
     lex = _lexicon(session_factory, gen)
-    view = await lex.add_examples(sense_id, n=1, theme="bard")
+    view = await lex.engine().add_examples(sense_id, n=1, theme="bard")
     tagged = [e for e in view.examples if "<t inf=" in e]
     assert tagged
     clean, spans = parse_marked_example(tagged[0])
@@ -560,7 +562,7 @@ async def test_themed_add_examples_returns_themed_sense_view(session_factory, re
         example_batch=ExampleBatch(examples=['A <t inf="base">wyrm</t> stirs.']),
     )
     lex = _lexicon(session_factory, gen)
-    view = await lex.add_examples(sense_id, n=1, theme="bard")
+    view = await lex.engine().add_examples(sense_id, n=1, theme="bard")
     assert isinstance(view, SenseView)
     assert view.sense_id == sense_id
     assert view.definition == "a mighty wyrm"  # themed, not neutral
@@ -571,7 +573,7 @@ async def test_themed_add_examples_unknown_theme_raises(session_factory, repo):
     gen = FakeThemedGenerator(ThemedResult(senses=[ThemedSenseSchema(definition="x")]))
     lex = _lexicon(session_factory, gen)
     with pytest.raises(ValueError, match="unknown theme"):
-        await lex.add_examples(sense_id, n=2, theme="ghost")
+        await lex.engine().add_examples(sense_id, n=2, theme="ghost")
 
 
 async def test_themed_add_examples_missing_overlay_raises(session_factory, repo):
@@ -582,7 +584,7 @@ async def test_themed_add_examples_missing_overlay_raises(session_factory, repo)
     gen = FakeThemedGenerator(ThemedResult(senses=[ThemedSenseSchema(definition="x")]))
     lex = _lexicon(session_factory, gen)
     with pytest.raises(ValueError, match="no themed overlay"):
-        await lex.add_examples(sense_ids[0], n=2, theme="bard")
+        await lex.engine().add_examples(sense_ids[0], n=2, theme="bard")
     assert gen.example_calls == 0
 
 
@@ -593,7 +595,7 @@ async def test_themed_add_examples_zero_is_noop(session_factory, repo):
         example_batch=ExampleBatch(examples=["should not appear"]),
     )
     lex = _lexicon(session_factory, gen)
-    view = await lex.add_examples(sense_id, n=0, theme="bard")
+    view = await lex.engine().add_examples(sense_id, n=0, theme="bard")
     assert view.examples == ["Only one."]
     assert gen.example_calls == 0
 

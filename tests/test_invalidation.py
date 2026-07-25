@@ -214,7 +214,7 @@ async def test_delete_entry_cascades_inbound_edges(engine):
         b_id = (await s.execute(select(Word).where(Word.match_key == "dark"))).scalar_one().id
 
     lex = Lexicon(sf, None, None, engine=engine)  # type: ignore[arg-type]
-    assert await lex.delete_entry(b_id) is True
+    assert await lex.engine().delete_entry(b_id) is True
 
     async with sf() as s:
         rows = (await s.execute(select(SenseRelation))).scalars().all()

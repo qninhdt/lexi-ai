@@ -89,8 +89,7 @@ class FakeStore:
         return [
             question
             for question in self.questions
-            if question.word_id == word_id
-            and (type_id is None or question.type_id == type_id)
+            if question.word_id == word_id and (type_id is None or question.type_id == type_id)
         ]
 
     async def get(self, question_id):
@@ -228,9 +227,7 @@ async def test_contextual_l2_uses_contextual_llm_stem():
         correct="eloquent",
         distractors=["terse", "dull"],
     )
-    report = await ContextualMCQ().prepare(
-        _ctx(store=store, llm=FakeLLM(generated)), _demand(2)
-    )
+    report = await ContextualMCQ().prepare(_ctx(store=store, llm=FakeLLM(generated)), _demand(2))
     assert report.produced == {(7, 2): 1}
     assert store.questions[0].payload["stem"] == generated.stem
 
@@ -252,9 +249,7 @@ async def test_retrieve_is_store_only_exact_level_and_honors_exclusion():
     assert found is not None and found.difficulty_level == 1
     assert isinstance(found, PersistedQuestion)
     assert await plugin.retrieve(ctx, QuestionQuery(7, 2)) is None
-    assert await plugin.retrieve(
-        ctx, QuestionQuery(7, 1, frozenset({found.question_id}))
-    ) is None
+    assert await plugin.retrieve(ctx, QuestionQuery(7, 1, frozenset({found.question_id}))) is None
     assert await plugin.retrieve(ctx, QuestionQuery(999, 1)) is None
 
 
@@ -373,9 +368,7 @@ async def test_flashcard_rejects_missing_capability_or_invalid_sense():
     with pytest.raises(RuntimeError, match="sense_loader"):
         await Flashcard().retrieve(_ctx(), QuestionQuery(7, 0))
     with pytest.raises(LookupError, match="sense 7"):
-        await Flashcard().retrieve(
-            _ctx(sense_loader=FakeSenseLoader(None)), QuestionQuery(7, 0)
-        )
+        await Flashcard().retrieve(_ctx(sense_loader=FakeSenseLoader(None)), QuestionQuery(7, 0))
 
 
 class RaisingPrepareType:
@@ -443,9 +436,7 @@ async def test_engine_retrieve_presents_answer_free_and_unknown_type_is_typed():
     assert not hasattr(presented.render, "correct_index")
 
     assert await engine.retrieve(7, 2, frozenset(), "definition_mcq") is None
-    assert await engine.retrieve(
-        7, 1, frozenset({stored.question_id}), "definition_mcq"
-    ) is None
+    assert await engine.retrieve(7, 1, frozenset({stored.question_id}), "definition_mcq") is None
     with pytest.raises(UnknownQuestionType) as exc:
         await engine.retrieve(7, 1, frozenset(), "missing")
     assert exc.value.type_id == "missing"
@@ -475,9 +466,7 @@ async def test_engine_evaluate_dispatches_assessment_and_rejects_exposure():
     await DefinitionMCQ().prepare(_ctx(store=store), _demand(1))
     question = store.questions[0]
 
-    submission = _submit(
-        question, ChoiceResponse(selected_index=question.payload["correct_index"])
-    )
+    submission = _submit(question, ChoiceResponse(selected_index=question.payload["correct_index"]))
     result = await engine.evaluate(question, submission)
     assert (result.status, result.correct, result.score) == ("graded", True, 1.0)
 

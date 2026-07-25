@@ -24,12 +24,12 @@ async def main(query: str) -> None:
     try:
         # 1. search — FREE, never calls the LLM.
         print(f"=== search({query!r}) — ranked matches (FREE) ===")
-        results = await lex.search(query)
+        results = await lex.reader().search(query)
         print_results(results)
 
         if not results:
             print(f"\nNothing in Cambridge. Creating a custom entry via generate({query!r})…")
-            entry = await lex.generate(query)
+            entry = await lex.engine().generate(query)
             print_entry(entry)
             return
 
@@ -40,17 +40,17 @@ async def main(query: str) -> None:
 
         # 3. introspect before generating — FREE.
         if best.generated:
-            print(f"  status: {await lex.get_status(best.lexi_word_id)!r}")
+            print(f"  status: {await lex.reader().get_status(best.lexi_word_id)!r}")
         else:
             print("  status: not generated yet (no lexi_word_id)")
 
         # 4. generate (or return cached).
         print(f"\n=== generate(result) — create or return {best.display!r} ===")
-        entry = await lex.generate(best)
+        entry = await lex.engine().generate(best)
         print_entry(entry)
 
         # 5. now it's cached — search again folds it into a generated hit.
-        again = await lex.search(query)
+        again = await lex.reader().search(query)
         top = again[0]
         print(
             f"\nafter generation, top result: generated={top.generated} "
