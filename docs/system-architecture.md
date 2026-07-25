@@ -29,7 +29,7 @@ lexi_ai/
   read_models.py    dataclass views returned to callers
   markup.py         parse/strip the <t inf> example target tags (one reader)
   domain/           technology-free core
-    ports.py        repository + unit-of-work Protocols the application depends on
+    ports.py        repository, unit-of-work, and vector-index Protocols
     models.py       records crossing the persistence boundary (never ORM rows)
     errors.py       failures callers branch on (StaleGenerationError)
     hashing.py      sense_content_hash — content identity of a sense
@@ -50,6 +50,10 @@ lexi_ai/
   infrastructure/
     providers.py    lazy LLM / WSD / translator / TTS construction from settings
     question_engine_factory.py  builds and caches the reader / worker engines
+    vectors/        similarity search, one module per backend
+      lancedb_index.py  the default: embedded, on disk, ANN query, no server
+      memory_index.py   exact-scan, non-durable — the hermetic test default
+      validation.py     the uniform-dimension check every backend owes callers
     db/                 the SQLAlchemy adapter
       models.py       SQLAlchemy 2.0 async ORM (portable types only)
       types.py        Vocabulary / VocabularyList columns enforcing the vocabularies
@@ -152,9 +156,8 @@ cross-DB FK — decision #14):
   homograph disambiguator), `grammar` (0-3 closed-vocab labels, comma-joined in
   one column), `register`, `connotation` (both closed-vocab enums), `domain`
   (subject-area label) and `usage_note` (one-line usage/confusable hint — both
-  free text, NUL-sanitized); plus a best-effort semantic-search vector
-  (`embedding` BLOB + `embedding_model` + `embedding_dim`, null until an embedder
-  runs — no pgvector, portable).
+  free text, NUL-sanitized). NO embedding column: sense vectors live in the
+  vector index (see below), keyed by sense id.
 - `sense_reference` — N-N provenance to a Cambridge sense / WordNet synset
   (may be empty).
 - `examples` — per sense.
@@ -369,7 +372,7 @@ tags); an MCQ degrades to fewer options rather than fabricating. The LLM plugin 
 judge are injectable, so the whole subsystem tests with fake runnables and zero
 network.
 
-**Portability:** only `Text`/`String`/`Integer`/`DateTime`/`LargeBinary` — no
+**Portability:** only `Text`/`String`/`Integer`/`DateTime` — no
 JSONB/ARRAY/native
 ENUM. Verified by compiling every table's DDL against both the SQLite and
 Postgres dialects (`tests/test_models.py::test_schema_compiles_on_both_dialects`).
@@ -390,6 +393,45 @@ Postgres dialects (`tests/test_models.py::test_schema_compiles_on_both_dialects`
   *persistent* object (that triggers a lazy-load outside greenlet context);
   children are cleared with Core `delete()` and re-inserted with explicit FK ids.
   Read models are built inside the session via `selectinload`.
+
+## Sense vectors live outside the primary database
+
+Semantic search ranks in the vector index and hydrates from SQL. The index owns
+which senses are embedded; the relational store answers only "which done senses
+exist". One source of truth, and the row shape of the two stores never has to
+agree on anything but the sense id.
+
+```
+semantic_search(q) → embed(q) → VectorIndex.query(v, k+overfetch, {model})
+                             → SenseRepo.semantic_rows(ids)  → SemanticHit[]
+```
+
+**Eventually consistent, deliberately.** A vector cannot join the SQL transaction
+that publishes an entry, and embedding was already a post-commit best-effort step,
+so keeping the BLOB in `senses` only pretended the two were atomic. The contract is
+now explicit: a missing or stale vector is a tolerated transient, never a failure.
+
+- **Missing** — generation embedded nothing (extra not installed, encoder OOM). The
+  entry is still `done`; `backfill_embeddings` fills the gap.
+- **Stale model** — vectors carry the encoder's model name in metadata and queries
+  pre-filter on it, so changing encoders yields no hits (not wrong hits) until the
+  backfill re-embeds. Re-embedding replaces the vector in place, keyed by sense id.
+- **Orphaned** — a delete or a regeneration leaves a vector whose sense is gone.
+  Hydration skips unknown ids so an orphan can never surface as a result;
+  `delete_entry` forgets vectors immediately, and the backfill prunes the rest so
+  orphans cannot crowd real hits out of a top-k.
+
+Every path degrades rather than raising: an unreachable index or an unavailable
+encoder makes `semantic_search` return `[]` and `backfill_embeddings` return `0`. A
+caller that must have results falls back to lexical `search`.
+
+**Backends** are a settings switch (`LEXI_VECTOR_BACKEND`), not a code change:
+`lancedb` (default — embedded, on disk, ANN, needs the `[lancedb]` extra) or
+`memory` (exact scan, non-durable, what the hermetic test tier uses). Adding
+pgvector or Qdrant is one module in `infrastructure/vectors/` plus a branch in
+`build_vector_index`; nothing upstream of the port changes. The adapter contract is
+pinned by one test module parametrized over every backend, with the exact-scan
+in-memory index as the ground truth.
 
 ## Adopted embedding boundary
 
@@ -422,12 +464,18 @@ OpenAI-compatible TTS provider. When a `TTS_API_KEY` is set, `TTS_BASE_URL` must
 cleartext. With none configured, TTS falls back to the stub (raises, never caches
 fake audio).
 
+Sense vectors: `VECTOR_BACKEND` (`lancedb` default, or `memory`), `VECTOR_PATH`
+(LanceDB store dir, default `./lexi-vectors`), `VECTOR_METRIC` (`cosine` — must
+match the encoder's geometry; the Embedder L2-normalizes). Encoder knobs stay
+`EMBEDDING_MODEL`/`EMBEDDING_DEVICE`/`EMBEDDING_BATCH_SIZE`/`EMBEDDING_MAX_LENGTH`.
+
 **Schema versioning:** the ORM is the single schema source. SQLite local
 development uses `init_models` to create a fresh disposable database; PostgreSQL
 deployments run the Alembic chain, which owns the `lexi` schema and
 `lexi.alembic_version`, and runtime processes never perform DDL. The chain is one
 autogenerated baseline, and `alembic check` fails if the models and that baseline
-ever diverge. The baseline assumes an empty database.
+ever diverge. The baseline assumes an empty database, and later changes are
+ordinary forward revisions on top of it.
 
 ## Persistence boundaries
 
@@ -442,7 +490,8 @@ any of them into the wrong transaction fails quietly rather than loudly:
 - **Enrichment stays outside the publish.** Embedding and relation resolution are
   best-effort and run after the commit. Inside it, an embedding failure would roll
   back published content; the relation queue also reads `status = "done"`, so
-  pre-commit it would find nothing.
+  pre-commit it would find nothing. Embedding could not be inside it in any case —
+  vectors live in a separate store that cannot join a SQL transaction.
 - **Error recording uses an independent session.** It runs after the publish
   transaction already rolled back, and a rolled-back session cannot write.
 

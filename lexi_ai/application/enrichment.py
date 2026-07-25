@@ -14,11 +14,10 @@ pointing at a sense the model never saw.
 from collections.abc import Callable, Sequence
 
 from lexi_ai.domain.hashing import sense_content_hash
-from lexi_ai.domain.models import ResolveDecision
-from lexi_ai.domain.ports import UnitOfWork
+from lexi_ai.domain.models import ResolveDecision, VectorRecord
+from lexi_ai.domain.ports import UnitOfWork, VectorIndex
 from lexi_ai.normalize import render
 from lexi_ai.read_models import BatchResult, SenseView
-from lexi_ai.vectors import pack_vector
 
 # A generated word can be the target of many pending edges, so the inbound hook gets
 # headroom over the raw word count. The hard ceiling still applies.
@@ -37,9 +36,11 @@ class EnrichmentService:
         read_senses: Callable[[Sequence[int]], object],
         themed_examples: Callable[..., object],
         max_examples_per_call: int,
+        vectors: VectorIndex,
     ) -> None:
         self._uow = uow_factory
         self._embedder = embedder
+        self._vectors = vectors
         self._example_generator = example_generator
         self._judge_factory = judge_factory
         self._read_senses = read_senses
@@ -79,29 +80,42 @@ class EnrichmentService:
     # --- embeddings ---------------------------------------------------------
 
     async def backfill_embeddings(self, *, limit: int | None = None) -> int:
-        """Embed done senses that lack a current-model vector.
+        """Embed done senses the vector index does not already hold; returns the count.
 
-        Fills the gaps left by best-effort generation and by an embedding-model
-        change, since a vector tagged with another model is ignored until replaced.
-        Idempotent: with everything embedded this returns zero.
+        This is the reconciliation step the eventually-consistent vector store
+        depends on. It fills the gaps left by best-effort generation and by an
+        encoder change (a vector tagged with another model is ignored until
+        replaced), and it prunes vectors whose sense no longer exists — a delete or
+        a regeneration leaves those behind, and they would otherwise consume slots
+        in a top-k answer.
+
+        Idempotent: with everything embedded and nothing stale, this returns zero.
         """
+        await self._prune_orphan_vectors()
         return await self.embed_missing(limit=limit)
 
     async def embed_missing(
         self, word_ids: Sequence[int] | None = None, limit: int | None = None
     ) -> int:
-        """Encode and store vectors for senses that need one.
+        """Encode and store vectors for senses the index has no current vector for.
 
-        ANY encoder failure returns zero rather than raising: the extra may be
-        uninstalled, the model may fail to load, the device may be out of memory.
+        ANY encoder or index failure returns zero rather than raising: the extra may
+        be uninstalled, the model may fail to load, the device may be out of memory.
         None of that may fail an already-persisted generation.
         """
+        model = self._embedder.model_name
+        try:
+            stored = await self._vectors.ids({"model": model})
+        except Exception:  # noqa: BLE001 - best-effort: an unreachable index embeds nothing
+            return 0
         async with self._uow() as uow:
-            pending = await uow.senses.needing_embedding(
-                self._embedder.model_name,
+            candidates = await uow.senses.needing_embedding(
                 word_ids=list(word_ids) if word_ids is not None else None,
-                limit=limit,
+                limit=None,
             )
+        pending = [row for row in candidates if str(row.sense_id) not in stored]
+        if limit is not None:
+            pending = pending[:limit]
         if not pending:
             return 0
         texts = [self._embed_text(row.norm, row.definition) for row in pending]
@@ -109,17 +123,33 @@ class EnrichmentService:
             vectors = await self._embedder.embed(texts)
             if not vectors:
                 return 0
-            dim = len(vectors[0])
-            packed = [
-                (row.sense_id, pack_vector(vector))
-                for row, vector in zip(pending, vectors, strict=True)
-            ]
+            return await self._vectors.upsert(
+                [
+                    VectorRecord(id=str(row.sense_id), vector=vector, meta={"model": model})
+                    for row, vector in zip(pending, vectors, strict=True)
+                ]
+            )
         except Exception:  # noqa: BLE001 - best-effort: never fail generation on embed
             return 0
-        async with self._uow() as uow:
-            written = await uow.senses.store_embeddings(packed, self._embedder.model_name, dim)
-            await uow.commit()
-        return written
+
+    async def _prune_orphan_vectors(self) -> int:
+        """Drop vectors whose sense is gone. Best-effort, like everything here."""
+        try:
+            stored = await self._vectors.ids()
+            if not stored:
+                return 0
+            async with self._uow() as uow:
+                live = await uow.senses.live_sense_ids()
+            orphans = [
+                stored_id
+                for stored_id in stored
+                if not stored_id.isdigit() or int(stored_id) not in live
+            ]
+            if not orphans:
+                return 0
+            return await self._vectors.delete(orphans)
+        except Exception:  # noqa: BLE001 - best-effort: a prune failure is not a caller error
+            return 0
 
     @staticmethod
     def _embed_text(norm: str, definition: str) -> str:
@@ -150,9 +180,7 @@ class EnrichmentService:
         except Exception:  # noqa: BLE001 - inbound resolve is strictly best-effort
             return []
 
-    async def resolve(
-        self, batch_size: int, word_ids: Sequence[int] | None
-    ) -> list[BatchResult]:
+    async def resolve(self, batch_size: int, word_ids: Sequence[int] | None) -> list[BatchResult]:
         """Read the pending queue, judge it in one call, apply the verdicts.
 
         With no judge configured this returns nothing rather than failing, matching
@@ -216,6 +244,4 @@ class EnrichmentService:
         if chosen is None or not (0 <= chosen < len(candidates)):
             return ResolveDecision(task.edge_id, None, None)
         target = candidates[chosen]
-        return ResolveDecision(
-            task.edge_id, target.sense_id, sense_content_hash(target.definition)
-        )
+        return ResolveDecision(task.edge_id, target.sense_id, sense_content_hash(target.definition))

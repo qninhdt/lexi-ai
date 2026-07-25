@@ -2,10 +2,9 @@
 
 A two-step best-effort ladder, reusing existing infrastructure (DRY):
 
-1. **Semantic neighbours** — rank OTHER done senses by cosine similarity to the
-   target's core-sense vector (reuses the sense repository's ``embedded`` read +
-   ``vectors.cosine``). Only fires when embeddings exist; empty otherwise, never
-   an error — same posture as :meth:`Lexicon.semantic_search`.
+1. **Semantic neighbours** — the vector index ranks other done senses against the
+   target's core-sense vector. Only fires when that sense is embedded; empty
+   otherwise, never an error — the same posture as semantic search.
 2. **Topic fallback** — words sharing one of the entry's topic tags (reuses the
    tag repository's ``words_for_key`` read).
 
@@ -18,20 +17,25 @@ than requested.
 from lexi_ai.normalize import render, tag_key
 from lexi_ai.questions.dedup import DistractorDedup
 from lexi_ai.read_models import Entry
-from lexi_ai.vectors import cosine, unpack_vector
 
 # Cap the per-tag fetch so a huge topic doesn't dominate the candidate pool.
 _TAG_FETCH_LIMIT = 50
+# How many neighbours to ask the index for. Every sense of the target word is a
+# near-certain top hit and gets discarded, so the pool needs headroom over the
+# option count the caller will consume.
+_SEMANTIC_FETCH_LIMIT = 50
 
 
 class DistractorProvider:
     """Best-effort wrong-option source, shared by every MCQ plugin."""
 
-    def __init__(self, uow_factory, embedder):
+    def __init__(self, uow_factory, embedder, vectors):
         # ``uow_factory``: callable returning a unit of work (read-only here).
         # ``embedder``: lexi_ai.embeddings.Embedder (only its model_name is used).
+        # ``vectors``: the VectorIndex holding sense vectors.
         self._uow_factory = uow_factory
         self._embedder = embedder
+        self._vectors = vectors
 
     async def for_word(self, entry: Entry, *, k: int, pos: str | None = None) -> list[str]:
         """Up to ``k`` distinct distractor display strings for ``entry``'s core sense.
@@ -43,8 +47,8 @@ class DistractorProvider:
         """
         if k <= 0:
             return []
-        # Shared exclude+dedup (3.3): the target word + aliases can never be a
-        # distractor, and each display is deduped by match_key.
+        # The target word + aliases can never be a distractor, and each display is
+        # deduped by match_key.
         dedup = DistractorDedup(entry)
         for display in await self._semantic(entry):
             if dedup.take(display) and len(dedup.items) >= k:
@@ -57,26 +61,22 @@ class DistractorProvider:
     # --- ladder steps (each best-effort, returns [] on any miss/failure) ------
 
     async def _semantic(self, entry: Entry) -> list[str]:
-        """Other-word sense displays, ranked by cosine to the target core sense."""
+        """Displays of the nearest senses belonging to OTHER words, best first."""
         try:
+            target = await self._target_vector(entry)
+            if target is None:
+                return []
+            hits = await self._vectors.query(
+                target, _SEMANTIC_FETCH_LIMIT, {"model": self._embedder.model_name}
+            )
+            sense_ids = [int(hit.id) for hit in hits if hit.id.isdigit()]
+            if not sense_ids:
+                return []
             async with self._uow_factory() as uow:
-                rows = await uow.senses.embedded(self._embedder.model_name)
-        except Exception:  # noqa: BLE001 - best-effort, like semantic_search
+                rows = await uow.senses.semantic_rows(sense_ids)
+        except Exception:  # noqa: BLE001 - best-effort, like semantic search
             return []
-        if not rows:
-            return []
-        target = self._target_vector(entry, rows)
-        if target is None:
-            return []
-        scored = sorted(
-            (
-                (cosine(target, unpack_vector(r.embedding)), r)
-                for r in rows
-                if r.word_id != entry.word_id
-            ),
-            key=lambda s: -s[0],
-        )
-        return [render(r.norm) for _score, r in scored]
+        return [render(row.norm) for row in rows if row.word_id != entry.word_id]
 
     async def _by_topics(self, entry: Entry) -> list[str]:
         """Displays of words sharing one of the entry's topic tags."""
@@ -84,9 +84,7 @@ class DistractorProvider:
         for topic in entry.topics:
             try:
                 async with self._uow_factory() as uow:
-                    rows = await uow.tags.words_for_key(
-                        tag_key(topic.name), limit=_TAG_FETCH_LIMIT
-                    )
+                    rows = await uow.tags.words_for_key(tag_key(topic.name), limit=_TAG_FETCH_LIMIT)
             except Exception:  # noqa: BLE001 - best-effort
                 continue
             out.extend(render(norm) for _wid, norm, _etype in rows)
@@ -94,18 +92,19 @@ class DistractorProvider:
 
     # --- helpers --------------------------------------------------------------
 
-    @staticmethod
-    def _target_vector(entry: Entry, rows) -> list[float] | None:
-        """The target word's core-sense vector, if it is embedded.
+    async def _target_vector(self, entry: Entry) -> list[float] | None:
+        """The target's core-sense vector, or any embedded sense of it.
 
-        Prefers the row matching the entry's core sense id (senses are core-first);
-        falls back to any embedded sense of the target word.
+        Senses are core-first, so the first one that is indexed is the best anchor
+        available. ``None`` when the word has no vector at all — the ladder then
+        falls through to topics rather than ranking against something arbitrary.
         """
-        own = [r for r in rows if r.word_id == entry.word_id]
-        if not own:
+        sense_ids = [sense.sense_id for sense in entry.senses if sense.sense_id is not None]
+        if not sense_ids:
             return None
-        core_id = entry.senses[0].sense_id if entry.senses else None
-        for r in own:
-            if core_id is not None and r.sense_id == core_id:
-                return unpack_vector(r.embedding)
-        return unpack_vector(own[0].embedding)
+        stored = await self._vectors.fetch([str(sense_id) for sense_id in sense_ids])
+        for sense_id in sense_ids:
+            vector = stored.get(str(sense_id))
+            if vector is not None:
+                return vector
+        return None

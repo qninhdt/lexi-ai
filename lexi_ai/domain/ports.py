@@ -18,20 +18,22 @@ Folding either into the shared unit of work would put a best-effort step inside
 a transaction that must not roll back because of it.
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from lexi_ai.domain.models import (
-    EmbeddedSenseRow,
     GenerationFence,
     ResolveDecision,
     ResolveOutcome,
     ResolveTask,
+    SemanticSenseRow,
     SenseEmbeddingNeed,
     TagName,
     TagUsage,
     ThemeRecord,
     ThemingSense,
+    VectorHit,
+    VectorRecord,
     WordListing,
     WordMatch,
     WordRecord,
@@ -122,15 +124,27 @@ class SenseRepo(Protocol):
         """Owning word id. Raises when the sense does not exist."""
 
     async def needing_embedding(
-        self, model_name: str, word_ids: list[int] | None = None, limit: int | None = None
-    ) -> list[SenseEmbeddingNeed]: ...
+        self, word_ids: list[int] | None = None, limit: int | None = None
+    ) -> list[SenseEmbeddingNeed]:
+        """Done senses that are candidates for embedding, oldest id first.
 
-    async def store_embeddings(
-        self, vectors: list[tuple[int, bytes]], model_name: str, dim: int
-    ) -> int:
-        """Write packed vectors by sense id; returns rows actually updated."""
+        The relational store does not know which senses are embedded — the vector
+        index owns that — so this returns candidates and the caller subtracts what
+        the index already holds.
+        """
 
-    async def embedded(self, model_name: str) -> list[EmbeddedSenseRow]: ...
+    async def semantic_rows(self, sense_ids: Sequence[int]) -> list[SemanticSenseRow]:
+        """Presentation rows for ranked sense ids, skipping ids that no longer exist.
+
+        Skipping rather than raising is what makes a stale vector harmless: an id
+        left behind by a delete or a regeneration simply drops out of the results.
+        """
+
+    async def live_sense_ids(self) -> set[int]:
+        """Every existing sense id, for pruning vectors whose sense is gone."""
+
+    async def ids_for_word(self, word_id: int) -> list[int]:
+        """Every sense id of one word, whatever the word's status."""
 
     async def pending_relations(
         self, batch_size: int, word_ids: list[int] | None = None
@@ -254,3 +268,39 @@ class UnitOfWork(Protocol):
     async def rollback(self) -> None: ...
 
     async def flush(self) -> None: ...
+
+
+class VectorIndex(Protocol):
+    """A similarity index over sense vectors, outside the relational store.
+
+    Deliberately NOT part of :class:`UnitOfWork`. A vector cannot join the SQL
+    transaction that publishes an entry, and embedding is already a post-commit
+    best-effort step, so this store is eventually consistent by design: a missing
+    or stale vector is a tolerated transient that a backfill reconciles, never a
+    reason to fail a write or a read.
+
+    Identity is the sense id rendered as a string. ``meta`` carries the encoder's
+    model name so a model change is a filter miss rather than a silent comparison
+    against vectors of a different geometry.
+    """
+
+    async def upsert(self, records: Sequence[VectorRecord]) -> int:
+        """Store or replace vectors by id; returns how many were written."""
+
+    async def query(
+        self, vector: Sequence[float], k: int, where: Mapping[str, str] | None = None
+    ) -> list[VectorHit]:
+        """The ``k`` nearest ids to ``vector``, best first, filtered by ``where``."""
+
+    async def delete(self, ids: Sequence[str]) -> int:
+        """Remove vectors by id; returns how many were removed."""
+
+    async def ids(self, where: Mapping[str, str] | None = None) -> set[str]:
+        """Every stored id matching ``where`` — the set a backfill diffs against."""
+
+    async def fetch(self, ids: Sequence[str]) -> dict[str, list[float]]:
+        """The stored vectors for ``ids``, omitting ids the index does not hold.
+
+        Needed to rank neighbours of something already indexed without re-encoding
+        it, which is what the distractor ladder does.
+        """

@@ -18,7 +18,6 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
-    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -271,13 +270,9 @@ class Sense(Base):
     domain: Mapped[str | None] = mapped_column(String(64))
     usage_note: Mapped[str | None] = mapped_column(String(255))
 
-    # Semantic-search vector: float32 little-endian BLOB (portable — SQLite BLOB /
-    # Postgres BYTEA, no pgvector). Best-effort: null until an embedder runs.
-    # model + dim are stored per row so switching embedding models is safe
-    # (search filters to the current model; backfill re-embeds the rest).
-    embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
-    embedding_model: Mapped[str | None] = mapped_column(String(128))
-    embedding_dim: Mapped[int | None] = mapped_column(Integer)
+    # No embedding column: sense vectors live in the VectorIndex store, keyed by
+    # sense id. They cannot join this table's transaction, and embedding is a
+    # post-commit best-effort step, so keeping them here only pretended otherwise.
 
     word: Mapped["Word"] = relationship(back_populates="senses")
     references: Mapped[list["SenseReference"]] = relationship(

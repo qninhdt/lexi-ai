@@ -8,7 +8,7 @@ path cannot accidentally reach a language model.
 from collections.abc import Callable, Sequence
 
 from lexi_ai.application.batching import gather_batch
-from lexi_ai.domain.ports import UnitOfWork
+from lexi_ai.domain.ports import UnitOfWork, VectorIndex
 from lexi_ai.normalize import render, tag_key
 from lexi_ai.read_models import BatchResult, Entry, SearchResult, SenseView, Stats, TagCount
 
@@ -20,8 +20,10 @@ class DictionaryService:
         self,
         uow_factory: Callable[[], UnitOfWork],
         resolve_theme: Callable[[str | int], object],
+        vectors: VectorIndex,
     ) -> None:
         self._uow = uow_factory
+        self._vectors = vectors
         # Themed reads need a theme resolved to its id first. Taking the resolver
         # keeps this service independent of the theme service.
         self._resolve_theme = resolve_theme
@@ -108,11 +110,26 @@ class DictionaryService:
         return [TagCount(name=row.name, title=row.title, count=row.count) for row in rows]
 
     async def delete_entry(self, word_id: int) -> bool:
-        """Delete a word and everything under it; cascades handle the children."""
+        """Delete a word and everything under it; cascades handle the children.
+
+        The word's sense vectors are dropped afterwards, outside the transaction:
+        they live in a separate store that cannot join it. A failure there leaves
+        orphans that the next backfill prunes, so it never fails the delete.
+        """
         async with self._uow() as uow:
+            sense_ids = await uow.senses.ids_for_word(word_id)
             deleted = await uow.words.delete(word_id)
             await uow.commit()
-            return deleted
+        if deleted and sense_ids:
+            await self._forget_vectors(sense_ids)
+        return deleted
+
+    async def _forget_vectors(self, sense_ids: list[int]) -> None:
+        """Best-effort removal of vectors for senses that no longer exist."""
+        try:
+            await self._vectors.delete([str(sense_id) for sense_id in sense_ids])
+        except Exception:  # noqa: BLE001 - orphans are tolerated; the backfill prunes them
+            return
 
     async def stats(self) -> Stats:
         """Point-in-time dictionary counts, read as one snapshot."""

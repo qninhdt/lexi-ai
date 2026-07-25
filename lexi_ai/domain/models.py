@@ -9,6 +9,7 @@ The row-shaped types are ``NamedTuple``s on purpose: they name their fields whil
 staying positionally unpackable, which is how query results are consumed today.
 """
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -98,8 +99,12 @@ class ThemingSense(NamedTuple):
     tier: str
 
 
-class EmbeddedSenseRow(NamedTuple):
-    """A done sense + its current-model vector, for semantic ranking."""
+class SemanticSenseRow(NamedTuple):
+    """A done sense with everything needed to present a semantic hit.
+
+    Hydrated from the relational store AFTER the vector index has ranked, so the
+    two never have to agree on anything but the sense id.
+    """
 
     sense_id: int
     word_id: int
@@ -107,7 +112,21 @@ class EmbeddedSenseRow(NamedTuple):
     entry_type: str | None
     definition: str
     tier: str
-    embedding: bytes
+
+
+class VectorRecord(NamedTuple):
+    """One vector to store: its id, the values, and the metadata it is filtered by."""
+
+    id: str
+    vector: Sequence[float]
+    meta: Mapping[str, str]
+
+
+class VectorHit(NamedTuple):
+    """A ranked vector-index result: the stored id and its similarity score."""
+
+    id: str
+    score: float
 
 
 class ResolveCandidate(NamedTuple):

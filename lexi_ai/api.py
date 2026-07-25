@@ -41,11 +41,13 @@ from lexi_ai.generation.schemas import ExampleBatch
 from lexi_ai.infrastructure.db.uow import SqlAlchemyUnitOfWork
 from lexi_ai.infrastructure.providers import ProviderRegistry
 from lexi_ai.infrastructure.question_engine_factory import QuestionEngineFactory
+from lexi_ai.infrastructure.vectors import build_vector_index
 from lexi_ai.references.cambridge import CambridgeSource
 from lexi_ai.references.loader import ReferenceLoader
 from lexi_ai.references.wordnet import WordNetSource
 
 if TYPE_CHECKING:
+    from lexi_ai.domain.ports import VectorIndex
     from lexi_ai.facades import LexiconEngine, LexiconReader
     from lexi_ai.generation.wsd import WsdJudge
     from lexi_ai.read_models import Entry
@@ -68,6 +70,7 @@ class Lexicon:
         embedder: Embedder | None = None,
         assets: AssetRepository | None = None,
         wsd_judge: WsdJudge | None = None,
+        vectors: VectorIndex | None = None,
     ):
         self._session_factory = session_factory
         self._loader = loader
@@ -75,6 +78,9 @@ class Lexicon:
         self._engine = engine
         self._embedder = embedder or Embedder()
         self._assets = assets
+        # Sense vectors live outside the primary database and are eventually
+        # consistent: written post-commit, best-effort, reconciled by a backfill.
+        self._vectors = vectors or build_vector_index()
         # Every optional external capability (LLM, WSD judge, translator, TTS,
         # themed generators) is built on first use by the registry, which owns the
         # "is it configured?" branching. Injected collaborators are handed over so
@@ -93,6 +99,7 @@ class Lexicon:
             session_factory,
             self._embedder,
             self._providers,
+            self._vectors,
             self._speak,
             self._read_entry,
         )
@@ -111,6 +118,7 @@ class Lexicon:
             engine=engine,
             embedder=Embedder(settings=settings),
             assets=AssetRepository(session_factory, settings.asset_cache_dir),
+            vectors=build_vector_index(settings),
         )
 
     # --- lifecycle --------------------------------------------------------
@@ -158,11 +166,11 @@ class Lexicon:
 
     def dictionary(self) -> DictionaryService:
         """Free reads: entries, senses, statuses, listings, stats."""
-        return DictionaryService(self._uow, self._resolve_theme)
+        return DictionaryService(self._uow, self._resolve_theme, self._vectors)
 
     def lookup(self) -> SearchService:
         """Free search: reference-backed lexical search and semantic ranking."""
-        return SearchService(self._uow, self._loader, self._embedder)
+        return SearchService(self._uow, self._loader, self._embedder, self._vectors)
 
     def tags(self) -> TagService:
         """Topic-tag curation: rename, delete, merge."""
@@ -206,6 +214,7 @@ class Lexicon:
             self._read_senses,
             self._themes().append_examples,
             MAX_EXAMPLES_PER_CALL,
+            self._vectors,
         )
 
     def generation(self) -> GenerationService:

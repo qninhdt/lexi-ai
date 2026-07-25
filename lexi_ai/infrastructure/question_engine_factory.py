@@ -17,7 +17,7 @@ from lexi_ai.application.question_ports import AssetTtsPort
 from lexi_ai.config import get_settings
 
 if TYPE_CHECKING:
-    from lexi_ai.domain.ports import UnitOfWork
+    from lexi_ai.domain.ports import UnitOfWork, VectorIndex
     from lexi_ai.embeddings import Embedder
     from lexi_ai.infrastructure.providers import ProviderRegistry
     from lexi_ai.questions.base import TtsPort
@@ -35,6 +35,7 @@ class QuestionEngineFactory:
         session_factory: async_sessionmaker[AsyncSession],
         embedder: Embedder,
         providers: ProviderRegistry,
+        vectors: VectorIndex,
         speak: Callable[[str, int, str, str], Awaitable[object]],
         load_entry: Callable[[int], Awaitable[Entry]],
     ) -> None:
@@ -42,6 +43,7 @@ class QuestionEngineFactory:
         self._session_factory = session_factory
         self._embedder = embedder
         self._providers = providers
+        self._vectors = vectors
         self._speak = speak
         self._load_entry = load_entry
         self._repo: QuestionRepository | None = None
@@ -79,7 +81,7 @@ class QuestionEngineFactory:
 
         return QuestionEngine(
             self.repository(),
-            DistractorProvider(self._uow, self._embedder),
+            DistractorProvider(self._uow, self._embedder, self._vectors),
             llm=self._providers.questions_llm() if providers else None,
             judge_llm=self._providers.judge_llm() if providers else None,
             tts=self._tts_port() if providers else None,

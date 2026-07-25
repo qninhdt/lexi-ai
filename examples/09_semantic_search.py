@@ -1,11 +1,12 @@
 """Trial 09 — semantic search over generated senses (local embeddings).
 
 Every sense gets an embedding vector at generation time (best-effort, computed
-LOCALLY by a transformers model — the chat proxy has no embeddings endpoint).
+LOCALLY by a transformers model — the chat proxy has no embeddings endpoint). The
+vectors live in a dedicated index, NOT in the dictionary database.
 ``semantic_search`` then ranks already-generated senses by meaning, not spelling.
 
-    # one-time: install the optional embeddings extra (torch + transformers)
-    uv sync --extra embeddings
+    # one-time: install the encoder and the durable vector index
+    uv sync --extra embeddings --extra lancedb
     uv run python examples/09_semantic_search.py
 
 Flow:

@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models, session_scope
+from lexi_ai.domain.models import VectorRecord
 from lexi_ai.embeddings import Embedder
 from lexi_ai.facades import LexiconEngine, LexiconReader
 from lexi_ai.generation.schemas import (
@@ -25,6 +26,7 @@ from lexi_ai.generation.schemas import (
     RelatedWord,
 )
 from lexi_ai.infrastructure.db.models import Example, Sense, Word
+from lexi_ai.infrastructure.vectors.memory_index import InMemoryVectorIndex
 from lexi_ai.markup import parse_marked_example
 from lexi_ai.normalize import match_key
 from lexi_ai.read_models import Entry, SenseView
@@ -145,13 +147,26 @@ def _entry(norm, aliases=None, related=None) -> GeneratedEntry:
 
 
 def _make_lexicon(
-    engine, cam_words, norm_by_id, results_by_word, embedder=None, example_batch=None
+    engine,
+    cam_words,
+    norm_by_id,
+    results_by_word,
+    embedder=None,
+    example_batch=None,
+    vectors=None,
 ):
     session_factory = create_session_factory(engine)
     cambridge = FakeCambridge(cam_words)
     loader = FakeLoader(cambridge, norm_by_id)
     generator = FakeGenerator(results_by_word, example_batch=example_batch)
-    lex = Lexicon(session_factory, loader, generator, engine=engine, embedder=embedder)
+    lex = Lexicon(
+        session_factory,
+        loader,
+        generator,
+        engine=engine,
+        embedder=embedder,
+        vectors=vectors or InMemoryVectorIndex(),
+    )
     return lex, generator, session_factory
 
 
@@ -601,7 +616,7 @@ def _def_entry(norm: str, definition: str) -> GeneratedEntry:
     )
 
 
-def _pet_lexicon(engine, embedder):
+def _pet_lexicon(engine, embedder, vectors=None):
     return _make_lexicon(
         engine,
         cam_words={
@@ -622,42 +637,63 @@ def _pet_lexicon(engine, embedder):
             ),
         },
         embedder=embedder,
+        vectors=vectors,
     )
 
 
 async def test_generate_embeds_each_sense(engine):
-    lex, _gen, session_factory = _pet_lexicon(engine, _fake_embedder())
+    lex, _gen, _sf = _pet_lexicon(engine, _fake_embedder())
     for w in ("dog", "cat", "automobile"):
         await lex.engine().generate((await lex.reader().search(w))[0])
-    async with session_scope(session_factory) as session:
-        rows = (
-            await session.execute(
-                select(Sense.embedding, Sense.embedding_model, Sense.embedding_dim)
-            )
-        ).all()
-    assert len(rows) == 3
-    assert all(blob is not None for blob, _m, _d in rows)
-    assert all(model == "fake-v1" for _b, model, _d in rows)
-    assert all(dim == len(_VOCAB) for _b, _m, dim in rows)
+
+    # Vectors live in the index, tagged with the encoder that made them.
+    assert len(await lex._vectors.ids()) == 3
+    assert await lex._vectors.ids({"model": "fake-v1"}) == await lex._vectors.ids()
+    assert all(len(v) == len(_VOCAB) for v in (await lex._vectors.fetch(["1", "2", "3"])).values())
 
 
 async def test_generate_survives_embedder_error(engine):
     # An embedder that raises a NON-EmbeddingUnavailable error at encode time
     # (e.g. CUDA OOM, bad model, device error) must NOT fail the already-paid
-    # generation: the word persists done with null vectors, best-effort.
+    # generation: the word persists done with no vector, best-effort.
     def boom(_texts):
         raise RuntimeError("CUDA out of memory")
 
     embedder = Embedder(encode=boom, model_name="boom", dim=8)
-    lex, gen, session_factory = _pet_lexicon(engine, embedder)
+    lex, gen, _sf = _pet_lexicon(engine, embedder)
     entry = await lex.engine().generate((await lex.reader().search("dog"))[0])
     assert entry.display == "dog"
     assert gen.calls == 1
-    async with session_scope(session_factory) as session:
-        blob = (await session.execute(select(Sense.embedding))).scalar_one()
-    assert blob is None  # embed failed, but generation succeeded
+    assert await lex._vectors.ids() == set()  # embed failed, generation succeeded
     # semantic_search also degrades to [] rather than raising on the same embedder.
     assert await lex.reader().semantic_search("pet") == []
+
+
+async def test_generate_survives_an_unreachable_vector_index(engine):
+    """A dead index must not fail a paid generation, and must not fail a read."""
+
+    class DeadIndex:
+        async def upsert(self, records):
+            raise RuntimeError("index unreachable")
+
+        async def query(self, vector, k, where=None):
+            raise RuntimeError("index unreachable")
+
+        async def delete(self, ids):
+            raise RuntimeError("index unreachable")
+
+        async def ids(self, where=None):
+            raise RuntimeError("index unreachable")
+
+        async def fetch(self, ids):
+            raise RuntimeError("index unreachable")
+
+    lex, _gen, _sf = _pet_lexicon(engine, _fake_embedder(), vectors=DeadIndex())
+    entry = await lex.engine().generate((await lex.reader().search("dog"))[0])
+
+    assert entry.display == "dog"
+    assert await lex.reader().semantic_search("pet") == []
+    assert await lex.engine().backfill_embeddings() == 0
 
 
 async def test_semantic_search_ranks_by_meaning(engine):
@@ -685,29 +721,62 @@ async def test_semantic_search_respects_k(engine):
 
 async def test_semantic_search_empty_when_nothing_embedded(engine):
     # No embedder available (extra missing): generation still works (best-effort),
-    # senses carry no vector, and semantic_search returns [].
-    lex, _gen, session_factory = _pet_lexicon(engine, embedder=None)
+    # nothing is indexed, and semantic_search returns [] rather than raising.
+    lex, _gen, _sf = _pet_lexicon(engine, embedder=None)
     await lex.engine().generate((await lex.reader().search("dog"))[0])
-    async with session_scope(session_factory) as session:
-        blob = (await session.execute(select(Sense.embedding))).scalar_one()
-    assert blob is None
+    assert await lex._vectors.ids() == set()
     assert await lex.reader().semantic_search("pet") == []
 
 
+async def test_semantic_search_drops_a_vector_whose_sense_is_gone(engine):
+    """A stale vector cannot resurrect a deleted sense — it is skipped on hydration."""
+    lex, _gen, _sf = _pet_lexicon(engine, _fake_embedder())
+    for w in ("dog", "cat"):
+        await lex.engine().generate((await lex.reader().search(w))[0])
+    await lex._vectors.upsert(
+        [VectorRecord(id="4242", vector=[1.0] * len(_VOCAB), meta={"model": "fake-v1"})]
+    )
+
+    hits = await lex.reader().semantic_search("pet", k=3)
+
+    assert {hit.display for hit in hits} == {"dog", "cat"}
+
+
+async def test_deleting_an_entry_forgets_its_vectors(engine):
+    lex, _gen, _sf = _pet_lexicon(engine, _fake_embedder())
+    entry = await lex.engine().generate((await lex.reader().search("dog"))[0])
+    assert await lex._vectors.ids() != set()
+
+    assert await lex.engine().delete_entry(entry.word_id) is True
+
+    assert await lex._vectors.ids() == set()
+
+
 async def test_backfill_fills_then_idempotent(engine):
-    # Generate with no embedder (vectors null), then 'install' one and backfill.
-    lex, _gen, session_factory = _pet_lexicon(engine, embedder=None)
+    # Generate with no embedder (nothing indexed), then 'install' one and backfill.
+    lex, _gen, _sf = _pet_lexicon(engine, embedder=None)
     for w in ("dog", "cat", "automobile"):
         await lex.engine().generate((await lex.reader().search(w))[0])
     lex._embedder = _fake_embedder()
     assert await lex.engine().backfill_embeddings() == 3
-    async with session_scope(session_factory) as session:
-        rows = (await session.execute(select(Sense.embedding))).scalars().all()
-    assert all(b is not None for b in rows)
+    assert len(await lex._vectors.ids()) == 3
     # Everything embedded now → second backfill is a no-op.
     assert await lex.engine().backfill_embeddings() == 0
     # And semantic search now works.
     assert len(await lex.reader().semantic_search("pet", k=2)) == 2
+
+
+async def test_backfill_prunes_vectors_whose_sense_is_gone(engine):
+    """The reconciliation step the eventually-consistent index depends on."""
+    lex, _gen, _sf = _pet_lexicon(engine, _fake_embedder())
+    await lex.engine().generate((await lex.reader().search("dog"))[0])
+    await lex._vectors.upsert(
+        [VectorRecord(id="4242", vector=[1.0] * len(_VOCAB), meta={"model": "fake-v1"})]
+    )
+
+    await lex.engine().backfill_embeddings()
+
+    assert "4242" not in await lex._vectors.ids()
 
 
 async def test_backfill_reembeds_on_model_change(engine):
@@ -720,6 +789,8 @@ async def test_backfill_reembeds_on_model_change(engine):
     assert await lex.engine().backfill_embeddings() == 1
     hits = await lex.reader().semantic_search("pet")
     assert len(hits) == 1 and hits[0].display == "dog"
+    # Re-embedding replaces the vector in place rather than accumulating one per model.
+    assert len(await lex._vectors.ids()) == 1
 
 
 async def test_backfill_limit(engine):
@@ -901,25 +972,16 @@ async def test_add_examples_unknown_sense_raises(engine):
 
 async def test_add_examples_does_not_reembed(engine):
     # A word generated with a real fake embedder is embedded once at generation;
-    # add_examples must not trigger a re-embed (embeddings are on the def only).
+    # add_examples must not trigger a re-embed (embeddings cover the definition only).
     embedder = _fake_embedder()
-    lex, _gen, session_factory, sense_id = await _seed_sense_with_examples(
+    lex, _gen, _sf, sense_id = await _seed_sense_with_examples(
         engine, ["Old."], embedder=embedder
     )
-    async with session_scope(session_factory) as session:
-        before = (
-            await session.execute(
-                select(Sense.embedding, Sense.embedding_model).where(Sense.id == sense_id)
-            )
-        ).one()
+    before = await lex._vectors.fetch([str(sense_id)])
+
     await lex.engine().add_examples(sense_id, n=2)
-    async with session_scope(session_factory) as session:
-        after = (
-            await session.execute(
-                select(Sense.embedding, Sense.embedding_model).where(Sense.id == sense_id)
-            )
-        ).one()
-    assert before == after  # vector + model untouched by add_examples
+
+    assert await lex._vectors.fetch([str(sense_id)]) == before
 
 
 # --- stats (read-only counts) ---------------------------------------------
@@ -930,7 +992,6 @@ async def test_stats_matches_seeded_fixture(engine):
         Asset,
         Example,
         Question,
-        Sense,
         Tag,
         Theme,
         ThemedExample,

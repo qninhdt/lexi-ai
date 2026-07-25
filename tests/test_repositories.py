@@ -127,7 +127,7 @@ async def test_deleting_a_word_cascades_its_senses(repo, uow):
 
     async with uow() as work:
         assert await work.words.listing() == []
-        assert await work.senses.embedded("any-model") == []
+        assert await work.senses.live_sense_ids() == set()
 
 
 async def test_deleting_an_unknown_word_reports_no_row_removed(uow):
@@ -321,31 +321,49 @@ async def test_senses_needing_embedding_covers_only_done_words(repo, uow):
     await _publish(repo, _entry("vector"))
 
     async with uow() as work:
-        pending = await work.senses.needing_embedding("model-a")
+        pending = await work.senses.needing_embedding()
 
     assert [row.norm for row in pending] == ["vector"]
     assert pending[0].definition == "meaning of vector"
 
 
-async def test_storing_a_vector_removes_the_sense_from_the_backlog(repo, uow):
+async def test_embedding_candidates_ignore_the_vector_store(repo, uow):
+    """This store no longer knows what is embedded, so every done sense is offered.
+
+    Which of them actually needs work is the vector index's answer, subtracted by
+    the caller — keeping one source of truth for what is indexed.
+    """
     await _publish(repo, _entry("vector"))
 
     async with uow() as work:
-        sense_id = (await work.senses.needing_embedding("model-a"))[0].sense_id
-        assert await work.senses.store_embeddings([(sense_id, b"\x00\x01")], "model-a", 2) == 1
-        await work.commit()
+        first = await work.senses.needing_embedding()
+        second = await work.senses.needing_embedding()
+
+    assert [row.sense_id for row in first] == [row.sense_id for row in second]
+
+
+async def test_semantic_rows_preserve_rank_order_and_skip_vanished_senses(repo, uow):
+    await _publish(repo, _entry("vector"))
 
     async with uow() as work:
-        assert await work.senses.needing_embedding("model-a") == []
-        # A different model is a different backlog: the old vector is ignored.
-        assert len(await work.senses.needing_embedding("model-b")) == 1
-        assert [row.sense_id for row in await work.senses.embedded("model-a")] == [sense_id]
-        assert await work.senses.embedded("model-b") == []
+        sense_id = (await work.senses.needing_embedding())[0].sense_id
+        # 999 is a stale vector id: it drops out instead of raising.
+        rows = await work.senses.semantic_rows([999, sense_id])
+
+    assert [row.sense_id for row in rows] == [sense_id]
+    assert rows[0].norm == "vector"
+    assert rows[0].definition == "meaning of vector"
 
 
-async def test_storing_a_vector_for_a_vanished_sense_counts_nothing(uow):
+async def test_sense_ids_for_word_lists_every_sense_of_that_word(repo, uow):
+    await _publish(repo, _entry("vector"))
+
     async with uow() as work:
-        assert await work.senses.store_embeddings([(999, b"\x00")], "model-a", 1) == 0
+        word_id = (await work.words.listing())[0].word_id
+        assert await work.senses.ids_for_word(word_id) == sorted(
+            await work.senses.live_sense_ids()
+        )
+        assert await work.senses.ids_for_word(4242) == []
 
 
 async def test_senses_for_theming_are_ordered_for_stable_prompt_numbering(repo, uow):
@@ -399,7 +417,7 @@ async def test_appending_examples_continues_the_existing_order(repo, uow):
     )
 
     async with uow() as work:
-        sense_id = (await work.senses.needing_embedding("model-a"))[0].sense_id
+        sense_id = (await work.senses.needing_embedding())[0].sense_id
         inserted = await work.senses.append_examples(sense_id, ["second example", "  "])
         await work.commit()
 

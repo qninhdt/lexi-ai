@@ -10,10 +10,15 @@ again, so a caller cannot accidentally regenerate an entry it already has.
 
 from collections.abc import Callable
 
-from lexi_ai.domain.ports import UnitOfWork
+from lexi_ai.domain.models import SemanticSenseRow
+from lexi_ai.domain.ports import UnitOfWork, VectorIndex
 from lexi_ai.normalize import render
 from lexi_ai.read_models import SearchResult, SemanticHit, SenseView
-from lexi_ai.vectors import cosine, unpack_vector
+
+# The index is asked for more than k so that vectors whose sense has since been
+# deleted or regenerated cannot squeeze real hits out of the answer. They are
+# dropped during hydration, and a backfill prunes them for good.
+_OVERFETCH = 10
 
 
 class SearchService:
@@ -24,10 +29,12 @@ class SearchService:
         uow_factory: Callable[[], UnitOfWork],
         loader,  # noqa: ANN001 - the reference loader (Cambridge + WordNet)
         embedder,  # noqa: ANN001 - the encoder; only model_name and embed_one are used
+        vectors: VectorIndex,
     ) -> None:
         self._uow = uow_factory
         self._loader = loader
         self._embedder = embedder
+        self._vectors = vectors
 
     async def search(self, query: str) -> list[SearchResult]:
         """One ranked list mixing generated entries and generatable suggestions."""
@@ -68,9 +75,7 @@ class SearchService:
         results.sort(key=lambda result: (-result.score, result.display))
         return results
 
-    async def _reference_candidates(
-        self, query: str
-    ) -> list[tuple[int, str, str | None, float]]:
+    async def _reference_candidates(self, query: str) -> list[tuple[int, str, str | None, float]]:
         """Reference matches for a query: exact first at full score, then fuzzy.
 
         Deduped by reference id keeping the best score, which is the first seen
@@ -99,34 +104,38 @@ class SearchService:
     async def semantic_search(self, query: str, k: int = 10) -> list[SemanticHit]:
         """Rank generated senses by meaning similarity to a query.
 
-        Only senses carrying a vector from the CURRENT model are considered, so
-        switching models degrades this to empty until a backfill runs rather than
-        ranking against stale vectors. An encoder failure degrades to empty too.
+        The vector index ranks; the relational store hydrates what it returned.
+        Only vectors from the CURRENT encoder model are considered, so switching
+        models yields nothing until a backfill runs rather than ranking against a
+        different geometry.
+
+        Degrades to an empty list — never raises — when the encoder is unavailable,
+        the index backend is not installed, or nothing has been embedded yet. A
+        caller that needs results regardless should fall back to :meth:`search`.
         """
         if k <= 0:
             return []
-        async with self._uow() as uow:
-            rows = await uow.senses.embedded(self._embedder.model_name)
-        if not rows:
-            return []
         try:
             query_vector = await self._embedder.embed_one(query)
-        except Exception:  # noqa: BLE001 - best-effort: degrade to [] on encode failure
+            hits = await self._vectors.query(
+                query_vector, k + _OVERFETCH, {"model": self._embedder.model_name}
+            )
+        except Exception:  # noqa: BLE001 - best-effort: degrade to [] on encoder/index failure
             return []
-        scored = sorted(
-            ((cosine(query_vector, unpack_vector(row.embedding)), row) for row in rows),
-            key=lambda pair: -pair[0],
-        )
-        return [self._semantic_hit(score, row) for score, row in scored[:k]]
+        scores = {hit.id: hit.score for hit in hits}
+        sense_ids = [int(hit.id) for hit in hits if hit.id.isdigit()]
+        if not sense_ids:
+            return []
+        async with self._uow() as uow:
+            rows = await uow.senses.semantic_rows(sense_ids)
+        return [self._semantic_hit(scores[str(row.sense_id)], row) for row in rows[:k]]
 
     @staticmethod
-    def _semantic_hit(score: float, row) -> SemanticHit:  # noqa: ANN001 - an EmbeddedSenseRow
+    def _semantic_hit(score: float, row: SemanticSenseRow) -> SemanticHit:
         return SemanticHit(
             lexi_word_id=row.word_id,
             display=render(row.norm),
             entry_type=row.entry_type,
             score=score,
-            sense=SenseView(
-                definition=row.definition, tier=row.tier, pos=None, cefr_level=None
-            ),
+            sense=SenseView(definition=row.definition, tier=row.tier, pos=None, cefr_level=None),
         )

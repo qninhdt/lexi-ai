@@ -32,6 +32,12 @@ embeddings = [
 postgres = [
     "asyncpg>=0.29",
 ]
+# Durable vector index for semantic_search (LEXI_VECTOR_BACKEND=lancedb, the
+# default). Embedded and file-based — no server. Lazy-imported, so a base install
+# runs fine and semantic search simply returns nothing until this is installed.
+lancedb = [
+    "lancedb>=0.24",
+]
 
 [dependency-groups]
 dev = [
@@ -40,6 +46,9 @@ dev = [
     "pytest-asyncio>=0.26",
     "ruff>=0.9",
     "import-linter>=2.0",
+    # The default durable vector backend. Here (not just in the extra) so the
+    # LanceDB adapter's contract tests actually run rather than skipping.
+    "lancedb>=0.24",
 ]
 
 [build-system]

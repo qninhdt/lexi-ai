@@ -111,6 +111,9 @@ worktrees/
 *.db
 *.db-shm
 *.db-wal
+# Derived runtime stores: TTS clips and the LanceDB sense-vector index
+/lexi-assets/
+/lexi-vectors/
 # uv / virtualenv
 .venv/
 .python-version

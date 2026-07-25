@@ -27,7 +27,9 @@ cost zero tokens.
   inflection (`<t inf="past">glistened</t>`) for display highlighting and cloze
   blanking; `parse_marked_example`/`strip_markup` read the tags.
 - **Topic tags & semantic search** — browse words by open-vocabulary topic tags,
-  or rank senses by meaning with local embeddings (optional extra).
+  or rank senses by meaning with local embeddings and a vector index (optional
+  extras). Vectors live outside the primary database and are reconciled by
+  `backfill_embeddings`, so a missing one degrades search rather than breaking it.
 - **Themes** — restyle an entry's definitions and examples in a named voice
   ("Harry Potter", "humorous") authored via `create_theme`. Themed content
   overlays the neutral entry (the canonical `match_key` invariant is untouched)
@@ -54,7 +56,13 @@ management.
 ```bash
 uv sync                      # create .venv and install runtime + dev deps
 uv sync --extra embeddings   # optional: local sense embeddings (torch, ~200MB)
+uv sync --extra lancedb      # optional: durable vector index for semantic search
 ```
+
+Semantic search needs both: the `embeddings` extra to encode, and a vector index to
+rank. Without them it returns nothing rather than failing — set
+`LEXI_VECTOR_BACKEND=memory` for a non-durable in-process index if you would rather
+not install LanceDB.
 
 ## Usage
 
@@ -125,6 +133,9 @@ Asset and theme knobs (all `LEXI_`-prefixed):
 
 - `ASSET_CACHE_DIR` — where TTS clips are written (default `./lexi-assets`);
   translation results live in the DB.
+- `VECTOR_BACKEND` — `lancedb` (default; durable, on disk) or `memory`
+  (non-durable, in-process). `VECTOR_PATH` is the LanceDB store directory
+  (default `./lexi-vectors`); `VECTOR_METRIC` defaults to `cosine`.
 - `TRANSLATE_MODEL` — optional per-task model override for translation; falls
   back to `LLM_MODEL` when empty.
 - `TTS_BASE_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `TTS_FORMAT` — the

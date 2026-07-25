@@ -52,6 +52,17 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 32
     embedding_max_length: int = 256
 
+    # Where those vectors live. Embeddings are NOT in the primary database: they
+    # are eventually consistent by design (written post-commit, best-effort,
+    # reconciled by a backfill), so they get their own store.
+    #   ``lancedb`` — embedded, on disk, no server; needs the ``[lancedb]`` extra.
+    #   ``memory``  — exact-scan, non-durable; the hermetic default for tests.
+    # ``vector_metric`` must match the encoder's geometry; the Embedder
+    # L2-normalizes, so cosine is correct.
+    vector_backend: str = "lancedb"
+    vector_path: str = "./lexi-vectors"
+    vector_metric: str = "cosine"
+
     # Content-addressed asset cache (translation text in DB, TTS clips on disk).
     # ``asset_cache_dir`` is where binary assets (TTS) are written, sharded by
     # content-hash prefix; DB rows store paths RELATIVE to it.

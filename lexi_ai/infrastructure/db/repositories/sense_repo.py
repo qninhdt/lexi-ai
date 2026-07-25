@@ -15,11 +15,11 @@ from sqlalchemy.orm import aliased
 from lexi_ai.assets.repository import AssetRepository
 from lexi_ai.constants import WSD_CANDIDATE_CAP, canonical_cambridge_ref
 from lexi_ai.domain.models import (
-    EmbeddedSenseRow,
     ResolveCandidate,
     ResolveDecision,
     ResolveOutcome,
     ResolveTask,
+    SemanticSenseRow,
     SenseEmbeddingNeed,
     ThemingSense,
 )
@@ -110,20 +110,19 @@ class SqlSenseRepo:
         ).scalar_one()
 
     async def needing_embedding(
-        self, model_name: str, word_ids: list[int] | None = None, limit: int | None = None
+        self, word_ids: list[int] | None = None, limit: int | None = None
     ) -> list[SenseEmbeddingNeed]:
-        """Senses with no vector or a vector from a different model.
+        """Done senses that are candidates for embedding, oldest id first.
 
-        Restrict to ``word_ids`` right after generation; omit them for a global
-        backfill. This stays a pure read: the caller owns the embedder.
+        This store no longer knows which senses carry a vector — the index does —
+        so every done sense is a candidate and the caller subtracts what the index
+        already holds. Restrict to ``word_ids`` right after generation; omit them
+        for a global backfill.
         """
         stmt = (
             select(Sense.id, Word.norm, Sense.definition)
             .join(Word, Word.id == Sense.word_id)
-            .where(
-                Word.status == "done",
-                (Sense.embedding.is_(None)) | (Sense.embedding_model != model_name),
-            )
+            .where(Word.status == "done")
             .order_by(Sense.id)
         )
         if word_ids is not None:
@@ -135,32 +134,15 @@ class SqlSenseRepo:
         rows = await self._session.execute(stmt)
         return [SenseEmbeddingNeed(sid, norm, definition) for sid, norm, definition in rows]
 
-    async def store_embeddings(
-        self, vectors: list[tuple[int, bytes]], model_name: str, dim: int
-    ) -> int:
-        """Write packed vectors by sense id; returns rows actually updated.
+    async def semantic_rows(self, sense_ids: Sequence[int]) -> list[SemanticSenseRow]:
+        """Presentation rows for ranked sense ids, in the order requested.
 
-        A sense deleted by a concurrent regeneration matches zero rows and is not
-        counted; the next backfill embeds its replacement. Idempotent per row.
+        Unknown ids are skipped, which is what makes a stale vector harmless: an id
+        left behind by a delete or a regeneration drops out of the results instead
+        of raising.
         """
-        if not vectors:
-            return 0
-        written = 0
-        for sense_id, blob in vectors:
-            result = await self._session.execute(
-                update(Sense)
-                .where(Sense.id == sense_id)
-                .values(embedding=blob, embedding_model=model_name, embedding_dim=dim)
-            )
-            written += cast("CursorResult", result).rowcount or 0
-        return written
-
-    async def embedded(self, model_name: str) -> list[EmbeddedSenseRow]:
-        """Every done sense carrying a current-model vector.
-
-        Vectors from a previous model are ignored until re-embedded, and rows carry
-        enough to rank a hit without a second query.
-        """
+        if not sense_ids:
+            return []
         rows = await self._session.execute(
             select(
                 Sense.id,
@@ -169,16 +151,29 @@ class SqlSenseRepo:
                 Word.entry_type,
                 Sense.definition,
                 Sense.tier,
-                Sense.embedding,
             )
             .join(Word, Word.id == Sense.word_id)
-            .where(
-                Word.status == "done",
-                Sense.embedding.is_not(None),
-                Sense.embedding_model == model_name,
-            )
+            .where(Word.status == "done", Sense.id.in_(list(sense_ids)))
         )
-        return [EmbeddedSenseRow(*row) for row in rows]
+        by_id = {row[0]: SemanticSenseRow(*row) for row in rows}
+        return [by_id[sense_id] for sense_id in sense_ids if sense_id in by_id]
+
+    async def live_sense_ids(self) -> set[int]:
+        """Every existing sense id, for pruning vectors whose sense is gone."""
+        rows = await self._session.execute(select(Sense.id))
+        return {sense_id for (sense_id,) in rows}
+
+    async def ids_for_word(self, word_id: int) -> list[int]:
+        """Every sense id of one word, whatever the word's status.
+
+        Read before a delete, so the caller can forget the word's vectors after the
+        rows are gone. Status-agnostic on purpose: a pending word can still own
+        senses from an earlier successful generation.
+        """
+        rows = await self._session.execute(
+            select(Sense.id).where(Sense.word_id == word_id).order_by(Sense.id)
+        )
+        return [sense_id for (sense_id,) in rows]
 
     async def pending_relations(
         self, batch_size: int, word_ids: list[int] | None = None

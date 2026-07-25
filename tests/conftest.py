@@ -29,6 +29,13 @@ from sqlalchemy import text
 from lexi_ai.config import Settings
 from lexi_ai.db import create_engine, create_session_factory
 
+# The hermetic tier uses the in-memory vector index. The production default is
+# LanceDB, which would write a real on-disk store from every test that constructs
+# a Lexicon — shared state across tests, and files in the working tree. Set before
+# any Settings is built (this module is imported first), so the cached singleton
+# picks it up.
+os.environ.setdefault("LEXI_VECTOR_BACKEND", "memory")
+
 PG_URL = os.environ.get("LEXI_TEST_PG_URL")
 ROOT = Path(__file__).resolve().parents[1]
 DOMAIN_ALEMBIC_CONFIG = ROOT / "lexi_ai" / "migrations" / "alembic.ini"
