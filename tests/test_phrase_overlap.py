@@ -16,9 +16,9 @@ from sqlalchemy.pool import StaticPool
 from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.infrastructure.db.models import Word, WordRelation
 from lexi_ai.normalize import match_key
-from lexi_ai.persistence.repository import Repository
 from lexi_ai.prep.phrase_overlap import PhraseOverlapPrep
 from lexi_ai.references.cambridge import CambridgeSource
+from tests.support.persistence_driver import PersistenceDriver
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ async def generated_repo():
 
     await init_models(engine)
     session_factory = create_session_factory(engine)
-    yield Repository(session_factory), session_factory
+    yield PersistenceDriver(session_factory), session_factory
     await engine.dispose()
 
 
@@ -87,7 +87,7 @@ async def _count(session_factory, model) -> int:
 
 async def test_classification_counts(cambridge_fixture, generated_repo):
     repo, _sf = generated_repo
-    prep = PhraseOverlapPrep(CambridgeSource(cambridge_fixture), repo)
+    prep = PhraseOverlapPrep(CambridgeSource(cambridge_fixture), repo.uow)
     report = await prep.run()
     assert report.total == 2
     assert report.overlap == 1  # "give up" has a standalone row
@@ -96,7 +96,7 @@ async def test_classification_counts(cambridge_fixture, generated_repo):
 
 async def test_orphan_seeded_as_pending_stub(cambridge_fixture, generated_repo):
     repo, session_factory = generated_repo
-    prep = PhraseOverlapPrep(CambridgeSource(cambridge_fixture), repo)
+    prep = PhraseOverlapPrep(CambridgeSource(cambridge_fixture), repo.uow)
     await prep.run()
 
     async with session_scope(session_factory) as session:
@@ -110,7 +110,7 @@ async def test_orphan_seeded_as_pending_stub(cambridge_fixture, generated_repo):
 
 async def test_overlap_links_host_to_unit(cambridge_fixture, generated_repo):
     repo, session_factory = generated_repo
-    prep = PhraseOverlapPrep(CambridgeSource(cambridge_fixture), repo)
+    prep = PhraseOverlapPrep(CambridgeSource(cambridge_fixture), repo.uow)
     await prep.run()
 
     async with session_scope(session_factory) as session:
@@ -133,7 +133,7 @@ async def test_overlap_links_host_to_unit(cambridge_fixture, generated_repo):
 
 async def test_prep_is_idempotent(cambridge_fixture, generated_repo):
     repo, session_factory = generated_repo
-    prep = PhraseOverlapPrep(CambridgeSource(cambridge_fixture), repo)
+    prep = PhraseOverlapPrep(CambridgeSource(cambridge_fixture), repo.uow)
     await prep.run()
     words_after_first = await _count(session_factory, Word)
     links_after_first = await _count(session_factory, WordRelation)
@@ -150,7 +150,7 @@ async def test_prep_against_real_cambridge_smoke(generated_repo):
     if not os.path.exists("./data"):
         pytest.skip("Cambridge ./data not present")
     repo, session_factory = generated_repo
-    prep = PhraseOverlapPrep(CambridgeSource("./data"), repo)
+    prep = PhraseOverlapPrep(CambridgeSource("./data"), repo.uow)
     report = await prep.run()
     # Scout figures: ~10.5k overlap, ~3.2k orphan (folding shifts these slightly).
     assert report.total > 13000

@@ -23,6 +23,7 @@ from sqlalchemy.pool import StaticPool
 
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models
+from lexi_ai.domain.hashing import sense_content_hash
 from lexi_ai.generation.schemas import (
     GeneratedEntry,
     GeneratedResult,
@@ -31,7 +32,7 @@ from lexi_ai.generation.schemas import (
     RelatedWord,
 )
 from lexi_ai.infrastructure.db.models import Sense, SenseRelation
-from lexi_ai.persistence.repository import Repository, sense_content_hash
+from tests.support.persistence_driver import PersistenceDriver
 
 
 @pytest.fixture
@@ -67,7 +68,7 @@ def _entry(norm, senses, *, entry_type="word", related=None) -> GeneratedEntry:
 
 
 async def _reading_lexicon(engine, repo) -> Lexicon:
-    return Lexicon(create_session_factory(engine), None, None, repo, engine=engine)  # type: ignore[arg-type]
+    return Lexicon(create_session_factory(engine), None, None, engine=engine)  # type: ignore[arg-type]
 
 
 async def _relations_for(lex, word_id):
@@ -81,7 +82,7 @@ async def _relations_for(lex, word_id):
 
 async def test_sense_view_carries_pending_relation(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(
         GeneratedResult(
             units=[
@@ -118,7 +119,7 @@ async def test_sense_view_carries_pending_relation(engine):
 
 async def test_sense_view_carries_resolved_relation(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(
         GeneratedResult(
             units=[
@@ -168,7 +169,7 @@ async def test_stale_hash_treated_unresolved(engine):
     # it (stale target_hash) MUST surface as unresolved on read — the final safety
     # net for any target-mutation path Phase 5 invalidation might miss.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(
         GeneratedResult(
             units=[
@@ -221,7 +222,7 @@ async def test_get_senses_carries_relations(engine):
     # senses got empty relations even when the sense had some. Now get_senses
     # eager-loads relations_out and builds them exactly like _build_entry.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await repo.persist_result(
         GeneratedResult(
             units=[
@@ -259,7 +260,7 @@ async def test_entry_links_still_word_level(engine):
     # A word-level relation (word_family) must still surface via Entry.links with
     # its original shape — no regression for consumers reading the flat list.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(
         GeneratedResult(
             units=[

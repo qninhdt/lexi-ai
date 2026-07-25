@@ -26,7 +26,6 @@ from lexi_ai.generation.schemas import (
 from lexi_ai.infrastructure.db.models import Example, Sense, Word
 from lexi_ai.markup import parse_marked_example
 from lexi_ai.normalize import match_key
-from lexi_ai.persistence.repository import Repository
 from lexi_ai.read_models import Entry, SenseView
 from lexi_ai.references.cambridge import CamRef
 from lexi_ai.references.loader import ReferenceBundle
@@ -151,8 +150,7 @@ def _make_lexicon(
     cambridge = FakeCambridge(cam_words)
     loader = FakeLoader(cambridge, norm_by_id)
     generator = FakeGenerator(results_by_word, example_batch=example_batch)
-    repo = Repository(session_factory)
-    lex = Lexicon(session_factory, loader, generator, repo, engine=engine, embedder=embedder)
+    lex = Lexicon(session_factory, loader, generator, engine=engine, embedder=embedder)
     return lex, generator, session_factory
 
 
@@ -1170,7 +1168,7 @@ async def test_close_disposes_owned_engine():
             self.disposed = True
 
     engine = DisposableEngine()
-    lexicon = Lexicon(None, None, None, None, engine=engine)  # type: ignore[arg-type]
+    lexicon = Lexicon(None, None, None, engine=engine)  # type: ignore[arg-type]
 
     await lexicon.close()
 

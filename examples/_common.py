@@ -26,7 +26,6 @@ from lexi_ai.db import create_engine, create_session_factory
 from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
 from lexi_ai.llm import build_structured_llm
-from lexi_ai.persistence.repository import Repository
 from lexi_ai.read_models import Entry, SearchResult
 from lexi_ai.references.cambridge import CambridgeSource
 from lexi_ai.references.loader import ReferenceLoader
@@ -61,9 +60,8 @@ def build_lexicon(settings: Settings | None = None) -> Lexicon:
     session_factory = create_session_factory(engine)
     generator = Generator(structured_llm=build_structured_llm(settings), settings=settings)
     loader = ReferenceLoader(CambridgeSource(settings.cambridge_db_path), WordNetSource())
-    repository = Repository(session_factory)
     embedder = Embedder(settings=settings)
-    return Lexicon(session_factory, loader, generator, repository, engine=engine, embedder=embedder)
+    return Lexicon(session_factory, loader, generator, engine=engine, embedder=embedder)
 
 
 async def aclose(lex: Lexicon) -> None:

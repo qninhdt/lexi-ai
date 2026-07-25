@@ -33,7 +33,7 @@ from lexi_ai.generation.schemas import (
     GeneratedSenseRelation,
 )
 from lexi_ai.infrastructure.db.models import Sense, SenseRelation, Word
-from lexi_ai.persistence.repository import Repository
+from tests.support.persistence_driver import PersistenceDriver
 
 
 @pytest.fixture
@@ -99,7 +99,7 @@ async def _resolve_edge_manually(sf, *, target_definition="lacking light"):
     WITHOUT going through the judge, so an invalidation test starts from resolved."""
     from datetime import datetime, timezone
 
-    from lexi_ai.persistence.repository import sense_content_hash
+    from lexi_ai.domain.hashing import sense_content_hash
 
     async with sf() as s:
         tgt = (
@@ -118,7 +118,7 @@ async def _resolve_edge_manually(sf, *, target_definition="lacking light"):
 
 async def test_target_regenerate_demotes_edge(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_a_to_b(repo)
     await _resolve_edge_manually(sf)
 
@@ -143,7 +143,7 @@ async def test_source_regenerate_cascades_edge(engine):
     # CASCADE drops the old edge; Phase 3 re-emits a fresh half-edge for the new
     # source sense (derived pending).
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_a_to_b(repo)
     await _resolve_edge_manually(sf)
     old_from_sense_id = (await _edge(sf)).from_sense_id
@@ -187,7 +187,7 @@ async def test_delete_word_cascades_inbound_edges(engine):
     # cleaner alternative to the "demote-on-delete" the plan first sketched before
     # to_word_id CASCADE was locked.)
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_a_to_b(repo)
     await _resolve_edge_manually(sf)
 
@@ -206,14 +206,14 @@ async def test_delete_entry_cascades_inbound_edges(engine):
     from lexi_ai.api import Lexicon
 
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_a_to_b(repo)
     await _resolve_edge_manually(sf)
 
     async with sf() as s:
         b_id = (await s.execute(select(Word).where(Word.match_key == "dark"))).scalar_one().id
 
-    lex = Lexicon(sf, None, None, repo, engine=engine)  # type: ignore[arg-type]
+    lex = Lexicon(sf, None, None, engine=engine)  # type: ignore[arg-type]
     assert await lex.delete_entry(b_id) is True
 
     async with sf() as s:
@@ -231,7 +231,7 @@ async def test_regenerate_target_requeues_unresolvable(engine):
     from datetime import datetime, timezone
 
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_a_to_b(repo)
 
     # Mark the edge derived-unresolvable (judge previously said "none").

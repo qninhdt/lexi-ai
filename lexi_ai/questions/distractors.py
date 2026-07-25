@@ -3,11 +3,11 @@
 A two-step best-effort ladder, reusing existing infrastructure (DRY):
 
 1. **Semantic neighbours** — rank OTHER done senses by cosine similarity to the
-   target's core-sense vector (reuses ``Repository.embedded_senses`` +
+   target's core-sense vector (reuses the sense repository's ``embedded`` read +
    ``vectors.cosine``). Only fires when embeddings exist; empty otherwise, never
    an error — same posture as :meth:`Lexicon.semantic_search`.
-2. **Topic fallback** — words sharing one of the entry's topic tags (reuses
-   ``Repository.words_for_tag_key``).
+2. **Topic fallback** — words sharing one of the entry's topic tags (reuses the
+   tag repository's ``words_for_key`` read).
 
 Options are deduped by ``match_key`` and exclude the target word and its aliases,
 so the correct answer (or a surface variant of it) can never slip in as a
@@ -27,10 +27,10 @@ _TAG_FETCH_LIMIT = 50
 class DistractorProvider:
     """Best-effort wrong-option source, shared by every MCQ plugin."""
 
-    def __init__(self, repo, embedder):
-        # ``repo``: lexi_ai.persistence.repository.Repository (read-only here).
+    def __init__(self, uow_factory, embedder):
+        # ``uow_factory``: callable returning a unit of work (read-only here).
         # ``embedder``: lexi_ai.embeddings.Embedder (only its model_name is used).
-        self._repo = repo
+        self._uow_factory = uow_factory
         self._embedder = embedder
 
     async def for_word(self, entry: Entry, *, k: int, pos: str | None = None) -> list[str]:
@@ -59,7 +59,8 @@ class DistractorProvider:
     async def _semantic(self, entry: Entry) -> list[str]:
         """Other-word sense displays, ranked by cosine to the target core sense."""
         try:
-            rows = await self._repo.embedded_senses(self._embedder.model_name)
+            async with self._uow_factory() as uow:
+                rows = await uow.senses.embedded(self._embedder.model_name)
         except Exception:  # noqa: BLE001 - best-effort, like semantic_search
             return []
         if not rows:
@@ -82,9 +83,10 @@ class DistractorProvider:
         out: list[str] = []
         for topic in entry.topics:
             try:
-                rows = await self._repo.words_for_tag_key(
-                    tag_key(topic.name), limit=_TAG_FETCH_LIMIT
-                )
+                async with self._uow_factory() as uow:
+                    rows = await uow.tags.words_for_key(
+                        tag_key(topic.name), limit=_TAG_FETCH_LIMIT
+                    )
             except Exception:  # noqa: BLE001 - best-effort
                 continue
             out.extend(render(norm) for _wid, norm, _etype in rows)

@@ -28,7 +28,8 @@ from lexi_ai.generation.schemas import (
     WsdChoice,
 )
 from lexi_ai.infrastructure.db.models import Sense, SenseRelation
-from lexi_ai.persistence.repository import Repository
+from lexi_ai.infrastructure.db.repositories.sense_repo import SqlSenseRepo
+from tests.support.persistence_driver import PersistenceDriver
 
 # --- harness ---------------------------------------------------------------
 
@@ -109,7 +110,6 @@ async def _lexicon(engine, repo, judge=None) -> Lexicon:
         create_session_factory(engine),
         None,  # type: ignore[arg-type]
         None,  # type: ignore[arg-type]
-        repo,
         engine=engine,
         wsd_judge=judge,  # type: ignore[arg-type]
     )
@@ -152,7 +152,7 @@ async def _edge(sf) -> SenseRelation:
 
 async def test_resolve_picks_pos_matched_sense(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     # Source sense is an adjective; target 'dark' has an adjective + a noun sense.
     await _seed_source_with_relation(
         repo,
@@ -202,7 +202,7 @@ async def test_resolve_picks_pos_matched_sense(engine):
 async def test_resolve_skips_pending_target(engine):
     # Target word never generated (stub stays pending) -> edge is not eligible.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_source_with_relation(
         repo,
         source_norm="bright",
@@ -223,7 +223,7 @@ async def test_resolve_skips_pending_target(engine):
 
 async def test_resolve_unresolvable_on_no_match(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_source_with_relation(
         repo,
         source_norm="bright",
@@ -273,7 +273,7 @@ async def test_mark_unresolvable_stamps_naive_utc(engine):
             bound_stamps.extend(str(p) for p in parameters if "-" in str(p) and ":" in str(p))
 
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_source_with_relation(
         repo,
         source_norm="bright",
@@ -300,10 +300,10 @@ async def test_resolve_regenerate_race_noop(engine):
     # [F6] TOCTOU: the apply UPDATE is CONDITIONAL. Once an edge is already
     # resolved (a racing pass / regenerate moved it out of pending), re-applying a
     # decision to it is a no-op — it never overwrites or writes a dead id.
-    from lexi_ai.persistence.repository import ResolveDecision
+    from lexi_ai.domain.models import ResolveDecision
 
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_source_with_relation(
         repo,
         source_norm="bright",
@@ -342,10 +342,10 @@ async def test_batch_poison_pill_isolated(engine, monkeypatch):
     # [F7] One edge failing (its apply raises) must not abort the whole batch:
     # each edge is wrapped in its own savepoint, so siblings still commit and the
     # failed one is reported as an error.
-    from lexi_ai.persistence.repository import ResolveDecision
+    from lexi_ai.domain.models import ResolveDecision
 
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     # Two independent source words, each with an inbound edge onto its own target.
     for src, tgt in (("bright", "dark"), ("big", "small")):
         await _seed_source_with_relation(
@@ -367,14 +367,14 @@ async def test_batch_poison_pill_isolated(engine, monkeypatch):
 
     # Poison the FIRST edge's apply; the second must still resolve.
     poison_id = edges[0].id
-    real_apply = repo._apply_resolved
+    real_apply = SqlSenseRepo._apply_resolved
 
-    async def _maybe_boom(session, edge_id, to_sense_id, target_hash):
+    async def _maybe_boom(self, edge_id, to_sense_id, target_hash):
         if edge_id == poison_id:
             raise RuntimeError("boom")
-        return await real_apply(session, edge_id, to_sense_id, target_hash)
+        return await real_apply(self, edge_id, to_sense_id, target_hash)
 
-    monkeypatch.setattr(repo, "_apply_resolved", _maybe_boom)
+    monkeypatch.setattr(SqlSenseRepo, "_apply_resolved", _maybe_boom)
     outcomes = await repo.apply_resolutions([ResolveDecision(e.id, target, "h") for e in edges])
     by_edge = {o.edge_id: o for o in outcomes}
     assert by_edge[poison_id].state == "error"  # isolated
@@ -387,7 +387,7 @@ async def test_resolve_pos_no_match_goes_to_judge(engine):
     # candidate). We must NOT auto-unresolvable: ALL candidates go to the judge,
     # and only the judge's "none" makes it unresolvable.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_source_with_relation(
         repo,
         source_norm="run",
@@ -421,7 +421,7 @@ async def test_wsd_index_out_of_range(engine):
     # [F3] Judge returns an index past the candidate list -> treated as "none"
     # (unresolvable), never an IndexError that aborts the batch.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_source_with_relation(
         repo,
         source_norm="bright",
@@ -450,20 +450,20 @@ async def test_wsd_index_out_of_range(engine):
     assert edge.resolve_attempted_at is not None
 
 
-async def test_batch_size_clamped(engine):
+async def test_batch_size_clamped(engine, monkeypatch):
     # [F9] A huge batch_size is clamped to the hard ceiling before the DB read.
     from lexi_ai.generation.wsd import WSD_BATCH_CEIL
 
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     captured = {}
-    orig = repo.pending_relations_for_resolve
+    orig = SqlSenseRepo.pending_relations
 
-    async def _spy(batch_size, word_ids=None):
+    async def _spy(self, batch_size, word_ids=None):
         captured["batch_size"] = batch_size
-        return await orig(batch_size, word_ids=word_ids)
+        return await orig(self, batch_size, word_ids=word_ids)
 
-    repo.pending_relations_for_resolve = _spy  # type: ignore[method-assign]
+    monkeypatch.setattr(SqlSenseRepo, "pending_relations", _spy)
     judge = _FakeJudge(WsdBatch(choices=[]))
     lex = await _lexicon(engine, repo, judge)
     await lex.resolve_relations(batch_size=1000)
@@ -474,7 +474,7 @@ async def test_generate_target_triggers_inbound_resolve(engine):
     # [F11] Generating the TARGET word must resolve its inbound pending edges as a
     # side effect of persist_result — no manual resolve_relations() call.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await _seed_source_with_relation(
         repo,
         source_norm="bright",
@@ -493,7 +493,6 @@ async def test_generate_target_triggers_inbound_resolve(engine):
         sf,
         _FakeLoader(),  # type: ignore[arg-type]
         _FakeGenerator(target_result),  # type: ignore[arg-type]
-        repo,
         engine=engine,
         wsd_judge=judge,  # type: ignore[arg-type]
     )

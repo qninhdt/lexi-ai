@@ -14,16 +14,20 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from lexi_ai.application.generation_writer import GenerationWriter
 from lexi_ai.assets.repository import AssetRepository, content_hash, normalize_asset_params
 from lexi_ai.config import Settings, get_settings
 from lexi_ai.constants import TIER_ORDER, canonical_cambridge_ref
 from lexi_ai.db import create_engine, create_session_factory, init_models, session_scope
+from lexi_ai.domain.hashing import sense_content_hash
 from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
 from lexi_ai.generation.schemas import ExampleBatch
+from lexi_ai.infrastructure.db.mappers import theme_view
 from lexi_ai.infrastructure.db.models import (
     Sense,
     SenseRelation,
@@ -32,9 +36,9 @@ from lexi_ai.infrastructure.db.models import (
     WordRelation,
     WordTag,
 )
+from lexi_ai.infrastructure.db.uow import SqlAlchemyUnitOfWork
 from lexi_ai.normalize import match_key, render, tag_key
 from lexi_ai.normalize import theme_key as _norm_theme_key
-from lexi_ai.persistence.repository import Repository, sense_content_hash
 from lexi_ai.read_models import (
     AliasView,
     Asset,
@@ -140,7 +144,6 @@ class Lexicon:
         session_factory: async_sessionmaker[AsyncSession],
         loader: ReferenceLoader,
         generator: Generator,
-        repository: Repository,
         engine: AsyncEngine | None = None,
         embedder: Embedder | None = None,
         assets: AssetRepository | None = None,
@@ -149,7 +152,7 @@ class Lexicon:
         self._session_factory = session_factory
         self._loader = loader
         self._generator = generator
-        self._repo = repository
+        self._writer = GenerationWriter(self._uow)
         self._engine = engine
         self._embedder = embedder or Embedder()
         self._assets = assets
@@ -181,16 +184,23 @@ class Lexicon:
         generator = Generator(settings=settings)
         embedder = Embedder(settings=settings)
         assets = AssetRepository(session_factory, settings.asset_cache_dir)
-        repository = Repository(session_factory, assets=assets)
         return cls(
             session_factory,
             loader,
             generator,
-            repository,
             engine=engine,
             embedder=embedder,
             assets=assets,
         )
+
+    def _uow(self) -> SqlAlchemyUnitOfWork:
+        """A fresh unit of work over this dictionary's session factory.
+
+        Built per call rather than held, so each caller gets its own session and
+        transaction boundary. The asset cache is read from the attribute because it
+        may be constructed lazily after this Lexicon exists.
+        """
+        return SqlAlchemyUnitOfWork(self._session_factory, assets=self._assets)
 
     def reader(self):
         """Return the provider-free public read facade for this dictionary."""
@@ -246,7 +256,7 @@ class Lexicon:
 
         return QuestionEngine(
             self._question_repository(),
-            DistractorProvider(self._repo, self._embedder),
+            DistractorProvider(self._uow, self._embedder),
             llm=self._build_questions_llm() if providers else None,
             judge_llm=self._build_judge_llm() if providers else None,
             tts=self._build_tts_port() if providers else None,
@@ -451,12 +461,22 @@ class Lexicon:
         ``resolve_theme`` is key-first-then-id for a ``str`` (2.4), so a raw pass
         suffices; the ``_norm_theme_key`` retry is kept as a defensive fallback for
         a caller that passes an already-un-normalized display name."""
-        resolved = await self._repo.resolve_theme(theme)
-        if resolved is None and isinstance(theme, str):
-            resolved = await self._repo.resolve_theme(_norm_theme_key(theme))
+        resolved = await self._uow_resolve_theme(theme)
         if resolved is None:
             raise ValueError(f"unknown theme: {theme!r}")
         return resolved
+
+    async def _uow_resolve_theme(self, theme: str | int) -> tuple[int, str] | None:
+        """Resolve a theme key/id, retrying once through the key normalizer.
+
+        ``resolve`` is already key-first-then-id for a string, so the retry only
+        covers a caller that passed an un-normalized display name.
+        """
+        async with self._uow() as uow:
+            resolved = await uow.themes.resolve(theme)
+            if resolved is None and isinstance(theme, str):
+                resolved = await uow.themes.resolve(_norm_theme_key(theme))
+            return resolved
 
     async def get_senses(self, sense_ids: list[int]) -> list[SenseView]:
         """Batch-resolve senses by their DB ids. Never generates (FREE).
@@ -550,7 +570,8 @@ class Lexicon:
         """
         if theme is not None:
             return await self._add_themed_examples(sense_id, n, theme)
-        ctx = await self._repo.sense_context_for_examples(sense_id)
+        async with self._uow() as uow:
+            ctx = await uow.senses.example_context(sense_id)
         if ctx is None:
             raise ValueError(f"unknown sense_id: {sense_id}")
         context, existing = ctx
@@ -559,7 +580,9 @@ class Lexicon:
         n = min(n, _MAX_EXAMPLES_PER_CALL)
         if n > 0:
             batch = await self._example_generator().generate_examples(context, existing, n)
-            await self._repo.append_examples(sense_id, batch.examples)
+            async with self._uow() as uow:
+                await uow.senses.append_examples(sense_id, batch.examples)
+                await uow.commit()
         return (await self.get_senses([sense_id]))[0]
 
     def _example_generator(self) -> Generator:
@@ -578,10 +601,11 @@ class Lexicon:
         theme raises ``ValueError`` — never silently themes the whole word.
         """
         theme_id, style_prompt = await self._resolve_theme_or_raise(theme)
-        ctx = await self._repo.sense_context_for_examples(sense_id)
-        if ctx is None:
-            raise ValueError(f"unknown sense_id: {sense_id}")
-        overlay = await self._repo.themed_overlay_for_sense(sense_id, theme_id)
+        async with self._uow() as uow:
+            ctx = await uow.senses.example_context(sense_id)
+            if ctx is None:
+                raise ValueError(f"unknown sense_id: {sense_id}")
+            overlay = await uow.themes.overlay_for_sense(sense_id, theme_id)
         if overlay is None:
             raise ValueError(
                 f"sense {sense_id} has no themed overlay for theme {theme!r}; "
@@ -594,15 +618,18 @@ class Lexicon:
             batch = await self._themed_generator().generate_examples(
                 style_prompt, context, existing_themed, n
             )
-            await self._repo.append_themed_examples(themed_sense_id, batch.examples)
+            async with self._uow() as uow:
+                await uow.themes.append_themed_examples(themed_sense_id, batch.examples)
+                await uow.commit()
         return await self._themed_sense_view(sense_id, theme_id)
 
     async def _themed_sense_view(self, sense_id: int, theme_id: int) -> SenseView:
         """A :class:`SenseView` overlaying the themed definition + examples on the
         neutral sense (all other fields neutral, matching :meth:`_build_entry`)."""
         base = (await self.get_senses([sense_id]))[0]
-        word_id = await self._repo.word_id_for_sense(sense_id)
-        overlay = await self._repo.themed_for_word(word_id, theme_id)
+        async with self._uow() as uow:
+            word_id = await uow.senses.word_id_for(sense_id)
+            overlay = await uow.themes.overlay_for_word(word_id, theme_id)
         if sense_id in overlay:
             themed_def, themed_examples = overlay[sense_id]
             base.definition = themed_def
@@ -649,7 +676,8 @@ class Lexicon:
         """
         if k <= 0:
             return []
-        rows = await self._repo.embedded_senses(self._embedder.model_name)
+        async with self._uow() as uow:
+            rows = await uow.senses.embedded(self._embedder.model_name)
         if not rows:
             return []
         try:
@@ -686,7 +714,8 @@ class Lexicon:
     async def list_tags(self) -> list[TagCount]:
         """Every topic tag with its live member count (over ``done`` words),
         sorted count-desc then name. Never generates (FREE)."""
-        rows = await self._repo.count_tags()
+        async with self._uow() as uow:
+            rows = await uow.tags.usage()
         return [TagCount(name=name, title=title, count=count) for name, title, count in rows]
 
     async def list_entries_by_tag(
@@ -698,7 +727,8 @@ class Lexicon:
         ``"Business"``/``"business"``/``"cars"`` all hit the right tag. Never
         generates (FREE); pass a hit's ``lexi_word_id`` to :meth:`get_entry`.
         """
-        rows = await self._repo.words_for_tag_key(tag_key(tag), limit=limit)
+        async with self._uow() as uow:
+            rows = await uow.tags.words_for_key(tag_key(tag), limit=limit)
         return [
             SearchResult(display=render(norm), entry_type=etype, lexi_word_id=wid)
             for wid, norm, etype in rows
@@ -710,7 +740,8 @@ class Lexicon:
         """Paginated browse of the whole dictionary, norm-sorted. Never
         generates (FREE). Lightweight rows (like :meth:`list_entries_by_tag`) —
         pass a hit's ``lexi_word_id`` to :meth:`get_entry` for the full entry."""
-        rows = await self._repo.list_words(status=status, limit=limit, offset=offset)
+        async with self._uow() as uow:
+            rows = await uow.words.listing(status=status, limit=limit, offset=offset)
         return [
             SearchResult(display=render(norm), entry_type=etype, lexi_word_id=wid)
             for wid, norm, etype in rows
@@ -720,7 +751,10 @@ class Lexicon:
         """Delete a dictionary word and all its content; return whether a row
         was removed. Cascades senses, aliases, links, tags, and questions (the
         DB-level ``ON DELETE CASCADE`` FKs, already wired)."""
-        return await self._repo.delete_word(word_id)
+        async with self._uow() as uow:
+            deleted = await uow.words.delete(word_id)
+            await uow.commit()
+            return deleted
 
     async def rename_tag(
         self, tag: str, *, name: str | None = None, title: str | None = None
@@ -728,18 +762,27 @@ class Lexicon:
         """Update an existing topic tag's display ``name``/``title``. The
         underlying dedup key is immutable — this never merges/re-keys a tag
         (see :meth:`merge_tags` for that). Returns whether ``tag`` was found."""
-        return await self._repo.rename_tag(tag, name=name, title=title)
+        async with self._uow() as uow:
+            renamed = await uow.tags.rename(tag, name=name, title=title)
+            await uow.commit()
+            return renamed
 
     async def delete_tag(self, tag: str) -> bool:
         """Delete a topic tag; return whether one was found. Tagged words are
         untouched — they simply lose this one topic."""
-        return await self._repo.delete_tag(tag)
+        async with self._uow() as uow:
+            deleted = await uow.tags.delete(tag)
+            await uow.commit()
+            return deleted
 
     async def merge_tags(self, sources: list[str], into: str) -> int:
         """Fold ``sources`` tags into ``into``, then delete the sources.
         ``into`` must already exist (``ValueError`` otherwise). Returns the
         number of word-tag associations re-pointed."""
-        return await self._repo.merge_tags(sources, into)
+        async with self._uow() as uow:
+            moved = await uow.tags.merge(sources, into)
+            await uow.commit()
+            return moved
 
     async def create_theme(
         self,
@@ -761,59 +804,40 @@ class Lexicon:
         if description is None or tone is None:
             generator = self._theme_metadata_generator()
             generated = await generator.generate(norm_key, style_prompt)
-
-            theme = await self._repo.create_theme(
-                name=generated.name,
-                style_prompt=generated.style_prompt,
-                description=generated.description,
-                tone=",".join(generated.tone) if generated.tone else None,
-                key=norm_key,
-                overwrite=True,
-            )
+            fields = {
+                "name": generated.name,
+                "style_prompt": generated.style_prompt,
+                "description": generated.description,
+                "tone": ",".join(generated.tone) if generated.tone else None,
+            }
         else:
-            theme = await self._repo.create_theme(
-                name=name,
-                style_prompt=style_prompt,
-                description=description,
-                tone=tone,
-                key=norm_key,
-                overwrite=True,
-            )
+            fields = {
+                "name": name,
+                "style_prompt": style_prompt,
+                "description": description,
+                "tone": tone,
+            }
 
-        return Theme(
-            key=theme.theme_key,
-            name=theme.name,
-            style_prompt=theme.style_prompt,
-            description=theme.description,
-            tone=theme.tone,
-        )
+        # The metadata call above stays outside the transaction: it is a provider
+        # round trip, and holding a write transaction across it would idle a
+        # connection for the duration.
+        async with self._uow() as uow:
+            theme = await uow.themes.create(key=norm_key, overwrite=True, **fields)
+            await uow.commit()
+        return theme_view(theme)
 
     async def list_themes(self) -> list[Theme]:
         """Every style theme, name-sorted. Never generates (FREE)."""
-        return [
-            Theme(
-                key=t.theme_key,
-                name=t.name,
-                style_prompt=t.style_prompt,
-                description=t.description,
-                tone=t.tone,
-            )
-            for t in await self._repo.list_themes()
-        ]
+        async with self._uow() as uow:
+            themes = await uow.themes.list_all()
+        return [theme_view(theme) for theme in themes]
 
     async def get_theme(self, key: str) -> Theme | None:
         """A style theme by key (raw display name resolved via the same
         normalizer as :meth:`create_theme`), or ``None`` if unknown. FREE."""
-        theme = await self._repo.get_theme(_norm_theme_key(key))
-        if theme is None:
-            return None
-        return Theme(
-            key=theme.theme_key,
-            name=theme.name,
-            style_prompt=theme.style_prompt,
-            description=theme.description,
-            tone=theme.tone,
-        )
+        async with self._uow() as uow:
+            theme = await uow.themes.get(_norm_theme_key(key))
+        return theme_view(theme) if theme is not None else None
 
     async def update_theme(
         self,
@@ -828,27 +852,26 @@ class Lexicon:
         unchanged). The theme's key is immutable — renaming ``name`` never
         re-keys it. Raises ``ValueError`` if ``key`` is unknown (unlike
         :meth:`create_theme`, this never creates)."""
-        theme = await self._repo.update_theme(
-            _norm_theme_key(key),
-            name=name,
-            style_prompt=style_prompt,
-            description=description,
-            tone=tone,
-        )
+        async with self._uow() as uow:
+            theme = await uow.themes.update(
+                _norm_theme_key(key),
+                name=name,
+                style_prompt=style_prompt,
+                description=description,
+                tone=tone,
+            )
+            await uow.commit()
         if theme is None:
             raise ValueError(f"unknown theme: {key!r}")
-        return Theme(
-            key=theme.theme_key,
-            name=theme.name,
-            style_prompt=theme.style_prompt,
-            description=theme.description,
-            tone=theme.tone,
-        )
+        return theme_view(theme)
 
     async def delete_theme(self, key: str) -> bool:
         """Delete a style theme by key; return whether one was removed.
         Cascades its themed senses/examples; neutral entries are untouched."""
-        return await self._repo.delete_theme(_norm_theme_key(key))
+        async with self._uow() as uow:
+            deleted = await uow.themes.delete(_norm_theme_key(key))
+            await uow.commit()
+            return deleted
 
     async def _run_themed_generation(
         self, lexi_word_id: int, theme_id: int, style_prompt: str
@@ -857,15 +880,18 @@ class Lexicon:
         if status != "done":
             raise ValueError(f"word {lexi_word_id} is not done (status={status!r})")
 
-        neutral = await self._repo.senses_for_theming(lexi_word_id)
+        async with self._uow() as uow:
+            neutral = await uow.senses.for_theming(lexi_word_id)
         if not neutral:
             raise ValueError(f"word {lexi_word_id} has no senses to theme")
-        sense_ids = [row[0] for row in neutral]
-        facts = [(d, pos, gw, tier) for _sid, d, pos, gw, tier in neutral]
+        sense_ids = [row.sense_id for row in neutral]
+        facts = [(row.definition, row.pos, row.guideword, row.tier) for row in neutral]
 
         generator = self._themed_generator()
         result = await generator.generate(style_prompt, facts)
-        await self._repo.persist_themed(theme_id, result, sense_ids)
+        async with self._uow() as uow:
+            await uow.themes.persist_themed(theme_id, result, sense_ids)
+            await uow.commit()
 
     def _themed_generator(self):
         """Lazy themed generator; uses settings/OpenAI proxy by default."""
@@ -965,7 +991,9 @@ class Lexicon:
         """Read-only dictionary counts (never generates, no LLM). One round of
         grouped COUNT queries — words by status, senses, examples, tags, themes,
         words with any themed overlay, assets by kind, and questions."""
-        return await self._repo.stats()
+        async with self._uow() as uow:
+            snapshot = await uow.stats.snapshot()
+        return snapshot
 
     def _require_assets(self) -> AssetRepository:
         """The asset cache, constructed lazily from settings if not injected."""
@@ -1141,7 +1169,8 @@ class Lexicon:
             theme_lock = self._theme_locks.setdefault(theme_lock_key, asyncio.Lock())
             try:
                 async with theme_lock:
-                    overlay = await self._repo.themed_for_word(entry.word_id, theme_id)
+                    async with self._uow() as uow:
+                        overlay = await uow.themes.overlay_for_word(entry.word_id, theme_id)
                     if not overlay or force:
                         await self._run_themed_generation(entry.word_id, theme_id, style_prompt)
             finally:
@@ -1221,7 +1250,7 @@ class Lexicon:
                 done = await self._done_ids(key)
                 if done:
                     return await self._to_entry(done[0])
-                fence = await self._repo.claim_generation(word)
+                fence = await self._writer.claim(word)
                 result = await self._run_generation(
                     word, cambridge_id, fence=fence, structured_method=structured_method
                 )
@@ -1303,7 +1332,8 @@ class Lexicon:
             bundle = got
             cefr_map = self._cefr_map(bundle)
         try:
-            existing_tags = await self._repo.all_tags()
+            async with self._uow() as uow:
+                existing_tags = await uow.tags.names()
         except Exception:  # noqa: BLE001 - vocab is best-effort; empty on failure
             existing_tags = []
         if structured_method is None:
@@ -1312,7 +1342,7 @@ class Lexicon:
             result = await self._generator.generate(
                 bundle, existing_tags=existing_tags, structured_method=structured_method
             )
-        words = await self._repo.persist_result(
+        words = await self._writer.publish(
             result, cambridge_word_id=cambridge_id, cambridge_cefr=cefr_map, fence=fence
         )
         await self._embed_words([w.id for w in words])
@@ -1370,12 +1400,13 @@ class Lexicon:
         judge = self._wsd
         if judge is None:
             return []
+        from lexi_ai.domain.models import ResolveDecision
         from lexi_ai.generation.schemas import WsdCandidate, WsdTask
         from lexi_ai.generation.wsd import WSD_BATCH_CEIL, pos_filtered_candidates
-        from lexi_ai.persistence.repository import ResolveDecision, sense_content_hash
 
         capped = max(1, min(batch_size, WSD_BATCH_CEIL))
-        tasks = await self._repo.pending_relations_for_resolve(capped, word_ids=word_ids)
+        async with self._uow() as uow:
+            tasks = await uow.senses.pending_relations(capped, word_ids=word_ids)
         if not tasks:
             return []
 
@@ -1416,7 +1447,9 @@ class Lexicon:
                     )
                 )
 
-        outcomes = await self._repo.apply_resolutions(decisions)
+        async with self._uow() as uow:
+            outcomes = await uow.senses.apply_resolutions(decisions)
+            await uow.commit()
         return [
             BatchResult(key=o.edge_id, value=o.state)
             if o.error is None
@@ -1441,9 +1474,10 @@ class Lexicon:
         embeds nothing and returns 0 — an embedding error must never fail an
         already-persisted generation.
         """
-        pending = await self._repo.senses_needing_embedding(
-            self._embedder.model_name, word_ids=word_ids, limit=limit
-        )
+        async with self._uow() as uow:
+            pending = await uow.senses.needing_embedding(
+                self._embedder.model_name, word_ids=word_ids, limit=limit
+            )
         if not pending:
             return 0
         texts = [self._embed_text(norm, definition) for _sid, norm, definition in pending]
@@ -1458,7 +1492,10 @@ class Lexicon:
             ]
         except Exception:  # noqa: BLE001 - best-effort: never fail generation on embed
             return 0
-        return await self._repo.store_embeddings(packed, self._embedder.model_name, dim)
+        async with self._uow() as uow:
+            written = await uow.senses.store_embeddings(packed, self._embedder.model_name, dim)
+            await uow.commit()
+        return written
 
     @staticmethod
     def _embed_text(norm: str, definition: str) -> str:
@@ -1534,9 +1571,10 @@ class Lexicon:
     # --- read model assembly ---------------------------------------------
 
     async def _to_entry(self, word_id: int, theme_id: int | None = None) -> Entry:
-        themed_map = (
-            await self._repo.themed_for_word(word_id, theme_id) if theme_id is not None else None
-        )
+        themed_map = None
+        if theme_id is not None:
+            async with self._uow() as uow:
+                themed_map = await uow.themes.overlay_for_word(word_id, theme_id)
         async with session_scope(self._session_factory) as session:
             word = (
                 await session.execute(
@@ -1654,9 +1692,12 @@ class _LexiconSenseLoader:
         self._lexicon = lexicon
 
     async def load_entry(self, sense_id: int) -> Entry | None:
-        word_id = await self._lexicon._repo.word_id_for_sense(sense_id)
-        if word_id is None:
-            return None
+        """Resolve the sense's owning entry, or ``None`` when the sense is gone."""
+        async with self._lexicon._uow() as uow:
+            try:
+                word_id = await uow.senses.word_id_for(sense_id)
+            except NoResultFound:
+                return None
         return await self._lexicon.get_entry(word_id)
 
 

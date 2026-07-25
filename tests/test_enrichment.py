@@ -31,7 +31,7 @@ from lexi_ai.infrastructure.db.models import (
     WordRelation,
 )
 from lexi_ai.normalize import match_key
-from lexi_ai.persistence.repository import Repository
+from tests.support.persistence_driver import PersistenceDriver
 
 # --- write-path harness ----------------------------------------------------
 
@@ -112,7 +112,7 @@ def _result(
 
 async def _reading_lexicon(engine, repo) -> Lexicon:
     # Reads only — no generator/loader needed (mirrors test_tags.py::_seed_browse).
-    return Lexicon(create_session_factory(engine), None, None, repo, engine=engine)  # type: ignore[arg-type]
+    return Lexicon(create_session_factory(engine), None, None, engine=engine)  # type: ignore[arg-type]
 
 
 # --- word-references: normalization + dedup (the user's critical ask) ------
@@ -122,7 +122,7 @@ async def test_word_family_normalized_and_shared(engine):
     # "happy" names word_family "Happiness" (capitalized) -> a words row keyed by
     # match_key("happiness"); a second word referencing "happiness" shares it.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await repo.persist_result(_result("happy", related=[("Happiness", "word_family")]))
     await repo.persist_result(_result("cheerful", related=[("happiness", "word_family")]))
 
@@ -147,7 +147,7 @@ async def test_word_family_normalized_and_shared(engine):
 
 async def test_confused_with_links(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(_result("affect", related=[("effect", "confused_with")]))
     lex = await _reading_lexicon(engine, repo)
     entry = await lex.get_entry(words[0].id)
@@ -162,7 +162,7 @@ async def test_hypernym_hyponym_sense_relations(engine):
     # carries them with a gloss, and they persist as sense_relation half-edges
     # (to_sense_id NULL = pending) keyed to real stub words rows.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(
         _result(
             "dog",
@@ -200,7 +200,7 @@ async def test_hypernym_hyponym_sense_relations(engine):
 async def test_meronym_holonym_sense_relations(engine):
     # Part-whole relations are also SENSE-level; same half-edge persistence path.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await repo.persist_result(
         _result(
             "car",
@@ -224,7 +224,7 @@ async def test_sense_relation_empty_gloss_skipped(engine):
     # [F12] gloss is the load-bearing WSD signal — a blank one (after sanitize)
     # gets the whole half-edge dropped, never persisted as a dead row.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await repo.persist_result(
         _result(
             "bright",
@@ -243,7 +243,7 @@ async def test_sense_relation_self_reference_skipped(engine):
     # [Case 8] a sense-level relation whose target normalizes to the emitting
     # sense's OWN word is vacuous and never persisted.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await repo.persist_result(
         _result("Happy", sense_relations=[("synonym", "happy", "feeling joy")])
     )
@@ -256,7 +256,7 @@ async def test_sense_relation_dedup_on_triple(engine):
     # Dedup mirrors _ensure_link: the UNIQUE (from_sense, to_word, rel_type)
     # triple collapses duplicate emissions to one row (last gloss not overwritten).
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await repo.persist_result(
         _result(
             "big",
@@ -276,7 +276,7 @@ async def test_sense_relation_dedup_on_triple(engine):
 
 async def test_sense_labels_round_trip(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(
         _result(
             "set",
@@ -299,7 +299,7 @@ async def test_sense_labels_round_trip(engine):
 
 async def test_ipa_surfaces_on_sense_view(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(_result("lead", ipa_uk="liːd", ipa_us="liːd"))
     lex = await _reading_lexicon(engine, repo)
     entry = await lex.get_entry(words[0].id)
@@ -336,7 +336,7 @@ def test_register_connotation_reject_out_of_vocab():
 
 async def test_collocations_ordered_and_sanitized(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(
         _result(
             "rain",
@@ -354,7 +354,7 @@ async def test_collocations_ordered_and_sanitized(engine):
 
 async def test_collocations_empty_string_skipped(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(_result("void", collocations=["", "real phrase", ""]))
     async with create_session_factory(engine)() as s:
         rows = list((await s.execute(select(Collocation))).scalars())
@@ -367,7 +367,7 @@ async def test_collocations_empty_string_skipped(engine):
 
 async def test_empty_enrichment_persists_done(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(_result("plain"))
     assert words[0].status == "done"
 
@@ -391,7 +391,7 @@ async def test_collocations_no_detached_load(engine):
     # get() returns a detached Entry (session closed in _to_entry). Accessing
     # collocations must NOT raise — it is selectinload-ed, not lazy.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(_result("draw", collocations=["draw a line", "draw water"]))
     lex = await _reading_lexicon(engine, repo)
     entry = await lex.get_entry(words[0].id)
@@ -405,7 +405,7 @@ async def test_collocations_no_detached_load(engine):
 
 async def test_grammar_stored_joined_empty_is_none(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     await repo.persist_result(_result("go", grammar=["intransitive"]))
     await repo.persist_result(_result("stay"))  # no grammar
 
@@ -421,7 +421,7 @@ async def test_grammar_stored_joined_empty_is_none(engine):
 async def test_word_family_count_and_no_self_link(engine):
     # A word referencing ITSELF as a relative must not create a self-link.
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(_result("happy", related=[("happy", "word_family")]))
     async with create_session_factory(engine)() as s:
         n = (
@@ -437,7 +437,7 @@ async def test_word_family_count_and_no_self_link(engine):
 
 async def test_forms_round_trip_ordered(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(
         _result(
             "run",
@@ -466,7 +466,7 @@ async def test_forms_round_trip_ordered(engine):
 
 async def test_forms_sanitized_and_empty_skipped(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(
         _result(
             "dream",
@@ -492,7 +492,7 @@ def test_forms_inf_rejects_out_of_vocab():
 
 async def test_domain_and_usage_note_round_trip(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(
         _result(
             "cache",
@@ -509,7 +509,7 @@ async def test_domain_and_usage_note_round_trip(engine):
 
 async def test_domain_usage_note_sanitized_and_empty_is_none(engine):
     sf = create_session_factory(engine)
-    repo = Repository(sf)
+    repo = PersistenceDriver(sf)
     words = await repo.persist_result(
         _result("mixed", domain="med\x00icine", usage_note="line\none")
     )

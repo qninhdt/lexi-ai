@@ -21,7 +21,7 @@ from lexi_ai.assets.repository import (
 from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.infrastructure.db.models import Asset as AssetRow
 from lexi_ai.infrastructure.db.models import Sense, Word
-from lexi_ai.persistence.repository import Repository
+from tests.support.persistence_driver import PersistenceDriver
 
 # --- hashing verify contract ----------------------------------------------
 
@@ -404,7 +404,6 @@ def _lexicon(session_factory, tmp_path, *, translator=None, tts=None):
         session_factory,
         None,  # type: ignore[arg-type]
         None,  # type: ignore[arg-type]
-        Repository(session_factory, assets=assets),
         assets=assets,
     )
     if translator is not None:
@@ -448,7 +447,6 @@ async def test_translate_no_llm_raises(session_factory, tmp_path, monkeypatch):
         session_factory,
         None,  # type: ignore[arg-type]
         None,  # type: ignore[arg-type]
-        Repository(session_factory, assets=assets),
         assets=assets,
     )
     monkeypatch.setenv("LEXI_LLM_API_KEY", "")
@@ -745,7 +743,7 @@ async def test_tts_many_stub_reports_per_item_error(session_factory, tmp_path):
 async def test_delete_word_gcs_assets(session_factory, tmp_path):
     sid = await _make_sense(session_factory, "a small domestic cat")
     assets = AssetRepository(session_factory, str(tmp_path))
-    repo = Repository(session_factory, assets=assets)
+    repo = PersistenceDriver(session_factory, assets=assets)
     p = normalize_asset_params("translate", lang="vi")
     await assets.put_text("sense_def", sid, "translate", p, "a small domestic cat", "con mèo")
 

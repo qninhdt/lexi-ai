@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from lexi_ai.db import create_session_factory, init_models, session_scope
+from lexi_ai.domain.errors import StaleGenerationError
 from lexi_ai.generation.schemas import (
     GeneratedEntry,
     GeneratedResult,
@@ -23,8 +24,10 @@ from lexi_ai.infrastructure.db.models import (
     WordAlias,
     WordRelation,
 )
+from lexi_ai.infrastructure.db.repositories.sense_repo import SqlSenseRepo
+from lexi_ai.infrastructure.db.repositories.word_repo import SqlWordRepo
 from lexi_ai.normalize import match_key
-from lexi_ai.persistence.repository import Repository, StaleGenerationError
+from tests.support.persistence_driver import PersistenceDriver
 
 
 @pytest.fixture
@@ -48,7 +51,7 @@ async def session_factory():
 
 @pytest.fixture
 def repo(session_factory):
-    return Repository(session_factory)
+    return PersistenceDriver(session_factory)
 
 
 def _color_result() -> GeneratedResult:
@@ -262,15 +265,14 @@ async def test_stub_promoted_to_done_on_generation(repo, session_factory):
     assert await _count(session_factory, Word) == 2
 
 
-async def test_error_path_sets_status_error(session_factory):
-    # A repo whose reload step is fine, but force a failure mid-persist by
-    # feeding a sense that violates NOT NULL via a monkeypatched normalize?
-    # Simpler: make match_key raise for a poisoned norm through a subclass.
-    class BoomRepo(Repository):
-        async def _sync_senses(self, *a, **k):
-            raise RuntimeError("boom during senses")
+async def test_error_path_sets_status_error(repo, session_factory, monkeypatch):
+    # Force a failure mid-publish, after the word row exists but before the
+    # transaction can commit, then assert the error status is still recorded. That
+    # only works because error recording runs on an independent session.
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("boom during senses")
 
-    repo = BoomRepo(session_factory)
+    monkeypatch.setattr(SqlSenseRepo, "sync", boom)
     with pytest.raises(RuntimeError, match="boom"):
         await repo.persist_result(_color_result())
 
@@ -368,9 +370,9 @@ async def test_ipa_absent_is_none(repo, session_factory):
     assert sense.ipa_us is None
 
 
-async def test_insert_word_recovers_from_concurrent_duplicate(repo, session_factory):
+async def test_insert_word_recovers_from_concurrent_duplicate(session_factory):
     # Simulate a concurrent inserter: the key already exists as a committed row.
-    # _insert_word must trip the UNIQUE constraint inside its savepoint, roll it
+    # The insert must trip the UNIQUE constraint inside its savepoint, roll that
     # back cleanly, and adopt the existing row — WITHOUT poisoning the session
     # (which would surface as PendingRollbackError on the recovery SELECT).
     key = match_key("dup")
@@ -378,7 +380,7 @@ async def test_insert_word_recovers_from_concurrent_duplicate(repo, session_fact
         session.add(Word(norm="dup", match_key=key, status="done"))
 
     async with session_scope(session_factory) as session:
-        word = await repo._insert_word(session, key, "dup", status="pending")
+        word = await SqlWordRepo(session)._insert(key, "dup")
         # Adopted the pre-existing row (status stays 'done'), no new row.
         assert word.status == "done"
 

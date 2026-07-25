@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models
 from lexi_ai.normalize import theme_key
-from lexi_ai.persistence.repository import Repository
+from tests.support.persistence_driver import PersistenceDriver
 
 # --- theme_key normalizer (pure) -----------------------------------------
 
@@ -91,19 +91,19 @@ async def session_factory():
 
 @pytest.fixture
 def repo(session_factory):
-    return Repository(session_factory)
+    return PersistenceDriver(session_factory)
 
 
 @pytest.fixture
 def lexicon(session_factory):
-    return Lexicon(session_factory, None, None, Repository(session_factory))
+    return Lexicon(session_factory, None, None)
 
 
 async def test_create_theme_dedups_by_key(repo):
     a = await repo.create_theme("Harry Potter", "speak like a wizard")
     b = await repo.create_theme("  harry  potter  ", "different prompt ignored")
     assert a.id == b.id
-    assert a.theme_key == b.theme_key == "harry potter"
+    assert a.key == b.key == "harry potter"
     # First-seen name/style_prompt win.
     assert b.name == "Harry Potter"
     assert b.style_prompt == "speak like a wizard"

@@ -19,7 +19,6 @@ rows.
 from dataclasses import dataclass
 
 from lexi_ai.normalize import match_key
-from lexi_ai.persistence.repository import Repository
 from lexi_ai.references.cambridge import CambridgeSource
 
 
@@ -33,9 +32,9 @@ class PhraseOverlapReport:
 
 
 class PhraseOverlapPrep:
-    def __init__(self, cambridge: CambridgeSource, repository: Repository):
+    def __init__(self, cambridge: CambridgeSource, uow_factory):
         self._cambridge = cambridge
-        self._repo = repository
+        self._uow_factory = uow_factory
 
     async def run(self, batch_size: int = 500) -> PhraseOverlapReport:
         standalone = await self._cambridge.standalone_keys()
@@ -71,12 +70,13 @@ class PhraseOverlapPrep:
         return report
 
     async def _flush_batch(self, batch: list[tuple[str, str | None, str | None, bool]]) -> None:
-        async with self._repo.session() as session:
+        """Seed one batch of phrase units in a single transaction."""
+        async with self._uow_factory() as uow:
             for phrase_title, host, host_type, is_overlap in batch:
-                await self._repo.seed_phrase_unit(
-                    session,
+                await uow.words.seed_phrase_unit(
                     phrase_title=phrase_title,
                     host_display=host,
                     entry_type=host_type,
                     is_overlap=is_overlap,
                 )
+            await uow.commit()

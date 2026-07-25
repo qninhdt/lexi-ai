@@ -16,11 +16,11 @@ from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.generation.schemas import ExampleBatch
 from lexi_ai.infrastructure.db.models import Example, Sense, ThemedExample, ThemedSense, Word
 from lexi_ai.markup import parse_marked_example
-from lexi_ai.persistence.repository import Repository
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.read_models import Entry, SenseView
 from lexi_ai.theming.schemas import GeneratedTheme, ThemedResult
 from lexi_ai.theming.schemas import ThemedSense as ThemedSenseSchema
+from tests.support.persistence_driver import PersistenceDriver
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ async def session_factory():
 
 @pytest.fixture
 def repo(session_factory):
-    return Repository(session_factory)
+    return PersistenceDriver(session_factory)
 
 
 async def _make_done_word(session_factory, n_senses=2):
@@ -208,7 +208,7 @@ class FakeThemeMetadataGenerator:
 
 
 def _lexicon(session_factory, themed_gen=None, theme_meta_gen=None):
-    lex = Lexicon(session_factory, None, None, Repository(session_factory))  # type: ignore[arg-type]
+    lex = Lexicon(session_factory, None, None)  # type: ignore[arg-type]
     if themed_gen is not None:
         lex._themed_gen = themed_gen
     if theme_meta_gen is not None:
@@ -451,7 +451,7 @@ async def test_numeric_theme_name_resolves_by_key_not_id(session_factory, repo):
     # fix tries theme_key FIRST for a str, so the numeric name now resolves.
     word_id, _sense_ids = await _make_done_word(session_factory)
     theme = await repo.create_theme("1984", "speak like Orwell")
-    assert theme.theme_key == "1984"
+    assert theme.key == "1984"
 
     resolved = await repo.resolve_theme("1984")
     assert resolved is not None and resolved[0] == theme.id

@@ -19,6 +19,8 @@ import pytest
 from sqlalchemy import select
 
 from lexi_ai.db import session_scope
+from lexi_ai.domain.errors import StaleGenerationError
+from lexi_ai.domain.models import ResolveDecision
 from lexi_ai.generation.schemas import (
     GeneratedAlias,
     GeneratedEntry,
@@ -35,8 +37,8 @@ from lexi_ai.infrastructure.db.models import (
     WordAlias,
 )
 from lexi_ai.normalize import match_key
-from lexi_ai.persistence.repository import Repository, ResolveDecision, StaleGenerationError
 from tests.conftest import requires_postgres
+from tests.support.persistence_driver import PersistenceDriver
 
 pytestmark = requires_postgres
 
@@ -60,7 +62,7 @@ async def test_harness_connects_and_roundtrips_a_word(pg_session_factory):
 
 async def test_postgres_generation_epoch_rejects_a_stale_worker_publish(pg_session_factory):
     """Two independently constructed repositories fence stale destructive writes."""
-    older, newer = Repository(pg_session_factory), Repository(pg_session_factory)
+    older, newer = PersistenceDriver(pg_session_factory), PersistenceDriver(pg_session_factory)
     first_claim = await older.claim_generation("shine")
     second_claim = await newer.claim_generation("shine")
 
@@ -145,7 +147,7 @@ async def test_mark_unresolvable_no_rejudge_loop_on_postgres(pg_session_factory)
     Confirmed to FAIL on pre-fix code: the swallowed DataError meant
     resolve_attempted_at was never written, so the edge remained pending.
     """
-    repo = Repository(pg_session_factory)
+    repo = PersistenceDriver(pg_session_factory)
     # Plant a stub word + a pending self-relation to act as the WSD edge.
     async with session_scope(pg_session_factory) as session:
         word = Word(norm="glow", match_key=match_key("glow"), status="done")
@@ -203,7 +205,7 @@ _NUL_ROLLED_BACK = "NUL rolled the word back to error (H-1.3 Postgres regression
 
 async def test_postgres_nul_in_definition_survives_persist(pg_session_factory):
     """NUL in neutral definition is stripped before the Postgres INSERT (1.3)."""
-    repo = Repository(pg_session_factory)
+    repo = PersistenceDriver(pg_session_factory)
     await repo.persist_result(_pg_entry(definition="to give off\x00 light"))
     async with session_scope(pg_session_factory) as session:
         word = (await session.execute(select(Word))).scalar_one()
@@ -214,7 +216,7 @@ async def test_postgres_nul_in_definition_survives_persist(pg_session_factory):
 
 async def test_postgres_nul_in_example_survives_persist(pg_session_factory):
     """NUL in neutral example is stripped before the Postgres INSERT (1.3)."""
-    repo = Repository(pg_session_factory)
+    repo = PersistenceDriver(pg_session_factory)
     await repo.persist_result(_pg_entry(example="the stars\x00 shine"))
     async with session_scope(pg_session_factory) as session:
         word = (await session.execute(select(Word))).scalar_one()
@@ -225,7 +227,7 @@ async def test_postgres_nul_in_example_survives_persist(pg_session_factory):
 
 async def test_postgres_nul_in_norm_survives_persist(pg_session_factory):
     """NUL in norm is stripped before the Postgres INSERT (1.3 + 1.4)."""
-    repo = Repository(pg_session_factory)
+    repo = PersistenceDriver(pg_session_factory)
     await repo.persist_result(_pg_entry(norm="shi\x00ne"))
     async with session_scope(pg_session_factory) as session:
         word = (await session.execute(select(Word))).scalar_one()
@@ -236,7 +238,7 @@ async def test_postgres_nul_in_norm_survives_persist(pg_session_factory):
 
 async def test_postgres_nul_in_alias_norm_survives_persist(pg_session_factory):
     """NUL in alias_norm is stripped before the Postgres INSERT (1.3)."""
-    repo = Repository(pg_session_factory)
+    repo = PersistenceDriver(pg_session_factory)
     await repo.persist_result(_pg_entry(alias_norm="shi\x00ne up"))
     async with session_scope(pg_session_factory) as session:
         word = (await session.execute(select(Word))).scalar_one()
@@ -248,7 +250,7 @@ async def test_postgres_nul_in_alias_norm_survives_persist(pg_session_factory):
 
 async def test_postgres_nul_in_source_ref_survives_persist(pg_session_factory):
     """NUL in source_ref is stripped before the Postgres INSERT (1.3)."""
-    repo = Repository(pg_session_factory)
+    repo = PersistenceDriver(pg_session_factory)
     await repo.persist_result(_sense_with_raw_source_ref("radiate", "s\x001"))
     async with session_scope(pg_session_factory) as session:
         word = (await session.execute(select(Word))).scalar_one()
@@ -269,7 +271,7 @@ async def test_postgres_over_length_source_ref_is_clamped(pg_session_factory):
     'value too long for type character varying(255)'. Post-fix: the value is
     clamped to _MAX_SOURCE_REF (255) by _clean() before the INSERT.
     """
-    repo = Repository(pg_session_factory)
+    repo = PersistenceDriver(pg_session_factory)
     await repo.persist_result(_sense_with_raw_source_ref("gleam", "x" * 300))
     async with session_scope(pg_session_factory) as session:
         word = (await session.execute(select(Word))).scalar_one()
