@@ -17,6 +17,7 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from lexi_ai.application.generation_writer import GenerationWriter
+from lexi_ai.application.questions import QuestionService
 from lexi_ai.assets.repository import AssetRepository, content_hash, normalize_asset_params
 from lexi_ai.config import Settings, get_settings
 from lexi_ai.constants import canonical_cambridge_ref
@@ -210,25 +211,18 @@ class Lexicon:
     # Public question API -------------------------------------------------------
 
     def question_types(self) -> list[QuestionTypeInfo]:
-        return self.worker_questions.question_types()
+        return self._questions(providers=True).question_types()
 
     async def prepare_questions(self, word_id: int, demands: list[PrepareDemand]) -> PrepareReport:
-        entry = await self.get_entry(word_id)
-        return await self.worker_questions.prepare(entry, _to_internal_demands(demands))
+        return await self._questions(providers=True).prepare(word_id, demands)
 
     async def get_question(self, question_id: int) -> PresentedQuestion | None:
-        from lexi_ai.questions.render import to_presented
-
-        persisted = await self._question_repository().get(question_id)
-        return to_presented(persisted) if persisted is not None else None
+        return await self._questions(providers=True).get(question_id)
 
     async def list_questions_for_sense(
         self, sense_id: int, type_id: str | None = None
     ) -> list[PresentedQuestion]:
-        from lexi_ai.questions.render import to_presented
-
-        rows = await self._question_repository().list_for_sense(sense_id, type_id)
-        return [to_presented(row) for row in rows]
+        return await self._questions(providers=True).list_for_sense(sense_id, type_id)
 
     async def retrieve_question(
         self,
@@ -237,25 +231,33 @@ class Lexicon:
         excluded_ids: frozenset[int],
         type_id: str,
     ) -> PresentedQuestion | None:
-        return await self.worker_questions.retrieve(
+        return await self._questions(providers=True).retrieve(
             sense_id, difficulty_level, excluded_ids, type_id
         )
 
     async def retrieve_exposure(self, sense_id: int) -> PresentedQuestion:
-        return await self.worker_questions.retrieve_exposure(sense_id)
+        return await self._questions(providers=True).retrieve_exposure(sense_id)
 
     async def evaluate_answer(
         self, question_id: int, submission: AnswerSubmission
     ) -> Evaluation | None:
-        return await self._evaluate_answer(self.worker_questions, question_id, submission)
+        return await self._questions(providers=True).evaluate(question_id, submission)
 
-    async def _evaluate_answer(
-        self, question_engine, question_id: int, submission: AnswerSubmission
-    ) -> Evaluation | None:
-        persisted = await self._question_repository().get(question_id)
-        if persisted is None:
-            return None
-        return await question_engine.evaluate(persisted, submission)
+    def questions(self, *, providers: bool) -> QuestionService:
+        """The question service for one capability context.
+
+        Public because the facades need it and must not reach into privates.
+        """
+        return self._questions(providers=providers)
+
+    def _questions(self, *, providers: bool) -> QuestionService:
+        """Build the question service over the engine for this context.
+
+        The engine itself is cached by the properties, so this wrapper is rebuilt per
+        call and replacing the engine (as tests do) takes effect immediately.
+        """
+        engine = self.worker_questions if providers else self.reader_questions
+        return QuestionService(engine, self._question_repository(), self.get_entry)
 
     def _build_questions_llm(self) -> StructuredLLM | None:
         """Structured LLM for the contextual-MCQ plugin (bound to ``GeneratedMCQ``

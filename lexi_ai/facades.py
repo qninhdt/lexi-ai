@@ -9,6 +9,7 @@ from lexi_ai.config import Settings
 
 if TYPE_CHECKING:
     from lexi_ai.api import Lexicon
+    from lexi_ai.application.questions import QuestionService
     from lexi_ai.contracts.questions import (
         AnswerSubmission,
         Evaluation,
@@ -47,15 +48,15 @@ class LexiconReader:
         return await self._lexicon.get_senses(sense_ids)
 
     def question_types(self) -> list[QuestionTypeInfo]:
-        return self._lexicon.reader_questions.question_types()
+        return self._questions.question_types()
 
     async def get_question(self, question_id: int) -> PresentedQuestion | None:
-        return await self._lexicon.get_question(question_id)
+        return await self._questions.get(question_id)
 
     async def list_questions_for_sense(
         self, sense_id: int, type_id: str | None = None
     ) -> list[PresentedQuestion]:
-        return await self._lexicon.list_questions_for_sense(sense_id, type_id)
+        return await self._questions.list_for_sense(sense_id, type_id)
 
     async def retrieve_question(
         self,
@@ -64,19 +65,25 @@ class LexiconReader:
         excluded_ids: frozenset[int],
         type_id: str,
     ) -> PresentedQuestion | None:
-        return await self._lexicon.reader_questions.retrieve(
-            sense_id, difficulty_level, excluded_ids, type_id
-        )
+        return await self._questions.retrieve(sense_id, difficulty_level, excluded_ids, type_id)
 
     async def retrieve_exposure(self, sense_id: int) -> PresentedQuestion:
-        return await self._lexicon.reader_questions.retrieve_exposure(sense_id)
+        return await self._questions.retrieve_exposure(sense_id)
 
     async def evaluate_answer(
         self, question_id: int, submission: AnswerSubmission
     ) -> Evaluation | None:
-        return await self._lexicon._evaluate_answer(
-            self._lexicon.reader_questions, question_id, submission
-        )
+        """Grade a submission with the PROVIDER-FREE engine.
+
+        A rubric-graded type needs the judge, which this context deliberately lacks,
+        so such a type degrades here rather than being scored. Use
+        :class:`LexiconEngine` when grading must be authoritative.
+        """
+        return await self._questions.evaluate(question_id, submission)
+
+    @property
+    def _questions(self) -> QuestionService:
+        return self._lexicon.questions(providers=False)
 
 
 class LexiconEngine:
@@ -92,7 +99,7 @@ class LexiconEngine:
         return cls(Lexicon.from_settings(settings))
 
     def question_types(self) -> list[QuestionTypeInfo]:
-        return self._lexicon.worker_questions.question_types()
+        return self._lexicon.questions(providers=True).question_types()
 
     async def prepare_questions(
         self, word_id: int, demands: Sequence[PrepareDemand]
