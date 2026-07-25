@@ -33,6 +33,7 @@ from lexi_ai.domain.models import (
     ThemeRecord,
     ThemingSense,
     WordListing,
+    WordMatch,
     WordRecord,
 )
 
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
         GeneratedTopic,
         RelatedWord,
     )
-    from lexi_ai.read_models import Stats
+    from lexi_ai.read_models import Entry, SenseView, Stats
     from lexi_ai.theming.schemas import ThemedResult
 
 
@@ -82,6 +83,16 @@ class WordRepo(Protocol):
 
     async def done_keys(self) -> set[str]:
         """Every ``match_key`` already generated — the candidate diff."""
+
+    async def resolve_key(self, key: str) -> list[WordMatch]:
+        """Every word matching a lookup key as a headword or an alias."""
+
+    async def status(self, word_id: int) -> str | None: ...
+
+    async def norm_and_cambridge(self, word_id: int) -> tuple[str, int | None]: ...
+
+    async def generated_by_cambridge(self, cambridge_ids: Sequence[int]) -> dict[int, WordListing]:
+        """Which Cambridge ids are already generated, keyed by that provenance."""
 
     async def delete(self, word_id: int) -> bool: ...
 
@@ -202,6 +213,16 @@ class TagRepo(Protocol):
     async def merge(self, sources: Sequence[str], into: str) -> int: ...
 
 
+class EntryRepo(Protocol):
+    """Read-model reads that need eager loading rather than a projection."""
+
+    async def entry(self, word_id: int, overlay: object | None = None) -> "Entry":
+        """The full entry for one word, optionally overlaid with a theme."""
+
+    async def sense_views(self, sense_ids: Sequence[int]) -> list["SenseView"]:
+        """Views for the given senses, in the order requested, skipping unknown ids."""
+
+
 class StatsRepo(Protocol):
     """Cross-aggregate counts, deliberately read in one snapshot."""
 
@@ -221,6 +242,7 @@ class UnitOfWork(Protocol):
     senses: SenseRepo
     themes: ThemeRepo
     tags: TagRepo
+    entries: EntryRepo
     stats: StatsRepo
 
     async def __aenter__(self) -> "UnitOfWork": ...

@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from lexi_ai.assets.repository import AssetRepository
-from lexi_ai.domain.models import GenerationFence, WordListing, WordRecord
+from lexi_ai.domain.models import GenerationFence, WordListing, WordMatch, WordRecord
 from lexi_ai.infrastructure.db.asset_gc import collect_word_assets
 from lexi_ai.infrastructure.db.mappers import word_record
 from lexi_ai.infrastructure.db.models import Word, WordAlias, WordRelation
@@ -176,6 +176,58 @@ class SqlWordRepo:
         """Every ``match_key`` already generated — the candidate diff."""
         rows = await self._session.execute(select(Word.match_key).where(Word.status == "done"))
         return set(rows.scalars().all())
+
+    async def resolve_key(self, key: str) -> list[WordMatch]:
+        """Every word matching ``key`` as a headword OR an alias, with its status.
+
+        Both paths are checked because a user can type either surface. A word
+        reachable through both is reported once, with the headword winning.
+        """
+        direct = await self._session.execute(
+            select(Word.id, Word.status).where(Word.match_key == key)
+        )
+        found: dict[int, str] = dict(direct.all())
+        via_alias = await self._session.execute(
+            select(Word.id, Word.status)
+            .join(WordAlias, WordAlias.word_id == Word.id)
+            .where(WordAlias.alias_match_key == key)
+        )
+        for word_id, status in via_alias:
+            found.setdefault(word_id, status)
+        return [WordMatch(word_id, status) for word_id, status in found.items()]
+
+    async def status(self, word_id: int) -> str | None:
+        """Lifecycle status of a word, or ``None`` when the id is unknown."""
+        result = await self._session.execute(select(Word.status).where(Word.id == word_id))
+        return result.scalar_one_or_none()
+
+    async def norm_and_cambridge(self, word_id: int) -> tuple[str, int | None]:
+        """The lemma and Cambridge provenance of a word. Raises when unknown."""
+        row = (
+            await self._session.execute(
+                select(Word.norm, Word.cambridge_word_id).where(Word.id == word_id)
+            )
+        ).one()
+        return row[0], row[1]
+
+    async def generated_by_cambridge(self, cambridge_ids: Sequence[int]) -> dict[int, WordListing]:
+        """Which Cambridge ids are already generated, keyed by that provenance.
+
+        Keying on ``cambridge_word_id`` rather than the lemma makes this robust to
+        display and normalization differences. The first done row per id wins.
+        """
+        if not cambridge_ids:
+            return {}
+        rows = await self._session.execute(
+            select(Word.cambridge_word_id, Word.id, Word.norm, Word.entry_type).where(
+                Word.cambridge_word_id.in_(cambridge_ids), Word.status == "done"
+            )
+        )
+        found: dict[int, WordListing] = {}
+        for cambridge_id, word_id, norm, entry_type in rows:
+            if cambridge_id is not None:
+                found.setdefault(cambridge_id, WordListing(word_id, norm, entry_type))
+        return found
 
     async def delete(self, word_id: int) -> bool:
         """Delete a word; return whether a row was removed.

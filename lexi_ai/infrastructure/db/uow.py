@@ -15,6 +15,7 @@ from types import TracebackType
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from lexi_ai.assets.repository import AssetRepository
+from lexi_ai.infrastructure.db.repositories.entry_repo import SqlEntryRepo
 from lexi_ai.infrastructure.db.repositories.sense_repo import SqlSenseRepo
 from lexi_ai.infrastructure.db.repositories.stats_repo import SqlStatsRepo
 from lexi_ai.infrastructure.db.repositories.tag_repo import SqlTagRepo
@@ -56,6 +57,7 @@ class SqlAlchemyUnitOfWork:
         self.senses = SqlSenseRepo(session, words=self.words, assets=self._assets)
         self.themes = SqlThemeRepo(session)
         self.tags = SqlTagRepo(session)
+        self.entries = SqlEntryRepo(session)
         self.stats = SqlStatsRepo(session)
         return self
 

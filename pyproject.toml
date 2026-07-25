@@ -108,3 +108,18 @@ forbidden_modules = [
     "lexi_ai.models",
     "sqlalchemy",
 ]
+
+
+# The application layer talks to persistence through ports only. It used to issue
+# its own selects against the ORM, a second persistence path that duplicated
+# repository logic and made every read a potential source of drift.
+[[tool.importlinter.contracts]]
+name = "application layer must not touch the ORM or SQL directly"
+type = "forbidden"
+# Indirect is expected and fine: the application reaches the ORM THROUGH the unit
+# of work, which is the point. Only a direct import is a second persistence path.
+allow_indirect_imports = true
+source_modules = ["lexi_ai.application", "lexi_ai.api"]
+forbidden_modules = [
+    "lexi_ai.infrastructure.db.models",
+]

@@ -58,6 +58,13 @@ class WordListing(NamedTuple):
     entry_type: str | None
 
 
+class WordMatch(NamedTuple):
+    """A word resolved from a lookup key, with its lifecycle status."""
+
+    word_id: int
+    status: str
+
+
 class TagName(NamedTuple):
     """Existing topic vocab, for prompt injection."""
 

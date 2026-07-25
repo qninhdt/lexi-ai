@@ -13,48 +13,33 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import selectinload
 
 from lexi_ai.application.generation_writer import GenerationWriter
 from lexi_ai.assets.repository import AssetRepository, content_hash, normalize_asset_params
 from lexi_ai.config import Settings, get_settings
-from lexi_ai.constants import TIER_ORDER, canonical_cambridge_ref
-from lexi_ai.db import create_engine, create_session_factory, init_models, session_scope
+from lexi_ai.constants import canonical_cambridge_ref
+from lexi_ai.db import create_engine, create_session_factory, init_models
 from lexi_ai.domain.hashing import sense_content_hash
+from lexi_ai.domain.models import WordListing
 from lexi_ai.embeddings import Embedder
 from lexi_ai.generation.generator import Generator
 from lexi_ai.generation.schemas import ExampleBatch
 from lexi_ai.infrastructure.db.mappers import theme_view
-from lexi_ai.infrastructure.db.models import (
-    Sense,
-    SenseRelation,
-    Word,
-    WordAlias,
-    WordRelation,
-    WordTag,
-)
 from lexi_ai.infrastructure.db.uow import SqlAlchemyUnitOfWork
 from lexi_ai.normalize import match_key, render, tag_key
 from lexi_ai.normalize import theme_key as _norm_theme_key
 from lexi_ai.read_models import (
-    AliasView,
     Asset,
     BatchResult,
     Entry,
-    FormView,
-    LinkView,
-    ReferenceView,
     SearchResult,
     SemanticHit,
-    SenseRelationView,
     SenseView,
     Stats,
     TagCount,
     Theme,
-    TopicView,
 )
 from lexi_ai.references.cambridge import CambridgeSource
 from lexi_ai.references.loader import ReferenceBundle, ReferenceLoader
@@ -78,47 +63,6 @@ if TYPE_CHECKING:
 # max_length so the two never drift: prompting for more than the schema accepts
 # would guarantee a validation failure and burn the structured-output retries.
 _MAX_EXAMPLES_PER_CALL = ExampleBatch.model_fields["examples"].metadata[0].max_length
-
-
-def _build_sense_relation(rel) -> SenseRelationView:
-    """Assemble one sense-level relation view from a ``SenseRelation`` row.
-
-    State is DERIVED (Q1 — no ``wsd_state`` column). A resolved edge
-    (``to_sense_id`` set) is additionally hash-VERIFIED ([F5]/Q2): if the target
-    sense's current definition no longer matches the ``target_hash`` stamped at
-    resolve time (an in-place edit or an invalidation path that Phase 5 missed),
-    the edge is surfaced as if UNRESOLVED — only ``to_word_id`` is trusted,
-    ``to_sense_id`` is dropped and the state reported as ``pending``. This is the
-    final safety net for every target-mutation path, mirroring the asset-cache
-    ``content_hash`` verified-on-read policy. Requires ``to_word`` (and, for a
-    resolved edge, ``to_sense``) to be eager-loaded on the same session.
-    """
-    to_sense = rel.to_sense
-    resolved = rel.to_sense_id is not None and to_sense is not None
-    # [F5] Hash-verify a resolved edge; a mismatch demotes it to pending-on-read.
-    if resolved and rel.target_hash != sense_content_hash(to_sense.definition):
-        resolved = False
-    if resolved:
-        state = "resolved"
-        to_sense_id = rel.to_sense_id
-        to_sense_gloss = to_sense.definition
-    else:
-        # unresolvable ⟺ an attempt was made but no sense chosen; else pending.
-        state = "unresolvable" if rel.resolve_attempted_at is not None else "pending"
-        # A stale-hash demotion reads as pending (a re-resolve is warranted).
-        if rel.to_sense_id is not None:
-            state = "pending"
-        to_sense_id = None
-        to_sense_gloss = None
-    return SenseRelationView(
-        rel_type=rel.rel_type,
-        to_word_display=render(rel.to_word.norm),
-        to_word_id=rel.to_word_id,
-        to_word_status=rel.to_word.status,
-        to_sense_id=to_sense_id,
-        to_sense_gloss=to_sense_gloss,
-        wsd_state=state,
-    )
 
 
 def _to_internal_demands(demands: list) -> list:
@@ -487,66 +431,8 @@ class Lexicon:
         """
         if not sense_ids:
             return []
-        async with session_scope(self._session_factory) as session:
-            rows = (
-                await session.execute(
-                    select(Sense)
-                    .options(
-                        selectinload(Sense.references),
-                        selectinload(Sense.examples),
-                        selectinload(Sense.collocations),
-                        selectinload(Sense.forms),
-                        # Sense-level relations (3.7 fix): get_senses previously
-                        # returned senses with EMPTY relations even when the sense
-                        # had some — a latent read-model bug vs _build_entry. Load
-                        # the edge + target word/sense nested so the view is
-                        # hermetic after the session closes (no MissingGreenlet).
-                        selectinload(Sense.relations_out).selectinload(SenseRelation.to_word),
-                        selectinload(Sense.relations_out).selectinload(SenseRelation.to_sense),
-                    )
-                    .where(Sense.id.in_(sense_ids))
-                )
-            ).scalars()
-            by_id = {s.id: self._build_sense_view(s) for s in rows}
-        return [by_id[sid] for sid in sense_ids if sid in by_id]
-
-    @staticmethod
-    def _build_sense_view(s: Sense) -> SenseView:
-        """Build a :class:`SenseView` from the ORM ``Sense`` row.
-
-        Populates ``relations`` from ``relations_out`` (3.7 fix), matching
-        ``_build_entry`` — the caller (``get_senses``) selectinloads the edge +
-        its target word/sense so this stays hermetic after the session closes.
-        Previously this omitted ``relations``, so ``get_senses`` returned senses
-        with empty relations even when the sense had some (a latent read bug).
-        """
-        return SenseView(
-            definition=s.definition,
-            tier=s.tier,
-            pos=s.pos,
-            cefr_level=s.cefr_level,
-            ipa_uk=s.ipa_uk,
-            ipa_us=s.ipa_us,
-            examples=[e.text for e in sorted(s.examples, key=lambda e: e.example_order)],
-            references=[
-                ReferenceView(source=r.source, source_ref=r.source_ref) for r in s.references
-            ],
-            forms=[
-                FormView(inf=f.inf, surface=f.surface)
-                for f in sorted(s.forms, key=lambda f: f.form_order)
-            ],
-            guideword=s.guideword,
-            grammar=list(s.grammar),
-            register=s.register,
-            connotation=s.connotation,
-            collocations=[
-                c.text for c in sorted(s.collocations, key=lambda c: c.collocation_order)
-            ],
-            domain=s.domain,
-            usage_note=s.usage_note,
-            sense_id=s.id,
-            relations=[_build_sense_relation(rel) for rel in s.relations_out],
-        )
+        async with self._uow() as uow:
+            return await uow.entries.sense_views(sense_ids)
 
     async def add_examples(
         self, sense_id: int, n: int = 3, theme: str | int | None = None
@@ -625,7 +511,7 @@ class Lexicon:
 
     async def _themed_sense_view(self, sense_id: int, theme_id: int) -> SenseView:
         """A :class:`SenseView` overlaying the themed definition + examples on the
-        neutral sense (all other fields neutral, matching :meth:`_build_entry`)."""
+        neutral sense (all other fields neutral, matching the entry read model)."""
         base = (await self.get_senses([sense_id]))[0]
         async with self._uow() as uow:
             word_id = await uow.senses.word_id_for(sense_id)
@@ -651,9 +537,8 @@ class Lexicon:
     async def get_status(self, word_id: int) -> str | None:
         """Status of a dictionary word (``done`` | ``pending`` | ``error``), or
         ``None`` if no such id exists. Never generates (FREE)."""
-        async with session_scope(self._session_factory) as session:
-            row = await session.execute(select(Word.status).where(Word.id == word_id))
-            return row.scalar_one_or_none()
+        async with self._uow() as uow:
+            return await uow.words.status(word_id)
 
     async def get_status_many(self, word_ids: list[int]) -> list[BatchResult]:
         """Batch :meth:`get_status` — one :class:`BatchResult` per input id, in
@@ -1259,53 +1144,22 @@ class Lexicon:
         return await self._entry_for_key(key, result)
 
     async def _word_norm_and_cambridge(self, lexi_word_id: int) -> tuple[str, int | None]:
-        async with session_scope(self._session_factory) as session:
-            row = (
-                await session.execute(
-                    select(Word.norm, Word.cambridge_word_id).where(Word.id == lexi_word_id)
-                )
-            ).one()
-            return row[0], row[1]
+        async with self._uow() as uow:
+            return await uow.words.norm_and_cambridge(lexi_word_id)
 
     async def _resolve(self, key: str) -> list[tuple[int, str]]:
         """Return (word_id, status) for every word matching key via headword or alias."""
-        async with session_scope(self._session_factory) as session:
-            direct = await session.execute(
-                select(Word.id, Word.status).where(Word.match_key == key)
-            )
-            found: dict[int, str] = {wid: status for wid, status in direct}
-            via_alias = await session.execute(
-                select(Word.id, Word.status)
-                .join(WordAlias, WordAlias.word_id == Word.id)
-                .where(WordAlias.alias_match_key == key)
-            )
-            for wid, status in via_alias:
-                found.setdefault(wid, status)
-            return list(found.items())
+        async with self._uow() as uow:
+            return list(await uow.words.resolve_key(key))
 
     async def _done_ids(self, key: str) -> list[int]:
         """word_ids with a ``done`` entry for this match_key (headword or alias)."""
         return [wid for wid, status in await self._resolve(key) if status == "done"]
 
-    async def _generated_by_cambridge(
-        self, cambridge_ids: list[int]
-    ) -> dict[int, tuple[int, str, str | None]]:
-        """For each Cambridge id already generated (``done``), its (lexi id, norm,
-        type). Keyed by ``cambridge_word_id`` provenance — robust to display/norm
-        key differences. First ``done`` row per id wins."""
-        if not cambridge_ids:
-            return {}
-        async with session_scope(self._session_factory) as session:
-            rows = await session.execute(
-                select(Word.cambridge_word_id, Word.id, Word.norm, Word.entry_type).where(
-                    Word.cambridge_word_id.in_(cambridge_ids), Word.status == "done"
-                )
-            )
-            out: dict[int, tuple[int, str, str | None]] = {}
-            for cam_id, wid, norm, entry_type in rows:
-                if cam_id is not None:
-                    out.setdefault(cam_id, (wid, render(norm), entry_type))
-            return out
+    async def _generated_by_cambridge(self, cambridge_ids: list[int]) -> dict[int, WordListing]:
+        """Which Cambridge ids are already generated, keyed by that provenance."""
+        async with self._uow() as uow:
+            return await uow.words.generated_by_cambridge(cambridge_ids)
 
     # --- generation path --------------------------------------------------
 
@@ -1571,116 +1425,13 @@ class Lexicon:
     # --- read model assembly ---------------------------------------------
 
     async def _to_entry(self, word_id: int, theme_id: int | None = None) -> Entry:
-        themed_map = None
-        if theme_id is not None:
-            async with self._uow() as uow:
-                themed_map = await uow.themes.overlay_for_word(word_id, theme_id)
-        async with session_scope(self._session_factory) as session:
-            word = (
-                await session.execute(
-                    select(Word)
-                    .options(
-                        selectinload(Word.senses).selectinload(Sense.references),
-                        selectinload(Word.senses).selectinload(Sense.examples),
-                        selectinload(Word.senses).selectinload(Sense.collocations),
-                        selectinload(Word.senses).selectinload(Sense.forms),
-                        # Sense-level relations (Phase 6): the edge + its target word
-                        # (always present) and target sense (present once resolved).
-                        # Nested loads keep the read hermetic (no lazy-load after the
-                        # session closes / no MissingGreenlet).
-                        selectinload(Word.senses)
-                        .selectinload(Sense.relations_out)
-                        .selectinload(SenseRelation.to_word),
-                        selectinload(Word.senses)
-                        .selectinload(Sense.relations_out)
-                        .selectinload(SenseRelation.to_sense),
-                        selectinload(Word.aliases),
-                        selectinload(Word.links_out).selectinload(WordRelation.to_word),
-                        selectinload(Word.tags).selectinload(WordTag.tag),
-                    )
-                    .where(Word.id == word_id)
-                )
-            ).scalar_one()
-            return self._build_entry(word, themed_map=themed_map)
-
-    @staticmethod
-    def _build_entry(
-        word: Word, themed_map: dict[int, tuple[str, list[str]]] | None = None
-    ) -> Entry:
-        senses = sorted(word.senses, key=lambda s: (TIER_ORDER.get(s.tier, 99), s.sense_order))
-        overlay = themed_map or {}
-        return Entry(
-            display=render(word.norm),
-            norm=word.norm,
-            entry_type=word.entry_type,
-            pos=word.pos,
-            status=word.status,
-            word_id=word.id,
-            senses=[
-                SenseView(
-                    # Overlay themed def+examples per-sense where a themed row
-                    # exists; neutral fallback otherwise. All OTHER fields stay
-                    # neutral — themes cover definition + examples only this round.
-                    definition=overlay[s.id][0] if s.id in overlay else s.definition,
-                    tier=s.tier,
-                    pos=s.pos,
-                    cefr_level=s.cefr_level,
-                    ipa_uk=s.ipa_uk,
-                    ipa_us=s.ipa_us,
-                    examples=(
-                        overlay[s.id][1]
-                        if s.id in overlay
-                        else [e.text for e in sorted(s.examples, key=lambda e: e.example_order)]
-                    ),
-                    references=[
-                        ReferenceView(source=r.source, source_ref=r.source_ref)
-                        for r in s.references
-                    ],
-                    forms=[
-                        FormView(inf=f.inf, surface=f.surface)
-                        for f in sorted(s.forms, key=lambda f: f.form_order)
-                    ],
-                    guideword=s.guideword,
-                    grammar=list(s.grammar),
-                    register=s.register,
-                    connotation=s.connotation,
-                    collocations=[
-                        c.text for c in sorted(s.collocations, key=lambda c: c.collocation_order)
-                    ],
-                    domain=s.domain,
-                    usage_note=s.usage_note,
-                    sense_id=s.id,
-                    relations=[_build_sense_relation(rel) for rel in s.relations_out],
-                )
-                for s in senses
-            ],
-            aliases=[
-                AliasView(
-                    display=render(a.alias_norm),
-                    alias_norm=a.alias_norm,
-                    type=a.type,
-                    dialect=a.dialect,
-                )
-                for a in word.aliases
-            ],
-            # word_family / confused_with word-references surface HERE, via their
-            # rel_type — no dedicated field. They ride the normalized links_out
-            # path like synonyms; grouping by rel_type is a consumer concern.
-            links=[
-                LinkView(
-                    display=render(link.to_word.norm),
-                    norm=link.to_word.norm,
-                    rel_type=link.rel_type,
-                    word_id=link.to_word.id,
-                    status=link.to_word.status,
-                )
-                for link in word.links_out
-            ],
-            topics=[
-                TopicView(name=wt.tag.name, title=wt.tag.title)
-                for wt in sorted(word.tags, key=lambda wt: wt.tag.name)
-            ],
-        )
+        async with self._uow() as uow:
+            overlay = (
+                await uow.themes.overlay_for_word(word_id, theme_id)
+                if theme_id is not None
+                else None
+            )
+            return await uow.entries.entry(word_id, overlay)
 
 
 class _LexiconSenseLoader:
