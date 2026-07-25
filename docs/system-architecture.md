@@ -35,15 +35,29 @@ lexi_ai/
     hashing.py      sense_content_hash — content identity of a sense
     questions.py    presented question -> grading spec mapping
   application/      use cases; they own transaction boundaries
+    dictionary.py   free reads: entry, senses, status, listings, stats
+    search.py       lexical search over references + semantic ranking
+    generation.py   generate / generate_many / generate_fenced, single-flight
     generation_writer.py  claim / publish / record-failure, one transaction each
-  infrastructure/db/    the SQLAlchemy adapter
-    models.py       SQLAlchemy 2.0 async ORM (portable types only)
-    types.py        Vocabulary / VocabularyList columns enforcing the vocabularies
-    sanitize.py     LLM-text cleaning + column caps shared by every repository
-    mappers.py      the single ORM <-> domain <-> read-model translation home
-    asset_gc.py     collect cached assets for rows about to be deleted
-    uow.py          SqlAlchemyUnitOfWork — one session, one commit boundary
-    repositories/   one module per aggregate: word, sense, theme, tag, stats
+    enrichment.py   added examples, embedding backfill, sense-relation resolve
+    themes.py       theme CRUD, restyle-a-word, themed overlays and examples
+    tags.py         topic-tag rename / delete / merge
+    assets.py       cache-first translation and speech
+    questions.py    prepare / retrieve / evaluate over ONE question engine
+    question_ports.py  the two narrow seams the question engine consumes
+    single_flight.py   per-key async lock registry (collapse duplicate work)
+    batching.py     order-aligned concurrent batch execution
+  infrastructure/
+    providers.py    lazy LLM / WSD / translator / TTS construction from settings
+    question_engine_factory.py  builds and caches the reader / worker engines
+    db/                 the SQLAlchemy adapter
+      models.py       SQLAlchemy 2.0 async ORM (portable types only)
+      types.py        Vocabulary / VocabularyList columns enforcing the vocabularies
+      sanitize.py     LLM-text cleaning + column caps shared by every repository
+      mappers.py      the single ORM <-> domain <-> read-model translation home
+      asset_gc.py     collect cached assets for rows about to be deleted
+      uow.py          SqlAlchemyUnitOfWork — one session, one commit boundary
+      repositories/   one module per aggregate: word, sense, theme, tag, stats, entry
   references/       read-only anchors
     cambridge.py    Cambridge SQLite (mode=ro), fetch + candidates + phrase_titles
     wordnet.py      nltk WordNet via asyncio.to_thread
@@ -71,12 +85,40 @@ lexi_ai/
       *.py          registered types plus unregistered follow-up candidates
     repository.py   QuestionRepository (durable idempotent question store)
     engine.py       QuestionEngine — prepare/retrieve/evaluate dispatcher
-  api.py            Lexicon.get_entry() — the public lazy-lookup surface
+  api.py            Lexicon — the composition root; wires the object graph only
+  facades/          THE public API: two capability facades
+    reader.py       LexiconReader — free reads (cannot mutate, cannot call a provider)
+    engine.py       LexiconEngine — generation, enrichment, curation, assets
   prep/
     phrase_overlap.py  Phase-7 one-off: classify Cambridge phrase_titles
 ```
 
-## Lazy lookup flow (`Lexicon.get_entry`)
+## The public API is a capability boundary
+
+`Lexicon` is a composition root, not a service. It owns what must be
+process-unique — the database engine, the provider registry, the single-flight
+lock registries, the cached question engines — and hands out application services
+wired over them. It exposes no use case of its own beyond `init` / `close`
+(pinned by `tests/test_facades.py`), so it cannot regrow into a god object.
+
+Callers hold one of two facades, chosen by what they are allowed to do:
+
+| | `LexiconReader` | `LexiconEngine` |
+|---|---|---|
+| mutates rows | never | yes |
+| calls a provider | never | yes |
+| needs LLM/TTS credentials | no | yes |
+| question grading | provider-free (rubric types degrade) | authoritative |
+
+A read-serving process constructs only the reader and therefore cannot spend a
+model call by accident. That is the point of the split: it is enforced by the
+absence of the method, not by a runtime flag.
+
+Services are rebuilt per accessor call. They are stateless wiring over a fresh
+unit of work, so no caller can accidentally share a session or observe another
+caller's transaction; the state that must be shared lives on the `Lexicon`.
+
+## Lazy lookup flow (`LexiconReader.get_entry` / `LexiconEngine.generate`)
 
 ```
 input → match_key() → resolve against words.match_key AND word_aliases.alias_match_key
@@ -256,9 +298,11 @@ single session): words-by-status, senses, examples, tags, themes, themed-words
 
 ## Question engine
 
-`Lexicon.questions` turns a `done` entry into vocabulary questions and grades
-answers. It *manages* questions (create / read / delete / grade); it does not
+The question services turn a `done` entry into vocabulary questions and grade
+answers. They *manage* questions (create / read / delete / grade); they do not
 *use* them — rotation, quiz sessions, SRS, and progress are the application's job.
+Two engines exist per process: the reader's, built without providers, and the
+worker's, built with the LLM, the rubric judge, and the speech port.
 
 **Three axes wired through `answer_kind`.** A **format** declares an `answer_kind`
 (what an answer looks like: `single_choice` / `text_span` / `free_text` /
@@ -338,7 +382,8 @@ Postgres dialects (`tests/test_models.py::test_schema_compiles_on_both_dialects`
   ONE word + aliases. Enforced by the prompt; schema allows `units: list`.
 - **cefr Cambridge-first** (#13): when a sense references a Cambridge sense that
   carries a CEFR value, that wins over the LLM's guess. The repository takes a
-  `cambridge_cefr` map (built by `api.py` from the bundle) — no source coupling.
+  `cambridge_cefr` map (built by the generation service from the bundle) — no
+  source coupling.
 - **Stub rows** (#11): a mentioned related word becomes a `pending` `words` row
   immediately, so links are real ids and the stub doubles as the lazy-gen queue.
 - **Async safety:** the repository never touches relationship collections on a
@@ -350,7 +395,8 @@ Postgres dialects (`tests/test_models.py::test_schema_compiles_on_both_dialects`
 
 `lexi_ai` is the dictionary domain library. It owns transport-agnostic models,
 repositories, generation, questions, grading, translation, and TTS; consumers
-construct a read-only or provider-enabled `Lexicon` according to their process.
+build one `Lexicon` and take the `LexiconReader` or `LexiconEngine` facade that
+matches what that process is permitted to do.
 It must not own HTTP/gRPC adapters, Redis queues, task/outbox orchestration, or
 service deployment credentials.
 
