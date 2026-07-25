@@ -16,9 +16,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from lexi_ai.application.assets import AssetService
 from lexi_ai.application.generation_writer import GenerationWriter
 from lexi_ai.application.questions import QuestionService
-from lexi_ai.assets.repository import AssetRepository, content_hash, normalize_asset_params
+from lexi_ai.assets.repository import AssetRepository
 from lexi_ai.config import Settings, get_settings
 from lexi_ai.constants import canonical_cambridge_ref
 from lexi_ai.db import create_engine, create_session_factory, init_models
@@ -106,6 +107,12 @@ class Lexicon:
         # resolved via the ``_wsd`` property.
         self._wsd_judge = wsd_judge
         self._wsd_built = wsd_judge is not None
+        # Providers built on first use. Explicit fields rather than getattr
+        # sentinels so the state a caller can inject is visible on the class.
+        self._translator_impl = None
+        self._tts_impl = None
+        self._themed_gen = None
+        self._theme_meta_gen = None
         self._locks: dict[str, asyncio.Lock] = {}
         # Single-flight lock for the THEMED overlay step (2.6), keyed on
         # (word_id, theme_id) — word_id is the canonical resolution of the word's
@@ -782,7 +789,7 @@ class Lexicon:
 
     def _themed_generator(self):
         """Lazy themed generator; uses settings/OpenAI proxy by default."""
-        if getattr(self, "_themed_gen", None) is None:
+        if self._themed_gen is None:
             from lexi_ai.theming.generator import ThemedGenerator
 
             self._themed_gen = ThemedGenerator(settings=get_settings())
@@ -790,7 +797,7 @@ class Lexicon:
 
     def _theme_metadata_generator(self):
         """Lazy theme metadata generator."""
-        if getattr(self, "_theme_meta_gen", None) is None:
+        if self._theme_meta_gen is None:
             from lexi_ai.theming.generator import ThemeMetadataGenerator
 
             self._theme_meta_gen = ThemeMetadataGenerator(settings=get_settings())
@@ -798,59 +805,35 @@ class Lexicon:
 
     # --- cached assets ----------------------------------------------------
 
-    async def source_hash(self, source_kind: str, source_id: int) -> str | None:
-        """Return the current content fingerprint for a translatable source.
+    def _asset_service(self) -> AssetService:
+        """The asset service, rebuilt per call over the lazily-built cache."""
+        settings = get_settings()
+        return AssetService(
+            self._require_assets(),
+            self._translator,
+            self._tts_provider,
+            voice=settings.tts_voice,
+            fmt=settings.tts_format,
+            gather=self._gather_batch,
+        )
 
-        Service workers use this narrow read to fence delayed translation jobs
-        before they call a provider. ``None`` means the source no longer exists.
-        """
-        text = await self._require_assets().resolve_source_text(source_kind, source_id)
-        return None if text is None else content_hash(text)
+    async def source_hash(self, source_kind: str, source_id: int) -> str | None:
+        """The current content fingerprint of a translatable source, else ``None``."""
+        return await self._asset_service().source_hash(source_kind, source_id)
 
     async def translate_field(self, source_kind: str, source_id: int, lang: str) -> str:
-        """Translate the source text at ``(source_kind, source_id)`` into ``lang``,
-        cache-first over the reference store (hash-verified).
-
-        Resolves the CURRENT source text, then reads the cache verified against it:
-        a repeat call with unchanged source spends ZERO LLM; a regenerated/reused
-        source id re-translates (miss), never returns stale text. Empty/whitespace
-        source returns as-is (no LLM, no row). Raises ``ValueError`` on a bad ref
-        (source row absent) or when no LLM is configured.
-        """
-        assets = self._require_assets()
-        text = await assets.resolve_source_text(source_kind, source_id)
-        if text is None:
-            raise ValueError(f"no source text for ({source_kind!r}, {source_id})")
-        if not text.strip():
-            return text
-        params = normalize_asset_params("translate", lang=lang)
-        cached = await assets.get(source_kind, source_id, "translate", params, text)
-        if cached is not None and cached.text_value is not None:
-            return cached.text_value
-        translator = self._translator()
-        if translator is None:
-            raise ValueError("no LLM configured for translation")
-        result = await translator.translate(text, lang)
-        stored = await assets.put_text(source_kind, source_id, "translate", params, text, result)
-        return stored.text_value or result
+        """Translate a source into ``lang``, cache-first over the reference store."""
+        return await self._asset_service().translate(source_kind, source_id, lang)
 
     async def translate_sense(self, sense_id: int, lang: str) -> str:
-        """Translate a sense's definition into ``lang`` (the everyday surface).
-
-        Convenience for ``translate_field("sense_def", sense_id, lang)``."""
+        """Translate a sense's definition — the everyday translation surface."""
         return await self.translate_field("sense_def", sense_id, lang)
 
     async def translate_many(
         self, refs: list[tuple[str, int]], lang: str, *, concurrency: int = 5
     ) -> list[BatchResult]:
-        """Batch :meth:`translate_field` — one :class:`BatchResult` per
-        ``(source_kind, source_id)`` ref, in order, up to ``concurrency`` in
-        flight. Cache-first per item, so a repeated source spends zero LLM."""
-
-        async def _one(ref: tuple[str, int]) -> str:
-            return await self.translate_field(ref[0], ref[1], lang)
-
-        return await self._gather_batch(refs, _one, concurrency=concurrency)
+        """Batch :meth:`translate_field`, order-aligned, cache-first per item."""
+        return await self._asset_service().translate_many(refs, lang, concurrency=concurrency)
 
     async def tts_many(
         self,
@@ -860,27 +843,15 @@ class Lexicon:
         *,
         concurrency: int = 5,
     ) -> list[BatchResult]:
-        """Batch :meth:`tts_field` — one :class:`BatchResult` per
-        ``(source_kind, source_id)`` ref, in order, up to ``concurrency`` in
-        flight. Cache-first per item, so a source already synthesized by an
-        EARLIER call spends zero provider call (two identical refs in the SAME
-        batch may both miss and synthesize — the content-addressed put path
-        dedups the row, worst case one wasted call). Mirror of
-        :meth:`translate_many`; one item's failure (e.g. the unconfigured-TTS
-        stub raising) is reported without aborting the rest."""
-
-        async def _one(ref: tuple[str, int]) -> Asset:
-            return await self.tts_field(ref[0], ref[1], voice, fmt)
-
-        return await self._gather_batch(refs, _one, concurrency=concurrency)
+        """Batch :meth:`tts_field`, order-aligned; one failure never aborts the rest."""
+        return await self._asset_service().speak_many(
+            refs, voice, fmt, concurrency=concurrency
+        )
 
     async def stats(self) -> Stats:
-        """Read-only dictionary counts (never generates, no LLM). One round of
-        grouped COUNT queries — words by status, senses, examples, tags, themes,
-        words with any themed overlay, assets by kind, and questions."""
+        """Read-only dictionary counts in one grouped snapshot (no LLM)."""
         async with self._uow() as uow:
-            snapshot = await uow.stats.snapshot()
-        return snapshot
+            return await uow.stats.snapshot()
 
     def _require_assets(self) -> AssetRepository:
         """The asset cache, constructed lazily from settings if not injected."""
@@ -889,11 +860,8 @@ class Lexicon:
         return self._assets
 
     def _translator(self):
-        """Lazy translator; ``None`` when no LLM is configured (empty api key).
-
-        An injected translator (``self._translator_impl`` pre-set) is used as-is.
-        """
-        if getattr(self, "_translator_impl", None) is not None:
+        """The translator, or ``None`` when no LLM is configured."""
+        if self._translator_impl is not None:
             return self._translator_impl
         settings = get_settings()
         if not settings.llm_api_key:
@@ -906,46 +874,22 @@ class Lexicon:
     async def tts_field(
         self, source_kind: str, source_id: int, voice: str | None = None, fmt: str | None = None
     ) -> Asset:
-        """Synthesize speech for the source at ``(source_kind, source_id)``,
-        cache-first over the reference store (hash-verified).
-
-        A verified cache hit returns the ``Asset`` WITHOUT calling the provider.
-        On a miss the provider is invoked; when it is the STUB (no ``LEXI_TTS_*``
-        configured) it raises ``NotImplementedError`` and no fake audio is cached.
-        Empty/whitespace source short-circuits. Raises ``ValueError`` on a bad ref.
-        The audio bytes are stored via ``put_file`` keyed by the reference tuple.
-        """
-        settings = get_settings()
-        voice = voice if voice is not None else settings.tts_voice
-        fmt = fmt if fmt is not None else settings.tts_format
-        params = normalize_asset_params("tts", voice=voice, fmt=fmt)
-        assets = self._require_assets()
-        text = await assets.resolve_source_text(source_kind, source_id)
-        if text is None:
-            raise ValueError(f"no source text for ({source_kind!r}, {source_id})")
-        if not text.strip():
-            return Asset(source_kind=source_kind, source_id=source_id, kind="tts", params=params)
-        cached = await assets.get(source_kind, source_id, "tts", params, text)
-        if cached is not None:
-            return cached
-        provider = self._tts_provider()
-        data = await provider.synthesize(text, voice, fmt)  # stub raises here
-        return await assets.put_file(source_kind, source_id, "tts", params, text, data, ext=fmt)
+        """Synthesize speech for a source, cache-first over the reference store."""
+        return await self._asset_service().speak(source_kind, source_id, voice, fmt)
 
     async def tts_sense(
         self, sense_id: int, voice: str | None = None, fmt: str | None = None
     ) -> Asset:
-        """Synthesize speech for a sense's definition (the everyday surface).
-
-        Convenience for ``tts_field("sense_def", sense_id, voice, fmt)``."""
+        """Synthesize a sense's definition — the everyday speech surface."""
         return await self.tts_field("sense_def", sense_id, voice, fmt)
 
     def _tts_provider(self):
-        """Lazy TTS provider: the real OpenAI-compatible one when ``LEXI_TTS_*`` is
-        configured, else the stub (so an unconfigured install fails loudly rather
-        than caching fake audio). An injected provider is used as-is.
+        """The speech provider: the real one when configured, else the stub.
+
+        The stub raises instead of returning audio, so an unconfigured install fails
+        loudly rather than caching something fake.
         """
-        if getattr(self, "_tts_impl", None) is not None:
+        if self._tts_impl is not None:
             return self._tts_impl
         settings = get_settings()
         if settings.tts_api_key or settings.tts_base_url:
@@ -963,25 +907,22 @@ class Lexicon:
         return self._tts_impl
 
     async def get_asset(self, asset_id: int) -> Asset | None:
-        """A cached asset (translation or TTS) by its id, or ``None``. FREE."""
-        return await self._require_assets().get_by_id(asset_id)
+        """A cached asset by id, or ``None``."""
+        return await self._asset_service().get(asset_id)
 
     async def list_assets(
         self, *, kind: str | None = None, limit: int | None = None, offset: int = 0
     ) -> list[Asset]:
-        """Cached assets, oldest first, optionally filtered by ``kind``
-        (``"translate"`` | ``"tts"``). FREE."""
-        return await self._require_assets().list(kind=kind, limit=limit, offset=offset)
+        """Cached assets, oldest first, optionally filtered by kind."""
+        return await self._asset_service().list(kind=kind, limit=limit, offset=offset)
 
     async def delete_asset(self, asset_id: int) -> bool:
-        """Delete a cached asset by id (and its backing file, if any); return
-        whether one was removed."""
-        return await self._require_assets().delete(asset_id)
+        """Delete one cached asset and its backing file."""
+        return await self._asset_service().delete(asset_id)
 
     async def purge_assets(self, *, kind: str | None = None) -> int:
-        """Delete every cached asset (optionally one ``kind``), unlinking their
-        backing files. Returns the number removed."""
-        return await self._require_assets().purge(kind=kind)
+        """Delete every cached asset, unlinking backing files."""
+        return await self._asset_service().purge(kind=kind)
 
     async def generate(
         self,
