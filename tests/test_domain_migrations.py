@@ -11,7 +11,7 @@ from sqlalchemy import UniqueConstraint, inspect
 from lexi_ai.config import Settings
 from lexi_ai.db import create_engine, init_models
 from lexi_ai.infrastructure.db.models import Question, Sense
-from tests.conftest import PG_SCHEMA, requires_postgres
+from tests.conftest import PG_SCHEMA, requires_asyncpg_driver, requires_postgres
 
 ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = ROOT / "lexi_ai" / "migrations" / "alembic.ini"
@@ -29,6 +29,7 @@ def _alembic(*args: str) -> str:
     return completed.stdout
 
 
+@requires_asyncpg_driver
 def test_postgres_engine_translates_the_default_schema():
     engine = create_engine(Settings(db_url="postgresql+asyncpg://unused", db_schema="dictionary"))
     try:
@@ -45,6 +46,7 @@ def test_sqlite_engine_does_not_translate_the_default_schema():
         engine.sync_engine.dispose()
 
 
+@requires_asyncpg_driver
 async def test_init_models_rejects_postgres_bootstrap_ddl():
     engine = create_engine(Settings(db_url="postgresql+asyncpg://unused"))
     try:

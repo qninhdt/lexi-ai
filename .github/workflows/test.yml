@@ -1,0 +1,136 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Sync dev deps
+        run: uv sync
+      - name: Ruff lint
+        run: uv run ruff check lexi_ai tests examples
+      - name: Ruff format
+        run: uv run ruff format --check lexi_ai tests examples
+      # The layering rules are not self-detecting: a domain module importing the
+      # ORM works perfectly at runtime and only shows up as coupling later.
+      - name: Import boundaries
+        run: uv run lint-imports
+
+  test:
+    # Hermetic tier: SQLite + the in-memory vector index (forced in conftest).
+    # No network, no service containers, no LLM — providers are faked at the port.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      # No --extra: this tier must pass on a base install. The dev group brings
+      # lancedb, so the LanceDB adapter's contract tests run here too.
+      - name: Sync dev deps
+        run: uv sync
+      - name: Assert tests collected (no silent gap)
+        run: |
+          uv run pytest --collect-only -q >/dev/null \
+            || { echo "no tests collected (or collection error)"; exit 1; }
+      - name: Run tests
+        run: uv run pytest -q
+
+  test-postgres:
+    # The opt-in dual-DB tier. SQLite silently tolerates NUL bytes, ignores
+    # VARCHAR(n) limits and accepts naive datetimes; Postgres does not. Those
+    # defects are only reachable with a real server.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lexi
+          POSTGRES_PASSWORD: lexi
+          POSTGRES_DB: lexi_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Sync dev deps with the asyncpg driver
+        run: uv sync --extra postgres
+      - name: Run the full suite against Postgres
+        env:
+          LEXI_TEST_PG_URL: postgresql+asyncpg://lexi:lexi@localhost:5432/lexi_test
+          # Without this the tier would skip itself on a dead container or a
+          # missing driver and the job would still go green (see tests/conftest.py).
+          LEXI_REQUIRE_PG: "1"
+        run: uv run pytest -q
+
+  migrations:
+    # A metadata create_all (what the SQLite tier uses) does not prove Alembic's
+    # upgrade path, and an ORM change that nobody wrote a migration for is
+    # invisible until deploy. `alembic check` is the drift detector.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lexi
+          POSTGRES_PASSWORD: lexi
+          POSTGRES_DB: lexi_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      LEXI_DB_URL: postgresql+asyncpg://lexi:lexi@localhost:5432/lexi_test
+      LEXI_DB_SCHEMA: lexi
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Sync dev deps with the asyncpg driver
+        run: uv sync --extra postgres
+      - name: Upgrade a fresh database to head
+        run: uv run alembic -c lexi_ai/migrations/alembic.ini upgrade head
+      - name: Assert the ORM matches head (no un-migrated model change)
+        run: uv run alembic -c lexi_ai/migrations/alembic.ini check
+      # pycil's deploy gate runs the upgrade unattended, so a migration that
+      # cannot be undone is a one-way door in production.
+      - name: Assert the downgrade path works
+        run: |
+          uv run alembic -c lexi_ai/migrations/alembic.ini downgrade base
+          uv run alembic -c lexi_ai/migrations/alembic.ini upgrade head
+      # Consumers embed the dictionary in their own schema; rendering offline SQL
+      # catches a migration that only works against the default namespace.
+      - name: Render offline SQL for a non-default schema
+        run: |
+          uv run alembic -c lexi_ai/migrations/alembic.ini \
+            -x schema=dictionary upgrade head --sql >/dev/null

@@ -42,16 +42,37 @@ DOMAIN_ALEMBIC_CONFIG = ROOT / "lexi_ai" / "migrations" / "alembic.ini"
 PG_SCHEMA = "lexi_test"
 
 _HAS_ASYNCPG = importlib.util.find_spec("asyncpg") is not None
+_PG_READY = bool(_HAS_ASYNCPG and PG_URL)
+
+# A tier that skips itself is invisible: the job goes green having proved
+# nothing. Where the Postgres tier is supposed to run (CI, with a service
+# container), LEXI_REQUIRE_PG=1 turns the skip into a collection error, so a
+# dead container or a forgotten `--extra postgres` fails loudly instead of
+# quietly shrinking the suite by 10 tests.
+if os.environ.get("LEXI_REQUIRE_PG") == "1" and not _PG_READY:
+    raise RuntimeError(
+        "LEXI_REQUIRE_PG=1 but the Postgres tier cannot run: "
+        f"asyncpg installed={_HAS_ASYNCPG}, LEXI_TEST_PG_URL set={bool(PG_URL)}"
+    )
 
 # Both an absent driver AND a missing URL skip the whole tier rather than
 # erroring (Phase 0 guard). Apply as ``pytestmark = requires_postgres`` on any
 # module that uses ``pg_session_factory``.
 requires_postgres = pytest.mark.skipif(
-    not (_HAS_ASYNCPG and PG_URL),
+    not _PG_READY,
     reason=(
         "Postgres tier: needs the asyncpg driver (uv sync --extra postgres) "
         "and LEXI_TEST_PG_URL set to a disposable database"
     ),
+)
+
+# Weaker gate for tests that only need the asyncpg DIALECT, not a server:
+# SQLAlchemy imports the driver while building the engine, so `create_engine`
+# on a postgresql+asyncpg URL raises ModuleNotFoundError on a base install even
+# though nothing ever connects.
+requires_asyncpg_driver = pytest.mark.skipif(
+    not _HAS_ASYNCPG,
+    reason="needs the asyncpg driver (uv sync --extra postgres); no server required",
 )
 
 
