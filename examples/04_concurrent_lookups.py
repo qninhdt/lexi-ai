@@ -20,14 +20,17 @@ async def main(word: str, n: int) -> None:
     lex = build_lexicon()
     await lex.init()
 
-    # Count actual LLM generations by wrapping the bound generator.
+    # Count actual LLM generations by wrapping the bound generator. Forward every
+    # argument untouched: this wrapper must not restate the generator's signature,
+    # or it silently breaks the next time a parameter is added (it did — a later
+    # `existing_tags` argument made this example raise TypeError).
     calls = 0
     original = lex._providers.generator.generate
 
-    async def counting_generate(bundle):
+    async def counting_generate(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return await original(bundle)
+        return await original(*args, **kwargs)
 
     lex._providers.generator.generate = counting_generate  # type: ignore[method-assign]
 

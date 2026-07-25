@@ -8,6 +8,7 @@ custom strings generate, and force regenerates.
 """
 
 import asyncio
+import sys
 
 import pytest
 from sqlalchemy import event, select
@@ -37,6 +38,20 @@ from lexi_ai.references.loader import ReferenceBundle
 # `vectors=None` means the semantic feature is OFF, a state these tests exercise,
 # so the helpers below cannot treat it as "not supplied".
 _UNSET = object()
+
+
+@pytest.fixture
+def encoder_unavailable(monkeypatch):
+    """Make the ``[embeddings]`` extra look absent whether or not it is installed.
+
+    `None` in ``sys.modules`` makes ``import torch`` raise ImportError, which is
+    what ``Embedder`` translates into ``EmbeddingUnavailable``. Without this the
+    tests below silently depend on the ambient environment: they pass on CI's base
+    install and invert for anyone who has run `uv sync --extra embeddings`, where a
+    real MiniLM loads and actually embeds.
+    """
+    for module in ("torch", "transformers"):
+        monkeypatch.setitem(sys.modules, module, None)
 
 
 @pytest.fixture
@@ -745,7 +760,7 @@ async def test_semantic_search_respects_k(engine):
     assert await lex.reader().semantic_search("pet", k=0) == []
 
 
-async def test_semantic_search_empty_when_nothing_embedded(engine):
+async def test_semantic_search_empty_when_nothing_embedded(engine, encoder_unavailable):
     """A working encoder over an empty index: [] is the truthful answer here."""
     lex, _gen, _sf = _pet_lexicon(engine, embedder=None)
     await lex.engine().generate((await lex.reader().search("dog"))[0])
@@ -754,7 +769,7 @@ async def test_semantic_search_empty_when_nothing_embedded(engine):
     assert await lex.reader().semantic_search("pet") == []
 
 
-async def test_semantic_search_raises_when_the_encoder_is_missing(engine):
+async def test_semantic_search_raises_when_the_encoder_is_missing(engine, encoder_unavailable):
     """A missing [embeddings] extra is a broken installation, not an empty result."""
     lex, _gen, _sf = _pet_lexicon(engine, embedder=None)
     await lex.engine().generate((await lex.reader().search("dog"))[0])

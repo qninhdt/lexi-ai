@@ -18,7 +18,7 @@ is never hardcoded** (`LEXI_LLM_MODEL`). Defaults in `.env.example`:
 |-----|---------|
 | `LEXI_LLM_BASE_URL` | proxy endpoint |
 | `LEXI_LLM_API_KEY` | key |
-| `LEXI_LLM_MODEL` | model id (`cd/gpt-5.5`) |
+| `LEXI_LLM_MODEL` | model id — never hardcoded; see `.env.example` |
 | `LEXI_LLM_TEMPERATURE` | sampling temperature |
 | `LEXI_LLM_REASONING_EFFORT` | `minimal`/`low`/`medium`/`high` (read by `_common.py`) |
 | `LEXI_DB_URL` | generated-dictionary cache (SQLite) |
@@ -26,28 +26,35 @@ is never hardcoded** (`LEXI_LLM_MODEL`). Defaults in `.env.example`:
 
 Run every script **from the repo root** so `.env` and `./data` resolve.
 
-## Public API (suggestion-centric)
+## Public API (two facades)
 
 A raw string is ambiguous (one string → many Cambridge words, or a typo), so you
-never create an entry from it directly. The flow is **resolve → pick → create**:
+never create an entry from it directly. The flow is **search → pick → generate**,
+and it is split across two facades: `reader()` can only read and never spends
+money, `engine()` is everything that may generate or write.
 
 ```python
-sugs  = await lex.resolve("serendipity")   # FREE — ranked Cambridge matches
-entry = await lex.get(sugs.items[0])        # create-or-return the chosen suggestion
+lex     = Lexicon.from_settings()          # the only entry point
+results = await lex.reader().search("serendipity")   # FREE — ranked matches
+entry   = await lex.engine().generate(results[0])    # create-or-return the pick
 ```
 
-| Method | Cost | Purpose |
-|--------|------|---------|
-| `resolve(raw) -> Suggestions` | FREE | ranked Cambridge matches (exact 1.0 → fuzzy), each flagged `done`/`pending`/`absent` |
-| `get(sug) -> Entry` | may generate | create-or-return the entry for a chosen suggestion |
-| `get_many(sugs) -> list[Entry]` | may generate | concurrent, order-preserving, dedups |
-| `peek(sug) -> Entry \| None` | FREE | cached entry or `None` |
-| `exists(sug) -> bool` | FREE | is it generated? |
-| `status(sug) -> str \| None` | FREE | `done`/`pending`/`error`/`None` |
-| `add(raw) -> Entry` | may generate | custom entry for a word Cambridge lacks; never overwrites |
+| Method | Facade | Cost | Purpose |
+|--------|--------|------|---------|
+| `search(query) -> list[SearchResult]` | reader | FREE | ranked matches, generated hits folded into suggestions |
+| `semantic_search(query, k) -> list[SemanticHit]` | reader | FREE | rank by meaning; opt-in feature, raises when off |
+| `get_entry(word_id, theme=None) -> Entry` | reader | FREE | one entry, optionally themed |
+| `get_many(...) -> list[Entry]` | reader | FREE | batched reads |
+| `get_status(word_id) -> str \| None` | reader | FREE | `done`/`pending`/`error`/`None` |
+| `generate(result) -> Entry` | engine | may generate | create-or-return the chosen search result |
+| `generate_many(results) -> ...` | engine | may generate | concurrent, order-preserving, dedups |
+| `add_examples(sense_id, n, theme)` | engine | generates | more tagged examples for one sense |
+| `backfill_embeddings(limit=None) -> int` | engine | FREE (local) | reconcile the vector index; raises when the feature is off |
+| `delete_entry(word_id) -> bool` | engine | FREE | remove an entry and forget its vectors |
 
 The demos 01–07 use a `lookup(lex, raw)` helper in `_common.py` that wraps
-"resolve then get the top match" to stay short; **08 shows the real two-step flow.**
+"search then generate the top match" to stay short; **08 shows the real two-step
+flow.**
 
 ## Trials
 
