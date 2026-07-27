@@ -433,6 +433,35 @@ async def test_get_per_sense_fallback(session_factory, repo):
     assert entry.senses[1].definition == "neutral def 1"  # fallback
 
 
+async def test_themed_read_keeps_the_neutral_headword(session_factory, repo):
+    # A theme restyles the definition and examples. The headword is not a themeable
+    # surface — it is render(norm) — so a themed read must return the same word as a
+    # neutral one even where an overlay row exists.
+    word_id, sense_ids = await _make_done_word(session_factory)
+    theme = await repo.create_theme("Bard", "voice")
+    async with session_scope(session_factory) as session:
+        session.add(
+            ThemedSense(
+                sense_id=sense_ids[0],
+                theme_id=theme.id,
+                definition="a beast of flame and legend",
+                examples=[ThemedExample(text="lo, the dragon wakes", example_order=0)],
+            )
+        )
+        await session.flush()
+    lex = _lexicon(session_factory)
+
+    neutral = await lex.reader().get_entry(word_id)
+    themed = await lex.reader().get_entry(word_id, theme="bard")
+
+    # The overlay landed on the two surfaces a theme owns.
+    assert themed.senses[0].definition == "a beast of flame and legend"
+    assert themed.senses[0].examples == ["lo, the dragon wakes"]
+    # And nowhere near the headword.
+    assert themed.senses[0].word == neutral.senses[0].word == "dragon"
+    assert themed.senses[0].word_id == neutral.senses[0].word_id == word_id
+
+
 async def test_get_and_generate_by_theme_id(session_factory, repo):
     word_id, sense_ids = await _make_done_word(session_factory)
     theme = await repo.create_theme("Bard", "speak like a bard")

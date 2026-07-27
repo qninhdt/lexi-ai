@@ -899,6 +899,10 @@ async def test_get_senses_resolves_by_id(engine):
     assert len(views) == len(sense_ids)
     assert views[0].definition == "def of color"
     assert views[0].sense_id == sense_ids[0]
+    # The headword travels with the sense: a caller batch-reading senses by id has
+    # no entry in hand to label them with.
+    assert views[0].word == entry.display == "color"
+    assert views[0].word_id == entry.word_id
 
 
 async def test_get_senses_empty_and_missing(engine):

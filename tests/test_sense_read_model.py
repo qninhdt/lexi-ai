@@ -282,3 +282,111 @@ async def test_entry_links_still_word_level(engine):
     assert fam[0].status == "pending"
     # And the word-level relation is NOT duplicated onto the sense relations.
     assert entry.senses[0].relations == []
+
+
+# --- headword on the sense view -------------------------------------------
+#
+# A sense read in isolation used to carry no word at all: ``get_senses`` returned
+# definitions with nothing to label them, so a vocabulary list built on sense ids
+# was unpresentable. ``SenseView.word`` closes that, and like ``Entry.display`` it
+# is always ``render(norm)`` rather than a stored column — asserted below with a
+# brace-token norm whose rendered form differs from what is persisted.
+
+
+async def test_get_senses_carries_the_rendered_headword(engine):
+    sf = create_session_factory(engine)
+    repo = PersistenceDriver(sf)
+    await repo.persist_result(
+        GeneratedResult(
+            units=[
+                _entry(
+                    "give {sb} a hand",
+                    [_sense("to help someone", "verb")],
+                    entry_type="idiom",
+                )
+            ]
+        )
+    )
+    async with sf() as s:
+        sense_id, word_id = (await s.execute(select(Sense.id, Sense.word_id))).one()
+    lex = await _reading_lexicon(engine, repo)
+    views = await lex.reader().get_senses([sense_id])
+
+    assert len(views) == 1
+    # Rendered, not the stored norm: proves the derivation rather than a passthrough.
+    assert views[0].word == "give somebody a hand"
+    assert views[0].word_id == word_id
+
+
+async def test_entry_senses_agree_with_the_entry_headword(engine):
+    # The two assembly paths must not drift: a sense reached through get_entry has
+    # to report the same headword and word id as the parent entry.
+    sf = create_session_factory(engine)
+    repo = PersistenceDriver(sf)
+    words = await repo.persist_result(
+        GeneratedResult(
+            units=[
+                _entry(
+                    "bright",
+                    [
+                        _sense("full of light", "adjective"),
+                        _sense("intelligent", "adjective"),
+                    ],
+                )
+            ]
+        )
+    )
+    lex = await _reading_lexicon(engine, repo)
+    entry = await lex.reader().get_entry(words[0].id)
+
+    assert entry.display == "bright"
+    assert len(entry.senses) == 2
+    for sense in entry.senses:
+        assert sense.word == entry.display
+        assert sense.word_id == entry.word_id
+
+
+async def test_get_senses_loads_the_word_without_a_query_per_sense(engine):
+    # The headword arrives through an eager load on the standalone sense query, so
+    # the statement count must not grow with the number of senses. Three senses
+    # spread over three DIFFERENT words is the case that would expose an N+1: a
+    # lazy `sense.word` would issue one SELECT per distinct word.
+    sf = create_session_factory(engine)
+    repo = PersistenceDriver(sf)
+    await repo.persist_result(
+        GeneratedResult(
+            units=[
+                _entry("bright", [_sense("full of light", "adjective")]),
+                _entry("dark", [_sense("without light", "adjective")]),
+                _entry("dim", [_sense("faintly lit", "adjective")]),
+            ]
+        )
+    )
+    async with sf() as s:
+        sense_ids = list((await s.execute(select(Sense.id).order_by(Sense.id))).scalars())
+    assert len(sense_ids) == 3
+
+    selects: list[str] = []
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def _count(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        if statement.lstrip().upper().startswith("SELECT"):
+            selects.append(statement)
+
+    lex = await _reading_lexicon(engine, repo)
+
+    selects.clear()
+    one = await lex.reader().get_senses(sense_ids[:1])
+    for_one = len(selects)
+
+    selects.clear()
+    three = await lex.reader().get_senses(sense_ids)
+    for_three = len(selects)
+
+    assert len(one) == 1 and len(three) == 3
+    assert all(view.word for view in three)
+    # selectinload issues a fixed number of statements regardless of row count.
+    assert for_three == for_one, (
+        f"{for_three} statements for 3 senses vs {for_one} for 1 — "
+        "the word is being lazy-loaded per sense"
+    )

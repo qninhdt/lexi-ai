@@ -144,6 +144,10 @@ def sense_view(sense: Sense, overlay: ThemedOverlay | None = None) -> SenseView:
         domain=sense.domain,
         usage_note=sense.usage_note,
         sense_id=sense.id,
+        # Never overlaid: a theme restyles the definition and examples, not the
+        # headword, so this reads from the word on both branches.
+        word=render(sense.word.norm),
+        word_id=sense.word_id,
         relations=[sense_relation_view(relation) for relation in sense.relations_out],
     )
 

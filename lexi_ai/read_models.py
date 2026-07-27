@@ -52,6 +52,14 @@ class SenseView:
     # (None for views synthesized without a row). Lets the questions engine record
     # which sense a generated question targets, for provenance.
     sense_id: int | None = None
+    # The headword this sense belongs to, plus its word id. ``word`` is always
+    # ``render(norm)`` — never a stored column — exactly like ``Entry.display``,
+    # so a themed read leaves it neutral. Carried on the sense because a sense
+    # read in isolation is otherwise unpresentable: a consumer listing senses has
+    # a definition with no word attached to label it. None only for a view
+    # synthesized with no word in scope.
+    word: str | None = None
+    word_id: int | None = None
     # Sense-level semantic relations THIS sense emits (synonym/antonym/hypernym/
     # ...). Distinct from ``Entry.links`` (word-level): these are anchored to the
     # specific meaning that emitted them. Additive — a consumer reading only

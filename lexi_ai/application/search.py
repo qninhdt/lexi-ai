@@ -145,5 +145,12 @@ class SearchService:
             display=render(row.norm),
             entry_type=row.entry_type,
             score=score,
-            sense=SenseView(definition=row.definition, tier=row.tier, pos=None, cefr_level=None),
+            sense=SenseView(
+                definition=row.definition,
+                tier=row.tier,
+                pos=None,
+                cefr_level=None,
+                word=render(row.norm),
+                word_id=row.word_id,
+            ),
         )

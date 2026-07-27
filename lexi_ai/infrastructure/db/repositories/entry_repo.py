@@ -71,7 +71,13 @@ class SqlEntryRepo:
             return []
         rows = (
             await self._session.execute(
-                select(Sense).options(*_sense_loads(selectinload)).where(Sense.id.in_(sense_ids))
+                select(Sense)
+                # The parent word, for the headword the view carries. Added here
+                # and NOT in ``_sense_loads``, because that list is also applied
+                # nested under ``Word.senses`` in ``entry``, where the word is
+                # already loaded and this would be redundant work.
+                .options(*_sense_loads(selectinload), selectinload(Sense.word))
+                .where(Sense.id.in_(sense_ids))
             )
         ).scalars()
         by_id = {sense.id: sense_view(sense) for sense in rows}
