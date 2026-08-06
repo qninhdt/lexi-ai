@@ -829,6 +829,38 @@ async def test_backfill_prunes_vectors_whose_sense_is_gone(engine):
     assert "4242" not in await lex._vectors.ids()
 
 
+async def test_the_prune_reaps_an_orphan_left_by_a_retired_model(engine):
+    """The prune is deliberately unfiltered by model, unlike `embed_missing`.
+
+    The two sit next to each other and read as an inconsistency, so this states
+    which is right. A vector's id is the bare sense id — `model` is metadata, and
+    an upsert under a new model replaces the same row — so "is this sense still
+    alive" has nothing to do with which model embedded it.
+
+    Filtering the prune by the current model would therefore be a leak, not a
+    tightening: a vector written by a retired model would match no filter the
+    current encoder ever passes, so it could never be reaped and would keep
+    consuming a slot in every top-k answer for the life of the index.
+    """
+    lex, _gen, _sf = _pet_lexicon(engine, _fake_embedder("m2"))
+    await lex.engine().generate((await lex.reader().search("dog"))[0])
+
+    # An orphan from a model this lexicon no longer uses: its sense does not exist.
+    await lex._vectors.upsert(
+        [VectorRecord(id="9931", vector=[1.0] * len(_VOCAB), meta={"model": "m1"})]
+    )
+
+    await lex.engine().backfill_embeddings()
+
+    assert "9931" not in await lex._vectors.ids(), (
+        "an orphan embedded by a retired model survived the prune, so the prune "
+        "was filtered by the current model and can never reap it"
+    )
+    # And a live sense is untouched, so the prune reaps orphans rather than
+    # everything the current model did not write.
+    assert await lex._vectors.ids({"model": "m2"})
+
+
 async def test_backfill_reembeds_on_model_change(engine):
     lex, _gen, _sf = _pet_lexicon(engine, _fake_embedder("m1"))
     await lex.engine().generate((await lex.reader().search("dog"))[0])
