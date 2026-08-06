@@ -13,14 +13,11 @@ from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from lexi_ai.infrastructure.db.repositories.asset_repo import (
-    AssetRepository,
-    content_hash,
-    normalize_asset_params,
-)
 from lexi_ai.db import create_session_factory, init_models, session_scope
+from lexi_ai.domain.asset_identity import content_hash, normalize_asset_params
 from lexi_ai.infrastructure.db.models import Asset as AssetRow
 from lexi_ai.infrastructure.db.models import Sense, Word
+from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
 from tests.support.persistence_driver import PersistenceDriver
 
 # --- hashing verify contract ----------------------------------------------
@@ -127,8 +124,8 @@ def test_assets_table_has_reference_columns():
 
 
 def test_every_source_kind_has_a_resolver():
-    from lexi_ai.infrastructure.db.repositories.asset_repo import _SOURCE_TABLES
     from lexi_ai.constants import SOURCE_KINDS
+    from lexi_ai.infrastructure.db.repositories.asset_repo import _SOURCE_TABLES
 
     # A kind can never be half-wired: every SOURCE_KINDS member must resolve.
     assert set(_SOURCE_TABLES) == set(SOURCE_KINDS)

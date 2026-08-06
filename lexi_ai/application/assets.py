@@ -13,7 +13,8 @@ raises rather than caching fake audio.
 from collections.abc import Awaitable, Callable, Sequence
 
 from lexi_ai.application.batching import gather_batch
-from lexi_ai.assets.repository import AssetRepository, content_hash, normalize_asset_params
+from lexi_ai.domain.asset_identity import content_hash, normalize_asset_params
+from lexi_ai.domain.ports import AssetStore
 from lexi_ai.read_models import Asset, BatchResult
 
 
@@ -22,7 +23,7 @@ class AssetService:
 
     def __init__(
         self,
-        assets: AssetRepository,
+        assets: AssetStore,
         translator_factory: Callable[[], object | None],
         tts_factory: Callable[[], object],
         voice: str,

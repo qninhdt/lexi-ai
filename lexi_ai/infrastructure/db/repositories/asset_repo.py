@@ -14,7 +14,6 @@ for an existing row is treated as a miss and rewritten. ``normalize_asset_params
 runs ONCE on every call (read and write), like ``match_key``/``tag_key``.
 """
 
-import hashlib
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -22,19 +21,13 @@ from sqlalchemy import delete, event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from lexi_ai.config import get_settings
 from lexi_ai.constants import (
-    ASSET_KINDS,
     SOURCE_KINDS,
-    TRANSLATION_LANGUAGES,
-    TTS_FORMATS,
-    TTS_VOICES,
 )
 from lexi_ai.db import session_scope
-from lexi_ai.domain.asset_identity import content_hash, normalize_asset_params
+from lexi_ai.domain.asset_identity import content_hash
 from lexi_ai.infrastructure.db.models import Asset as AssetRow
 from lexi_ai.infrastructure.db.models import Collocation, Example, Sense
-from lexi_ai.normalize import _CTRL_RE
 from lexi_ai.read_models import Asset
 
 # source_kind -> (ORM model, text column). Driven by SOURCE_KINDS so a kind can

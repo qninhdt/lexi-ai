@@ -14,8 +14,8 @@ reclaim rows and on-disk clips, not a correctness mechanism.
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
 from lexi_ai.infrastructure.db.models import Collocation, Example, Sense
+from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
 
 
 async def collect_word_assets(

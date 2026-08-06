@@ -11,19 +11,13 @@ because the port surface is unchanged.
 """
 
 from collections.abc import Iterable, Sequence
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 
-from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
-from lexi_ai.constants import WSD_CANDIDATE_CAP, canonical_cambridge_ref
+from lexi_ai.constants import canonical_cambridge_ref
 from lexi_ai.domain.models import (
-    ResolveCandidate,
-    ResolveDecision,
-    ResolveOutcome,
-    ResolveTask,
     SemanticSenseRow,
     SenseEmbeddingNeed,
     ThemingSense,
@@ -36,10 +30,9 @@ from lexi_ai.infrastructure.db.models import (
     Sense,
     SenseForm,
     SenseReference,
-    SenseRelation,
     Word,
-    _utcnow,
 )
+from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
 from lexi_ai.infrastructure.db.repositories.sense_relation_repo import (
     SenseRelationResolutionMixin,
 )
@@ -49,7 +42,6 @@ from lexi_ai.infrastructure.db.sanitize import (
     MAX_DEFINITION,
     MAX_DOMAIN,
     MAX_EXAMPLE,
-    MAX_GLOSS,
     MAX_GUIDEWORD,
     MAX_IPA,
     MAX_SOURCE_REF,
@@ -60,7 +52,7 @@ from lexi_ai.infrastructure.db.sanitize import (
 )
 
 if TYPE_CHECKING:
-    from lexi_ai.generation.schemas import GeneratedSense, GeneratedSenseRelation
+    from lexi_ai.generation.schemas import GeneratedSense
 
 
 class SqlSenseRepo(SenseRelationResolutionMixin):

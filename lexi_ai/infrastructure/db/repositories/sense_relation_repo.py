@@ -18,7 +18,7 @@ cannot shed without becoming that separate repository.
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, cast
 
-from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.orm import aliased
 
 from lexi_ai.constants import WSD_CANDIDATE_CAP

@@ -13,7 +13,6 @@ facade receives; this service does not choose.
 
 from typing import TYPE_CHECKING
 
-from lexi_ai.domain.ports import QuestionStore
 from lexi_ai.contracts.questions import (
     AnswerSubmission,
     Evaluation,
@@ -21,6 +20,7 @@ from lexi_ai.contracts.questions import (
     PresentedQuestion,
     QuestionTypeInfo,
 )
+from lexi_ai.domain.ports import QuestionStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable

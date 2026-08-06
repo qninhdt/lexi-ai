@@ -19,10 +19,10 @@ from lexi_ai.config import get_settings
 if TYPE_CHECKING:
     from lexi_ai.domain.ports import UnitOfWork, VectorIndex
     from lexi_ai.embeddings import Embedder
+    from lexi_ai.infrastructure.db.repositories.question_repo import QuestionRepository
     from lexi_ai.infrastructure.providers import ProviderRegistry
     from lexi_ai.questions.base import TtsPort
     from lexi_ai.questions.engine import QuestionEngine
-    from lexi_ai.infrastructure.db.repositories.question_repo import QuestionRepository
     from lexi_ai.read_models import Entry
 
 
