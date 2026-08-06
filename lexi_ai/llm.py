@@ -86,6 +86,70 @@ class StructuredLLM(Protocol):
     async def parse(self, messages: list[ChatMsg], schema: type[_T]) -> _T: ...
 
 
+def _clip(text: str | None, limit: int = 300) -> str:
+    """Render a model payload for an error message without pasting a whole entry."""
+    if text is None:
+        return "<none>"
+    return repr(text) if len(text) <= limit else f"{text[:limit]!r}… ({len(text)} chars)"
+
+
+def drop_nullable_unions(schema: dict) -> dict:
+    """Rewrite every ``X | None`` property to a plain, non-required ``X``.
+
+    Pydantic renders an optional field as ``anyOf: [X, {"type": "null"}]``. Some
+    OpenAI-compatible endpoints answer a forced tool call carrying such a schema
+    with ``{}`` — a well-formed call with an empty argument object, reported as
+    ``finish_reason="tool_calls"`` and billed at ~11 completion tokens, so it reads
+    as a successful response rather than a refusal. One nullable field anywhere in
+    the schema is enough to trigger it, and the same request succeeds the moment
+    the union is gone.
+
+    Absence carries what ``null`` carried: the field is removed from ``required``,
+    and validation is unchanged because the model still fills ``None`` for anything
+    the payload omits. Only the transmitted schema is affected, never the type.
+
+    Deliberately narrow — ONLY a two-branch union whose other branch is ``null`` is
+    collapsed. A genuine union (``int | str``) carries meaning that a caller
+    would lose, so it is left exactly as it is.
+    """
+    if not isinstance(schema, dict):
+        return schema
+
+    out: dict = {}
+    for key, value in schema.items():
+        if isinstance(value, dict):
+            out[key] = drop_nullable_unions(value)
+        elif isinstance(value, list):
+            out[key] = [drop_nullable_unions(item) for item in value]
+        else:
+            out[key] = value
+
+    properties = out.get("properties")
+    if not isinstance(properties, dict):
+        return out
+
+    collapsed: list[str] = []
+    for name, spec in properties.items():
+        if not isinstance(spec, dict) or not isinstance(spec.get("anyOf"), list):
+            continue
+        variants = spec["anyOf"]
+        kept = [v for v in variants if isinstance(v, dict) and v.get("type") != "null"]
+        if len(kept) != 1 or len(kept) == len(variants):
+            continue
+        merged = dict(kept[0])
+        # The prose is on the union, not on the branch, and it is what tells the
+        # model what the field means.
+        for carried in ("description", "title"):
+            if carried in spec:
+                merged.setdefault(carried, spec[carried])
+        properties[name] = merged
+        collapsed.append(name)
+
+    if collapsed and isinstance(out.get("required"), list):
+        out["required"] = [r for r in out["required"] if r not in collapsed]
+    return out
+
+
 class OpenAIStructuredLLM:
     """Real :class:`StructuredLLM` over an OpenAI-compatible ``/chat/completions``
     endpoint.
@@ -177,6 +241,10 @@ class OpenAIStructuredLLM:
         from openai import pydantic_function_tool
 
         tool = pydantic_function_tool(schema, name="emit")
+        tool["function"]["parameters"] = drop_nullable_unions(tool["function"]["parameters"])
+        # Optional properties are illegal under strict, and the rewrite above makes
+        # every formerly-nullable field optional.
+        tool["function"]["strict"] = False
         completion = await self._client.chat.completions.create(
             model=self._model,
             messages=messages,  # type: ignore[arg-type]
@@ -186,12 +254,25 @@ class OpenAIStructuredLLM:
             extra_body=self._extra() or None,
             **self._limits(),
         )
-        calls = completion.choices[0].message.tool_calls
+        choice = completion.choices[0]
+        calls = choice.message.tool_calls
         call = calls[0] if calls else None
         fn = getattr(call, "function", None)
         if fn is None:
             raise ValueError("model returned no function tool call for structured output")
-        return schema.model_validate(json.loads(fn.arguments))
+        try:
+            return schema.model_validate(json.loads(fn.arguments))
+        except (ValidationError, ValueError) as exc:
+            # The payload is the evidence, and discarding it is how an empty tool
+            # call once cost a container-side reproduction to explain: the bare
+            # pydantic error says a field is missing but not that the model sent
+            # nothing at all. `finish_reason` separates "ran out of room" from
+            # "refused the schema", which are different problems.
+            raise ValueError(
+                f"model returned a tool call that does not satisfy {schema.__name__} "
+                f"(finish_reason={choice.finish_reason!r}, "
+                f"arguments={_clip(fn.arguments)}): {exc}"
+            ) from exc
 
 
 def build_structured_llm(settings, model: str | None = None) -> StructuredLLM:
