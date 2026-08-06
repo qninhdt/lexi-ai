@@ -16,7 +16,7 @@ from collections.abc import Iterable, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from lexi_ai.application.generation_writer import GenerationWriter
-from lexi_ai.assets.repository import AssetRepository
+from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
 from lexi_ai.domain.models import (
     GenerationFence,
     ResolveDecision,

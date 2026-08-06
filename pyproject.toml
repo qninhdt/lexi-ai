@@ -151,3 +151,18 @@ type = "forbidden"
 allow_indirect_imports = true
 source_modules = ["lexi_ai.application"]
 forbidden_modules = ["lexi_ai.infrastructure"]
+
+[[tool.importlinter.contracts]]
+# The assets and questions subsystems keep their logic and lose their ORM.
+#
+# Both used to hold a `repository.py` importing `infrastructure.db.models`
+# directly, so two packages outside `infrastructure/` knew the table definitions —
+# and no contract said otherwise, because the existing ones name `application` and
+# `domain` and these are neither. The repositories moved to
+# `infrastructure/db/repositories/`; what remains here is scoring, rendering,
+# dedup, distractors, translate and tts, none of which should see a table again.
+name = "assets and questions hold no ORM of their own"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["lexi_ai.assets", "lexi_ai.questions"]
+forbidden_modules = ["lexi_ai.infrastructure.db.models", "sqlalchemy"]

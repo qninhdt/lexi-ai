@@ -13,7 +13,7 @@ from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from lexi_ai.assets.repository import (
+from lexi_ai.infrastructure.db.repositories.asset_repo import (
     AssetRepository,
     content_hash,
     normalize_asset_params,
@@ -127,7 +127,7 @@ def test_assets_table_has_reference_columns():
 
 
 def test_every_source_kind_has_a_resolver():
-    from lexi_ai.assets.repository import _SOURCE_TABLES
+    from lexi_ai.infrastructure.db.repositories.asset_repo import _SOURCE_TABLES
     from lexi_ai.constants import SOURCE_KINDS
 
     # A kind can never be half-wired: every SOURCE_KINDS member must resolve.

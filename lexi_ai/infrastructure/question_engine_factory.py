@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from lexi_ai.infrastructure.providers import ProviderRegistry
     from lexi_ai.questions.base import TtsPort
     from lexi_ai.questions.engine import QuestionEngine
-    from lexi_ai.questions.repository import QuestionRepository
+    from lexi_ai.infrastructure.db.repositories.question_repo import QuestionRepository
     from lexi_ai.read_models import Entry
 
 
@@ -64,7 +64,7 @@ class QuestionEngineFactory:
     def repository(self) -> QuestionRepository:
         """The question store, shared by both contexts."""
         if self._repo is None:
-            from lexi_ai.questions.repository import QuestionRepository
+            from lexi_ai.infrastructure.db.repositories.question_repo import QuestionRepository
 
             self._repo = QuestionRepository(self._session_factory)
         return self._repo

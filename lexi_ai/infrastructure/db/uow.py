@@ -14,7 +14,7 @@ from types import TracebackType
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from lexi_ai.assets.repository import AssetRepository
+from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
 from lexi_ai.infrastructure.db.repositories.entry_repo import SqlEntryRepo
 from lexi_ai.infrastructure.db.repositories.sense_repo import SqlSenseRepo
 from lexi_ai.infrastructure.db.repositories.stats_repo import SqlStatsRepo

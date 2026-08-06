@@ -17,7 +17,7 @@ from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from lexi_ai.assets.repository import AssetRepository
+from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
 from lexi_ai.constants import WSD_CANDIDATE_CAP, canonical_cambridge_ref
 from lexi_ai.domain.models import (
     ResolveCandidate,

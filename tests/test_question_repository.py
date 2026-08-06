@@ -12,7 +12,7 @@ from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.domain.questions import PersistedQuestion
 from lexi_ai.infrastructure.db.models import Question as QuestionRow
 from lexi_ai.infrastructure.db.models import Sense, Word
-from lexi_ai.questions.repository import QuestionRepository
+from lexi_ai.infrastructure.db.repositories.question_repo import QuestionRepository
 
 
 @pytest.fixture

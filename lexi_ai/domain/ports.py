@@ -38,6 +38,10 @@ from lexi_ai.domain.models import (
     WordMatch,
     WordRecord,
 )
+from lexi_ai.domain.questions import PersistedQuestion
+
+if TYPE_CHECKING:
+    from lexi_ai.read_models import Asset
 
 if TYPE_CHECKING:
     from lexi_ai.generation.schemas import (
@@ -311,3 +315,66 @@ class VectorIndex(Protocol):
         Needed to rank neighbours of something already indexed without re-encoding
         it, which is what the distractor ladder does.
         """
+
+
+class QuestionStore(Protocol):
+    """Reading persisted questions, as the question service needs them.
+
+    Narrow on purpose: three of the concrete repository's methods, and only the
+    reads. The service annotated the concrete `QuestionRepository` instead, which
+    the `application` layer is forbidden to import — the annotation was under
+    `TYPE_CHECKING`, so it cost nothing at runtime and still coupled the layer to
+    a table-aware module. Writes stay off this port because the service does not
+    perform them; the engine owns persistence.
+    """
+
+    async def get(self, question_id: int) -> PersistedQuestion | None:
+        """One question by id, or ``None`` when the id is unknown."""
+
+    async def list_for_sense(
+        self, sense_id: int, type_id: str | None = None
+    ) -> list[PersistedQuestion]:
+        """Questions bound to one sense, newest first, optionally by type."""
+
+    async def delete(self, question_id: int) -> bool:
+        """Remove one question. ``False`` when it was already gone."""
+
+
+class AssetStore(Protocol):
+    """The asset cache, as the asset service uses it.
+
+    The service annotated the concrete `AssetRepository`, which the `application`
+    layer is forbidden to import — so the layer's one dependency on infrastructure
+    was a type hint. This is that hint, stated as a port.
+
+    `Asset` here is the read model, not the ORM row: the repository already maps
+    one to the other at its boundary, so this port names nothing table-shaped.
+    """
+
+    async def resolve_source_text(self, source_kind: str, source_id: int) -> str | None:
+        """Current text behind a reference, or ``None`` when the row is gone."""
+
+    async def get(
+        self, source_kind: str, source_id: int, kind: str, params: str, source_text: str
+    ) -> "Asset | None":
+        """Cached asset for a reference identity, verified against its source text."""
+
+    async def put_text(self, *args, **kwargs) -> "Asset":
+        """Store a text asset, returning the stored row."""
+
+    async def put_file(self, *args, **kwargs) -> "Asset":
+        """Store a binary asset and its backing file."""
+
+    async def get_by_id(self, asset_id: int) -> "Asset | None":
+        """One asset by its own id."""
+
+    async def list(
+        self, kind: str | None = None, limit: int | None = None, offset: int = 0
+    ) -> "list[Asset]":
+        """Cached assets, oldest first, optionally filtered by kind."""
+
+    async def delete(self, asset_id: int) -> bool:
+        """Remove one asset and unlink its file. ``False`` when already gone."""
+
+    async def purge(self, kind: str | None = None) -> int:
+        """Remove every cached asset, or every one of a kind. Returns the count."""

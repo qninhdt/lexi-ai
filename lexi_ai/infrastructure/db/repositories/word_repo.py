@@ -12,7 +12,7 @@ from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from lexi_ai.assets.repository import AssetRepository
+from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
 from lexi_ai.domain.models import GenerationFence, WordListing, WordMatch, WordRecord
 from lexi_ai.infrastructure.db.asset_gc import collect_word_assets
 from lexi_ai.infrastructure.db.mappers import word_record

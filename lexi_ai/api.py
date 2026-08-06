@@ -32,7 +32,7 @@ from lexi_ai.application.search import SearchService
 from lexi_ai.application.single_flight import SingleFlight
 from lexi_ai.application.tags import TagService
 from lexi_ai.application.themes import ThemeService
-from lexi_ai.assets.repository import AssetRepository
+from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
 from lexi_ai.config import Settings, get_settings
 from lexi_ai.db import create_engine, create_session_factory, init_models
 from lexi_ai.embeddings import Embedder

@@ -13,6 +13,7 @@ facade receives; this service does not choose.
 
 from typing import TYPE_CHECKING
 
+from lexi_ai.domain.ports import QuestionStore
 from lexi_ai.contracts.questions import (
     AnswerSubmission,
     Evaluation,
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
 
     from lexi_ai.questions.base import PrepareReport
     from lexi_ai.questions.engine import QuestionEngine
-    from lexi_ai.questions.repository import QuestionRepository
     from lexi_ai.read_models import Entry
 
 
@@ -50,7 +50,7 @@ class QuestionService:
     def __init__(
         self,
         engine: "QuestionEngine",
-        repository: "QuestionRepository",
+        repository: QuestionStore,
         load_entry: "Callable[[int], object]",
     ) -> None:
         self._engine = engine
