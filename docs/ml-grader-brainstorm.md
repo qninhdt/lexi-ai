@@ -1,7 +1,12 @@
-# Brainstorm — Multi-task LLM Grader (PARKED)
+# Brainstorm — Multi-task LLM Grader (SUPERSEDED)
 
-**Status:** parked (resume later)
+**Status:** superseded by [`grader-finetune-design.md`](./grader-finetune-design.md) (2026-07-29)
 **Date:** 2026-07-24
+
+> Doc này giữ lại làm hồ sơ lập luận. Thiết kế thi hành nằm ở
+> `grader-finetune-design.md` §11 (bảng các quyết định đã đảo). Điểm đảo lớn:
+> 3 intent → 2 task · bỏ BEA-2019/ERRANT · XML → `[A>B:tag]` ·
+> bỏ `verdict` · grammar/naturalness suy từ `correction` thay vì model emit.
 **Context:** dùng lexi-ai làm project cho CV AI engineer — thực hành fine-tuning (LLM + DL-for-NLP) đồng thời giảm phụ thuộc gọi LLM. Doc này chốt thiết kế task LLM (grader) để tiếp tục sau. Task encoder nhãn-tay (CEFR classification / WSD) brainstorm riêng.
 
 ---
