@@ -24,6 +24,15 @@ from lexi_ai.read_models import BatchResult, SenseView
 # headroom over the raw word count. The hard ceiling still applies.
 _INBOUND_FACTOR = 20
 
+# Embedding backfill reads candidates in pages and discards the ones the vector
+# index already holds, so a page yields fewer usable rows than it contains. These
+# oversize each page against the shortfall to keep the number of round trips low
+# in the common case — a re-run where nearly every candidate is already embedded.
+# The minimum keeps a small request (limit=1) from degenerating into a one-row page
+# per round trip.
+_EMBED_PAGE_FACTOR = 4
+_EMBED_PAGE_MINIMUM = 256
+
 
 class EnrichmentService:
     """Example augmentation, embedding backfill, and relation resolution."""
@@ -127,14 +136,7 @@ class EnrichmentService:
             return 0
         model = self._embedder.model_name
         stored = await self._vectors.ids({"model": model})
-        async with self._uow() as uow:
-            candidates = await uow.senses.needing_embedding(
-                word_ids=list(word_ids) if word_ids is not None else None,
-                limit=None,
-            )
-        pending = [row for row in candidates if str(row.sense_id) not in stored]
-        if limit is not None:
-            pending = pending[:limit]
+        pending = await self._pending_senses(word_ids, limit, stored)
         if not pending:
             return 0
         texts = [self._embed_text(row.norm, row.definition) for row in pending]
@@ -147,6 +149,50 @@ class EnrichmentService:
                 for row, vector in zip(pending, vectors, strict=True)
             ]
         )
+
+    async def _pending_senses(
+        self,
+        word_ids: Sequence[int] | None,
+        limit: int | None,
+        stored: set[str],
+    ) -> list:
+        """Candidates the index has no vector for, at most ``limit`` of them.
+
+        The already-embedded set lives in the vector index, so the database cannot
+        filter on it. Reading every candidate and slicing in Python made a bounded
+        request scan the whole table: a `limit=32` backfill on a dictionary of
+        200,000 senses still loaded 200,000 rows to keep 32.
+
+        Paging fixes that without the correctness trap a plain ``LIMIT`` would
+        introduce. A single limited page can be entirely embedded already, which
+        would look like "nothing left to do" while unembedded rows sit further
+        down; so pages are pulled until enough unembedded rows are found or the
+        table runs out. Pages are oversized relative to the shortfall because most
+        candidates are typically already embedded during a re-run.
+        """
+        if limit is None:
+            async with self._uow() as uow:
+                candidates = await uow.senses.needing_embedding(
+                    word_ids=list(word_ids) if word_ids is not None else None,
+                    limit=None,
+                )
+            return [row for row in candidates if str(row.sense_id) not in stored]
+
+        pending: list = []
+        cursor: int | None = None
+        while len(pending) < limit:
+            shortfall = limit - len(pending)
+            async with self._uow() as uow:
+                page = await uow.senses.needing_embedding(
+                    word_ids=list(word_ids) if word_ids is not None else None,
+                    limit=max(shortfall * _EMBED_PAGE_FACTOR, _EMBED_PAGE_MINIMUM),
+                    after_sense_id=cursor,
+                )
+            if not page:
+                break
+            pending.extend(row for row in page if str(row.sense_id) not in stored)
+            cursor = page[-1].sense_id
+        return pending[:limit]
 
     async def _prune_orphan_vectors(self) -> int:
         """Drop vectors whose sense is gone.

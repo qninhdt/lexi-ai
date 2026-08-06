@@ -9,10 +9,15 @@ Canonical ``norm`` convention: placeholders are stored as brace tokens
 ``{sb}`` ``{sth}`` ``{one's}`` ``{oneself}`` — braces never occur in real
 lemmas, so the token regex is unambiguous.
 
-- ``match_key(s)`` — deterministic *lossy* key: lowercase, strip diacritics,
+- ``match_key(s)`` — deterministic *lossy* key: lowercase, NFKC-canonicalize,
   fold placeholders to stable sentinels, collapse whitespace. Placeholder
   surface variants collapse together so a user typing ``act on behalf of
   somebody`` and the stored ``act on behalf of {sb}`` land on the same key.
+  Diacritics are PRESERVED — ``résumé`` and ``resume`` are different words, and
+  this key is UNIQUE on ``words``.
+- ``fold_diacritics(s)`` — accent folding, separated out of ``match_key``. Use it
+  where merging accents is the intent: alias generation, and comparing a
+  learner's typed answer against the expected one.
 - ``render(norm)`` — human display form: expand brace tokens to words.
 
 A ``/`` is kept literal (decision #8): ``match_key`` never splits on it.
@@ -21,7 +26,15 @@ A ``/`` is kept literal (decision #8): ``match_key`` never splits on it.
 import re
 import unicodedata
 
-__all__ = ["match_key", "render", "tag_key", "theme_key", "PLACEHOLDER_RE"]
+__all__ = [
+    "match_key",
+    "answer_key",
+    "fold_diacritics",
+    "render",
+    "tag_key",
+    "theme_key",
+    "PLACEHOLDER_RE",
+]
 
 # --- placeholder canonical map (single source of truth) -------------------
 #
@@ -82,10 +95,45 @@ _WS_RE = re.compile(r"\s+")
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
+def _canonicalize(s: str) -> str:
+    """NFKC-normalize: canonical composition plus compatibility folding.
+
+    ``match_key`` used to run NFKD and drop combining marks, which did two
+    unrelated jobs at once — canonicalizing how a character is *encoded*, and
+    merging characters that are *different letters*. Only the second was a bug.
+    This keeps the first.
+
+    Without it the key is raw code points, so ``café`` typed as U+00E9 and ``café``
+    typed as ``e`` + U+0301 produce different keys while rendering identically —
+    two dictionary entries for one word, which is the same class of failure as the
+    collision, just inverted. macOS and several IMEs emit the decomposed form.
+
+    The K (compatibility) folding additionally maps presentational variants onto
+    their plain letters: ``ﬁle`` -> ``file``, fullwidth ``ａbc`` -> ``abc``. Those
+    are encodings of the same word, not distinct headwords, so folding them is
+    correct.
+    """
+    return unicodedata.normalize("NFKC", s)
+
+
 def _strip_diacritics(s: str) -> str:
     """NFKD-decompose and drop combining marks (café -> cafe, naïve -> naive)."""
     decomposed = unicodedata.normalize("NFKD", s)
     return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def fold_diacritics(s: str) -> str:
+    """The accent-folded surface of ``s`` (``résumé`` -> ``resume``).
+
+    Public because it is no longer part of :func:`match_key`. Folding inside the
+    identity key made distinct headwords collide under a UNIQUE constraint; the
+    folded form is now registered as a ``diacritic`` alias instead, which keeps
+    accent-insensitive lookup working without claiming the two words are one.
+
+    Returns the input unchanged when it carries no diacritics, so a caller can
+    test ``fold_diacritics(x) != x`` to decide whether an alias is warranted.
+    """
+    return _strip_diacritics(s)
 
 
 def _drop_format_chars(s: str) -> str:
@@ -117,9 +165,29 @@ def _fold_placeholders(s: str) -> str:
 def match_key(s: str) -> str:
     """Deterministic lossy lookup key. Same input surface variants -> same key.
 
-    Pipeline: lowercase -> strip diacritics -> strip control chars (incl NUL,
+    Pipeline: lowercase -> NFKC-canonicalize -> strip control chars (incl NUL,
     Postgres-rejected) -> drop zero-width/format chars -> fold placeholders ->
     collapse whitespace. Never splits on ``/``.
+
+    **Diacritics are preserved; encoding differences are not.** The key used to run
+    NFKD and drop combining marks, which conflated two jobs. Dropping the marks
+    made this key fold pairs that are different words: ``résumé``/``resume``,
+    ``pâté``/``pate``, ``exposé``/``expose``, ``rosé``/``rose``. Since
+    ``words.match_key`` is UNIQUE, the second of each pair could not be inserted
+    at all — generating ``pâté`` after ``pate`` either failed or overwrote the
+    first entry and took its senses with it. No amount of downstream care can
+    recover a headword the key says does not exist.
+
+    The canonicalization half is kept as NFKC, because ``café`` composed and
+    ``café`` decomposed are one word spelled one way, and a key that separates them
+    produces two indistinguishable entries.
+
+    Accent-insensitive *lookup* is preserved without the collision: the
+    generation path registers the folded spelling as a ``diacritic`` alias, and
+    ``resolve_key`` searches aliases as well as headwords. So typing ``resume``
+    still finds ``résumé`` — it just no longer means they are the same row. Use
+    :func:`fold_diacritics` where merging accents IS the intent, such as comparing
+    a learner's typed answer.
 
     The control-strip + format-drop make ``match_key`` EXCEED its sibling keys
     (``tag_key``/``theme_key`` only ``_CTRL_RE``): an embedded NUL crashes the
@@ -134,7 +202,7 @@ def match_key(s: str) -> str:
     specifies. A non-regenerable DB needs a one-time backfill first.
     """
     s = s.lower()
-    s = _strip_diacritics(s)
+    s = _canonicalize(s)
     s = _CTRL_RE.sub(" ", s)
     s = _drop_format_chars(s)
     s = _fold_placeholders(s)
@@ -146,6 +214,22 @@ def match_key(s: str) -> str:
     # SQLite ignores the declared width and would silently store the over-length
     # key, diverging the two backends. Cap here so both behave identically.
     return s[:512]
+
+
+def answer_key(s: str) -> str:
+    """Comparison key for a learner's typed answer: ``match_key`` plus accent folding.
+
+    Identity and comparison want opposite things from a diacritic.
+    ``words.match_key`` must keep ``résumé`` and ``resume`` apart, because they
+    are different words and the column is UNIQUE. Grading must put them together,
+    because a learner typing ``cafe`` for ``café`` has recalled the word and most
+    phone keyboards do not offer the accent.
+
+    Folding is applied AFTER ``match_key`` so this key inherits the whole pipeline
+    — placeholder folding, control/format stripping, NFKC — and can only ever be
+    more permissive than the identity key, never differently shaped.
+    """
+    return _strip_diacritics(match_key(s))
 
 
 def render(norm: str) -> str:

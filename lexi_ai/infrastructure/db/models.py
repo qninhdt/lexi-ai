@@ -235,7 +235,16 @@ class Sense(Base):
     __tablename__ = "senses"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    word_id: Mapped[int] = mapped_column(ForeignKey("words.id", ondelete="CASCADE"), nullable=False)
+    # Indexed explicitly, unlike the other `word_id` columns in this file. The
+    # aliases and tags tables lead their UNIQUE constraints with `word_id`, and
+    # Postgres backs a unique constraint with a btree index that a lookup on the
+    # leading column can already use. `senses` has no such constraint, so without
+    # this the most-filtered column in the repository — every read of a word's
+    # senses, and the join behind entry assembly — has no access path but a
+    # sequential scan of the whole table.
+    word_id: Mapped[int] = mapped_column(
+        ForeignKey("words.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     definition: Mapped[str] = mapped_column(Text, nullable=False)
     tier: Mapped[str] = mapped_column(Vocabulary(16, TIER_SET, "senses.tier"), nullable=False)
     sense_order: Mapped[int] = mapped_column(Integer, default=0)

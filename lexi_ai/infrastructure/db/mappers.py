@@ -27,7 +27,6 @@ from lexi_ai.read_models import (
     SenseView,
     TopicView,
 )
-from lexi_ai.read_models import Theme as ThemeView
 
 # A themed overlay: {sense_id: (definition, [examples])}.
 ThemedOverlay = Mapping[int, tuple[str, list[str]]]
@@ -51,17 +50,6 @@ def theme_record(theme: Theme) -> ThemeRecord:
     return ThemeRecord(
         id=theme.id,
         key=theme.theme_key,
-        name=theme.name,
-        style_prompt=theme.style_prompt,
-        description=theme.description,
-        tone=theme.tone,
-    )
-
-
-def theme_view(theme: ThemeRecord) -> ThemeView:
-    """Project a theme record onto the public read model."""
-    return ThemeView(
-        key=theme.key,
         name=theme.name,
         style_prompt=theme.style_prompt,
         description=theme.description,

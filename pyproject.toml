@@ -132,3 +132,22 @@ source_modules = ["lexi_ai.application", "lexi_ai.api"]
 forbidden_modules = [
     "lexi_ai.infrastructure.db.models",
 ]
+
+# The whole-package version of the contract above. That one enumerated
+# `infrastructure.db.models` and a few siblings, so it passed while
+# `application/generation_writer.py` imported the concrete `SqlAlchemyUnitOfWork`
+# and `application/themes.py` imported a mapper — two real edges it could not see.
+#
+# Enumerating modules is exactly how this repo's earlier contracts rotted. A
+# package-level `forbidden` cannot go stale the same way: a new module under
+# `infrastructure` is covered the moment it exists.
+#
+# `allow_indirect_imports` is deliberately NOT set here. The application layer
+# reaches persistence THROUGH the ports, so the indirect path is the design; what
+# must never return is a direct import naming a concrete implementation.
+[[tool.importlinter.contracts]]
+name = "application depends on ports, never on infrastructure"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["lexi_ai.application"]
+forbidden_modules = ["lexi_ai.infrastructure"]

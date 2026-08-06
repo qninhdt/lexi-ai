@@ -124,13 +124,20 @@ class SenseRepo(Protocol):
         """Owning word id. Raises when the sense does not exist."""
 
     async def needing_embedding(
-        self, word_ids: list[int] | None = None, limit: int | None = None
+        self,
+        word_ids: list[int] | None = None,
+        limit: int | None = None,
+        after_sense_id: int | None = None,
     ) -> list[SenseEmbeddingNeed]:
         """Done senses that are candidates for embedding, oldest id first.
 
         The relational store does not know which senses are embedded — the vector
         index owns that — so this returns candidates and the caller subtracts what
         the index already holds.
+
+        ``after_sense_id`` resumes past an id already examined. A caller wanting
+        ``limit`` unembedded rows pages with it rather than reading every
+        candidate, since a single limited page may turn out to be fully embedded.
         """
 
     async def semantic_rows(self, sense_ids: Sequence[int]) -> list[SemanticSenseRow]:

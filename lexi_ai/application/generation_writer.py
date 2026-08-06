@@ -14,14 +14,22 @@ from collections.abc import Callable
 
 from lexi_ai.domain.errors import StaleGenerationError
 from lexi_ai.domain.models import GenerationFence, WordRecord
+from lexi_ai.domain.ports import UnitOfWork
 from lexi_ai.generation.schemas import GeneratedResult
-from lexi_ai.infrastructure.db.uow import SqlAlchemyUnitOfWork
 
 
 class GenerationWriter:
     """Persist generation results through a unit of work per step."""
 
-    def __init__(self, uow_factory: Callable[[], SqlAlchemyUnitOfWork]) -> None:
+    def __init__(self, uow_factory: Callable[[], UnitOfWork]) -> None:
+        """Takes the ``UnitOfWork`` PORT, not the SQLAlchemy implementation.
+
+        It named the concrete class before, which made this the one application
+        module that could not be exercised without a database — and the existing
+        contract missed it because that contract enumerated
+        ``infrastructure.db.models`` and nothing else. A whole-package contract now
+        forbids the edge outright.
+        """
         self._uow_factory = uow_factory
 
     async def claim(self, norm: str) -> GenerationFence:

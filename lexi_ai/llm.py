@@ -14,7 +14,7 @@ import asyncio
 import secrets
 from typing import Protocol, TypeVar, runtime_checkable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 ChatMsg = dict[str, str]
 _T = TypeVar("_T", bound=BaseModel)
@@ -116,14 +116,33 @@ class OpenAIStructuredLLM:
         temperature: float,
         method: str = "json_schema",
         reasoning_effort: str = "",
+        max_tokens: int = 0,
+        timeout_seconds: float = 0.0,
     ):
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        # The timeout belongs on the client rather than on each call: it covers
+        # connect and read, so a provider that accepts the connection and then
+        # stalls cannot hold a generation request open indefinitely.
+        self._client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            **({"timeout": timeout_seconds} if timeout_seconds > 0 else {}),
+        )
         self._model = model
         self._temperature = temperature
         self._method = method or "json_schema"
         self._reasoning_effort = reasoning_effort or None
+        self._max_tokens = max_tokens if max_tokens > 0 else None
+
+    def _limits(self) -> dict:
+        """``max_tokens`` when configured, omitted otherwise.
+
+        Sent as a kwarg rather than through ``extra_body`` because it is a
+        first-class parameter; endpoints that renamed it will reject it loudly,
+        which is preferable to silently dropping the only spend ceiling.
+        """
+        return {"max_tokens": self._max_tokens} if self._max_tokens else {}
 
     def _extra(self) -> dict:
         # reasoning_effort is not a first-class kwarg on all SDK versions/models;
@@ -142,6 +161,7 @@ class OpenAIStructuredLLM:
             response_format=schema,
             temperature=self._temperature,
             extra_body=self._extra() or None,
+            **self._limits(),
         )
         parsed = completion.choices[0].message.parsed
         if parsed is None:
@@ -164,6 +184,7 @@ class OpenAIStructuredLLM:
             tool_choice={"type": "function", "function": {"name": "emit"}},
             temperature=self._temperature,
             extra_body=self._extra() or None,
+            **self._limits(),
         )
         calls = completion.choices[0].message.tool_calls
         call = calls[0] if calls else None
@@ -188,6 +209,8 @@ def build_structured_llm(settings, model: str | None = None) -> StructuredLLM:
         temperature=settings.llm_temperature,
         method=getattr(settings, "llm_structured_method", "json_schema"),
         reasoning_effort=getattr(settings, "llm_reasoning_effort", ""),
+        max_tokens=getattr(settings, "llm_max_tokens", 0),
+        timeout_seconds=getattr(settings, "llm_timeout_seconds", 0.0),
     )
 
 
@@ -205,6 +228,12 @@ async def ainvoke_structured(
     ``model_validate`` defensively in case a fake/provider returns a dict. Raises
     the last exception after ``max_retries`` attempts.
 
+    Only *transient* failures are retried. A ``ValidationError`` means the model
+    emitted output that does not match the schema, at the same temperature, from
+    the same prompt — the retry buys another full-price call for an answer that is
+    very likely identical. Timeouts, rate limits and connection resets are the
+    failures a second attempt actually fixes, so those still retry.
+
     ``max_retries`` MUST be ``>= 1`` (the default is 3, and every in-scope caller
     uses ``>= 1``); with ``0`` the loop never runs and the trailing assert would
     fire a bare ``AssertionError`` (3.9 — dead branch, documented not guarded).
@@ -216,6 +245,10 @@ async def ainvoke_structured(
             if isinstance(result, expect):
                 return result
             return expect.model_validate(result)
+        except ValidationError:
+            # Deterministic given the same prompt: raise on the first one rather
+            # than paying for two more calls to be told the same thing.
+            raise
         except Exception as exc:  # noqa: BLE001 - retried, then re-raised
             last_exc = exc
             if attempt < max_retries - 1:

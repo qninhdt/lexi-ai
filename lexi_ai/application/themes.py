@@ -10,11 +10,28 @@ transaction open across it would idle a connection for its duration.
 
 from collections.abc import Callable, Sequence
 
+from lexi_ai.domain.models import ThemeRecord
 from lexi_ai.domain.ports import UnitOfWork
-from lexi_ai.infrastructure.db.mappers import theme_view
 from lexi_ai.normalize import theme_key as normalize_theme_key
 from lexi_ai.read_models import SenseView, Theme
 
+
+def theme_view(theme: ThemeRecord) -> Theme:
+    """Project a theme record onto the public read model.
+
+    Lives here, not in `infrastructure.db.mappers`, because it touches no ORM row
+    — a domain record in, a read model out. Importing it from infrastructure was
+    one of the two edges that let `application` depend on persistence, and it was
+    invisible to the old contract, which enumerated `infrastructure.db.models`
+    rather than the whole package.
+    """
+    return Theme(
+        key=theme.key,
+        name=theme.name,
+        style_prompt=theme.style_prompt,
+        description=theme.description,
+        tone=theme.tone,
+    )
 
 class ThemeService:
     """Theme use cases over the unit of work and the theming generators."""

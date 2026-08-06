@@ -18,7 +18,7 @@ from lexi_ai.infrastructure.db.asset_gc import collect_word_assets
 from lexi_ai.infrastructure.db.mappers import word_record
 from lexi_ai.infrastructure.db.models import Word, WordAlias, WordRelation
 from lexi_ai.infrastructure.db.sanitize import MAX_NORM, clean
-from lexi_ai.normalize import match_key
+from lexi_ai.normalize import fold_diacritics, match_key
 
 if TYPE_CHECKING:
     from lexi_ai.generation.schemas import GeneratedAlias, GeneratedEntry, RelatedWord
@@ -92,10 +92,22 @@ class SqlWordRepo:
         return word.id
 
     async def sync_aliases(self, word_id: int, aliases: Iterable["GeneratedAlias"]) -> None:
-        """Replace a word's aliases, deduped by key. Fully derived from generation."""
+        """Replace a word's aliases, deduped by key. Fully derived from generation.
+
+        An accent-folded spelling is added automatically when the headword carries
+        diacritics. ``match_key`` deliberately preserves them — folding there made
+        ``résumé`` and ``resume`` one row under a UNIQUE constraint — so the folded
+        surface has to reach the alias table for accent-insensitive lookup to keep
+        working. Derived here rather than asked of the model, which would make a
+        mechanical guarantee depend on generation quality.
+        """
         await self._session.execute(delete(WordAlias).where(WordAlias.word_id == word_id))
+        collected = list(aliases)
+        folded = await self._folded_headword_alias(word_id)
+        if folded is not None:
+            collected.append(folded)
         seen: set[str] = set()
-        for alias in aliases:
+        for alias in collected:
             alias_key = match_key(alias.alias_norm)
             if alias_key in seen:
                 continue
@@ -110,6 +122,18 @@ class SqlWordRepo:
                 )
             )
         await self._session.flush()
+
+    async def _folded_headword_alias(self, word_id: int) -> "GeneratedAlias | None":
+        """The headword's accent-folded form as an alias, or None if it has none."""
+        from lexi_ai.generation.schemas import GeneratedAlias
+
+        norm = await self._session.scalar(select(Word.norm).where(Word.id == word_id))
+        if norm is None:  # pragma: no cover - the caller just upserted this row
+            return None
+        folded = fold_diacritics(norm)
+        if folded == norm:
+            return None
+        return GeneratedAlias(alias_norm=folded, type="diacritic", dialect=None)
 
     async def link_related(self, word_id: int, related: Iterable["RelatedWord"]) -> None:
         """Ensure the word-level relation edges for one unit, skipping self-links."""

@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     # Reasoning effort for reasoning-capable models (minimal|low|medium|high).
     # Empty → omit the field entirely (plain chat models ignore it anyway).
     llm_reasoning_effort: str = ""
+    # Hard ceiling on a single completion. Structured output is bounded by its
+    # schema, so a response far past this is a model that has stopped emitting the
+    # schema and started rambling — billed per token either way. 0 omits the field
+    # for endpoints that reject it.
+    llm_max_tokens: int = 4096
+    # Wall-clock ceiling per request, in seconds. Without one, a provider that
+    # accepts a connection and then stalls holds the caller open indefinitely:
+    # generation is awaited inside a request, so the stall propagates.
+    llm_timeout_seconds: float = 120.0
 
     # Optional per-task model override for translation. Empty → falls back to
     # ``llm_model`` (shares the same base_url/api_key/temperature).

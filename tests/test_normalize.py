@@ -6,9 +6,17 @@ input). If the two disagree, lookups miss forever, so these tests are the
 contract for the whole project.
 """
 
+import unicodedata
+
 import pytest
 
-from lexi_ai.normalize import PLACEHOLDER_RE, match_key, render
+from lexi_ai.normalize import (
+    PLACEHOLDER_RE,
+    answer_key,
+    fold_diacritics,
+    match_key,
+    render,
+)
 
 # --- case folding ---------------------------------------------------------
 
@@ -19,18 +27,100 @@ def test_case_fold(variant):
 
 
 # --- diacritics -----------------------------------------------------------
+#
+# match_key PRESERVES diacritics. Folding them here made distinct headwords share
+# one key — and `words.match_key` is UNIQUE, so `pâté` could not be stored once
+# `pate` existed. Accent-insensitive lookup is kept by registering the folded
+# spelling as a `diacritic` alias, which `resolve_key` searches; that is covered
+# in the repository tests. `fold_diacritics` is the folding, now separable.
 
 
-def test_diacritics_cafe():
-    assert match_key("café") == match_key("cafe")
+@pytest.mark.parametrize(
+    ("accented", "plain"),
+    [
+        ("résumé", "resume"),
+        ("pâté", "pate"),
+        ("exposé", "expose"),
+        ("rosé", "rose"),
+        ("café", "cafe"),
+        ("naïve", "naive"),
+    ],
+)
+def test_accented_words_keep_their_own_key(accented, plain):
+    """These are different words; one UNIQUE key for both loses an entry."""
+    assert match_key(accented) != match_key(plain)
 
 
-def test_diacritics_naive():
-    assert match_key("naïve") == match_key("naive")
+@pytest.mark.parametrize(
+    ("accented", "plain"),
+    [("résumé", "resume"), ("pâté", "pate"), ("café", "cafe"), ("naïve", "naive")],
+)
+def test_folding_still_available_for_alias_generation(accented, plain):
+    assert fold_diacritics(accented) == plain
 
 
-def test_diacritics_mixed_case_and_accent():
-    assert match_key("Résumé") == match_key("resume")
+def test_folding_leaves_an_unaccented_word_untouched():
+    """Callers test `fold_diacritics(x) != x` to decide whether an alias is needed."""
+    assert fold_diacritics("resume") == "resume"
+
+
+def test_diacritic_key_is_still_case_and_whitespace_normalized():
+    """Preserving accents must not disable the rest of the pipeline."""
+    assert match_key("  Résumé  ") == match_key("résumé")
+    assert match_key("CAFÉ") == match_key("café")
+
+
+# --- Unicode canonicalization ---------------------------------------------
+#
+# Preserving diacritics must not mean keying on raw code points. `café` composed
+# (U+00E9) and `café` decomposed (e + U+0301) render identically and are one
+# word; keying them apart produces two indistinguishable dictionary entries,
+# which is the collision bug inverted. macOS and several IMEs emit the
+# decomposed form, so this is an ordinary input, not an adversarial one.
+
+
+@pytest.mark.parametrize("word", ["café", "résumé", "naïve", "pâté"])
+def test_composed_and_decomposed_spellings_share_one_key(word):
+    composed = unicodedata.normalize("NFC", word)
+    decomposed = unicodedata.normalize("NFD", word)
+    assert composed != decomposed, "the test word must actually differ by encoding"
+    assert match_key(composed) == match_key(decomposed)
+
+
+def test_compatibility_variants_fold_onto_their_plain_letters():
+    """A ligature or a fullwidth form is an encoding of the word, not another word."""
+    assert match_key("ﬁle") == match_key("file")
+    assert match_key("ａbc") == match_key("abc")
+
+
+def test_canonicalization_does_not_merge_distinct_letters():
+    """NFKC must not quietly undo the diacritic fix."""
+    assert match_key("résumé") != match_key("resume")
+
+
+# --- answer_key (grading) --------------------------------------------------
+#
+# The mirror image of match_key: identity keeps accents apart, comparison folds
+# them together. A learner typing `cafe` on a phone keyboard has recalled `café`.
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [("cafe", "café"), ("resume", "résumé"), ("naive", "naïve"), ("pate", "pâté")],
+)
+def test_answer_key_accepts_an_unaccented_answer(typed, expected):
+    assert answer_key(typed) == answer_key(expected)
+
+
+def test_answer_key_inherits_the_match_key_pipeline():
+    """Case, whitespace and placeholder folding still apply."""
+    assert answer_key("  CAFE  ") == answer_key("cafe")
+    assert answer_key("act on behalf of {sb}") == answer_key("act on behalf of somebody")
+
+
+def test_answer_key_still_separates_genuinely_different_words():
+    """Folding accents must not make grading accept anything."""
+    assert answer_key("cafe") != answer_key("cage")
 
 
 # --- whitespace -----------------------------------------------------------

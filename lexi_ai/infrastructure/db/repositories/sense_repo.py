@@ -110,7 +110,10 @@ class SqlSenseRepo:
         ).scalar_one()
 
     async def needing_embedding(
-        self, word_ids: list[int] | None = None, limit: int | None = None
+        self,
+        word_ids: list[int] | None = None,
+        limit: int | None = None,
+        after_sense_id: int | None = None,
     ) -> list[SenseEmbeddingNeed]:
         """Done senses that are candidates for embedding, oldest id first.
 
@@ -118,6 +121,13 @@ class SqlSenseRepo:
         so every done sense is a candidate and the caller subtracts what the index
         already holds. Restrict to ``word_ids`` right after generation; omit them
         for a global backfill.
+
+        ``after_sense_id`` resumes past an id already examined, which is what lets
+        a caller honour a ``limit`` without loading the whole table. Because the
+        already-embedded set lives in the index rather than here, a plain
+        ``LIMIT`` could return a page that is entirely embedded already and read
+        as "nothing left to do"; paging with this cursor lets the caller keep
+        asking until it has enough genuinely-unembedded rows.
         """
         stmt = (
             select(Sense.id, Word.norm, Sense.definition)
@@ -129,6 +139,8 @@ class SqlSenseRepo:
             if not word_ids:
                 return []
             stmt = stmt.where(Sense.word_id.in_(word_ids))
+        if after_sense_id is not None:
+            stmt = stmt.where(Sense.id > after_sense_id)
         if limit is not None:
             stmt = stmt.limit(limit)
         rows = await self._session.execute(stmt)

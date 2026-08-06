@@ -20,7 +20,7 @@ from lexi_ai.contracts.questions import (
 )
 from lexi_ai.domain.questions import PersistedQuestion
 from lexi_ai.llm import StructuredLLM, ainvoke_structured, guarded_messages
-from lexi_ai.normalize import match_key
+from lexi_ai.normalize import answer_key
 from lexi_ai.prompts import PromptLoader
 from lexi_ai.questions.render import to_grading, to_reveal
 from lexi_ai.questions.schemas import Judgment
@@ -62,13 +62,20 @@ async def grade_single_choice(
 
 
 async def grade_text_span(persisted: PersistedQuestion, submission: AnswerSubmission) -> Evaluation:
-    """Grade text against the lemma and any accepted inflected surfaces."""
+    """Grade text against the lemma and any accepted inflected surfaces.
+
+    Compared through :func:`answer_key`, which folds accents. ``match_key`` alone
+    would mark a learner wrong for typing ``cafe`` instead of ``café`` — a typical
+    phone keyboard cannot produce the accent easily, and the learner has
+    demonstrably recalled the word. Identity keys must keep the two apart;
+    grading must not.
+    """
     grading = to_grading(persisted.render_kind, persisted.payload)
-    accepted = {match_key(grading.answer_norm)}
-    accepted.update(match_key(form) for form in grading.accepted_forms)
+    accepted = {answer_key(grading.answer_norm)}
+    accepted.update(answer_key(form) for form in grading.accepted_forms)
     text = _response_text(submission.response, persisted.payload.get("word_bank"))
     reveal = to_reveal(persisted.render_kind, persisted.payload)
-    return _graded(submission.question_id, match_key(text) in accepted, reveal=reveal)
+    return _graded(submission.question_id, answer_key(text) in accepted, reveal=reveal)
 
 
 async def grade_rubric(
@@ -118,8 +125,9 @@ def _response_text(response: Response, options: list[str] | None = None) -> str:
 
 def _resolve_choice(response: Response, options: list[str]) -> int | None:
     """Resolve a response to an option index: the selected index for a
-    ``ChoiceResponse``, or a text match (numeric or ``match_key`` on the option
-    values) for a ``TextResponse``."""
+    ``ChoiceResponse``, or a text match (numeric or ``answer_key`` on the option
+    values) for a ``TextResponse``. Accent-folded, like every other comparison a
+    learner's typing is put through."""
     if isinstance(response, ChoiceResponse):
         return response.selected_index
     if isinstance(response, TextResponse):
@@ -129,9 +137,9 @@ def _resolve_choice(response: Response, options: list[str]) -> int | None:
                 return int(text)
             except ValueError:
                 return None
-        wanted = match_key(text)
+        wanted = answer_key(text)
         return next(
-            (index for index, option in enumerate(options) if match_key(option) == wanted),
+            (index for index, option in enumerate(options) if answer_key(option) == wanted),
             None,
         )
     return None

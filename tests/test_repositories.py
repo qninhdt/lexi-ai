@@ -490,6 +490,90 @@ async def test_resolve_key_matches_a_headword_and_an_alias(repo, uow):
     assert by_alias == by_headword  # the alias resolves to the same word
 
 
+async def test_an_accented_word_and_its_plain_spelling_are_separate_entries(repo, uow):
+    """``résumé`` and ``resume`` are different words and must both be storable.
+
+    ``words.match_key`` is UNIQUE. While the key folded diacritics, these two
+    produced the same key, so the second entry could not be inserted — generating
+    one after the other lost a headword and the senses hanging off it.
+    """
+    await _publish(
+        repo,
+        GeneratedEntry(
+            norm="resume",
+            entry_type="word",
+            senses=[{"definition": "to begin again", "tier": "core", "pos": "verb"}],
+        ),
+    )
+    await _publish(
+        repo,
+        GeneratedEntry(
+            norm="résumé",
+            entry_type="word",
+            senses=[{"definition": "a CV", "tier": "core", "pos": "noun"}],
+        ),
+    )
+
+    async with uow() as work:
+        listing = await work.words.listing()
+
+    norms = sorted(row.norm for row in listing)
+    assert norms == ["resume", "résumé"], "one spelling displaced the other"
+
+
+async def test_the_plain_spelling_still_finds_an_accented_headword(repo, uow):
+    """Separating the keys must not cost accent-insensitive lookup.
+
+    The folded surface is registered as a ``diacritic`` alias, and ``resolve_key``
+    searches aliases, so typing ``cafe`` still reaches ``café``.
+    """
+    await _publish(
+        repo,
+        GeneratedEntry(
+            norm="café",
+            entry_type="word",
+            senses=[{"definition": "a coffee house", "tier": "core", "pos": "noun"}],
+        ),
+    )
+
+    async with uow() as work:
+        by_headword = await work.words.resolve_key(match_key("café"))
+        by_folded = await work.words.resolve_key(match_key("cafe"))
+
+    assert [row.status for row in by_headword] == ["done"]
+    assert by_folded == by_headword, "the accent-folded spelling no longer resolves"
+
+
+async def test_the_folded_alias_does_not_hijack_an_existing_plain_headword(repo, uow):
+    """A real ``resume`` entry must win its own key over ``résumé``'s alias.
+
+    ``resolve_key`` reports the headword match first and de-dupes by word id, so
+    the alias adds a second candidate rather than shadowing the direct hit.
+    """
+    await _publish(
+        repo,
+        GeneratedEntry(
+            norm="resume",
+            entry_type="word",
+            senses=[{"definition": "to begin again", "tier": "core", "pos": "verb"}],
+        ),
+    )
+    await _publish(
+        repo,
+        GeneratedEntry(
+            norm="résumé",
+            entry_type="word",
+            senses=[{"definition": "a CV", "tier": "core", "pos": "noun"}],
+        ),
+    )
+
+    async with uow() as work:
+        listing = {row.norm: row.word_id for row in await work.words.listing()}
+        matches = await work.words.resolve_key(match_key("resume"))
+
+    assert listing["resume"] in {row.word_id for row in matches}
+
+
 async def test_norm_and_cambridge_reports_provenance(repo, uow):
     await repo.persist_result(GeneratedResult(units=[_entry("anchored")]), cambridge_word_id=77)
 

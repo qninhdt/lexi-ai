@@ -15,9 +15,10 @@ runs ONCE on every call (read and write), like ``match_key``/``tag_key``.
 """
 
 import hashlib
+from collections.abc import Sequence
 from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -101,6 +102,9 @@ class AssetRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession], cache_dir: str):
         self._session_factory = session_factory
         self._cache_dir = Path(cache_dir)
+        # Deferred-unlink listeners whose transaction has ended, awaiting removal.
+        # See `_detach_spent_listeners` for why they are not removed in place.
+        self._spent_listeners: list[tuple] = []
 
     # --- source resolution -------------------------------------------------
 
@@ -330,8 +334,7 @@ class AssetRepository:
         )
         if not rows:
             return 0
-        for row in rows:
-            self._unlink(row.file_path)
+        self._unlink_after_commit(session, [row.file_path for row in rows])
         await session.execute(
             delete(AssetRow).where(
                 AssetRow.source_kind == source_kind,
@@ -365,26 +368,29 @@ class AssetRepository:
     async def delete(self, asset_id: int) -> bool:
         """Delete an asset row by id and unlink its backing file (best-effort).
 
-        Returns whether a row was removed. A missing file is ignored."""
+        The unlink is deferred to commit: a rollback after the file was removed
+        would leave the row pointing at nothing. Returns whether a row was
+        removed. A missing file is ignored."""
         async with session_scope(self._session_factory) as session:
             row = await session.get(AssetRow, asset_id)
             if row is None:
                 return False
-            self._unlink(row.file_path)
+            self._unlink_after_commit(session, [row.file_path])
             await session.delete(row)
             return True
 
     async def purge(self, kind: str | None = None) -> int:
         """Delete every cached asset (optionally one ``kind``), unlinking files.
 
-        Returns the number of rows removed. Files are unlinked best-effort."""
+        Returns the number of rows removed. Files are unlinked best-effort, after
+        the transaction commits."""
         async with session_scope(self._session_factory) as session:
             stmt = select(AssetRow)
             if kind is not None:
                 stmt = stmt.where(AssetRow.kind == kind)
             rows = (await session.execute(stmt)).scalars().all()
+            self._unlink_after_commit(session, [row.file_path for row in rows])
             for row in rows:
-                self._unlink(row.file_path)
                 await session.delete(row)
             return len(rows)
 
@@ -393,6 +399,88 @@ class AssetRepository:
         if file_path is None:
             return
         (self._cache_dir / file_path).unlink(missing_ok=True)
+
+    def _unlink_after_commit(
+        self, session: AsyncSession, file_paths: Sequence[str | None]
+    ) -> None:
+        """Unlink these files once — and only once — the caller's transaction commits.
+
+        Deleting the file first is not recoverable. The row deletions that go with
+        it live in the caller's transaction, which can still roll back: a word
+        delete that hits a constraint later, or any error between here and the
+        commit, leaves the rows intact and their files gone. Every subsequent read
+        of those rows is then a miss against a file that no longer exists.
+
+        Waiting for the commit inverts the failure into the harmless direction. If
+        the process dies between commit and unlink, the files are merely orphaned —
+        the rows are gone, nothing serves them, and they are inert bytes on disk.
+        That is what "best-effort GC" is allowed to mean; destroying live content
+        is not.
+
+        Two things make this precise rather than merely deferred:
+
+        * A commit is recorded by ``after_commit`` but the unlink is performed from
+          ``after_transaction_end``, which fires for a rollback too. Waiting on
+          ``after_commit`` alone would fire on whatever commits next, so on a reused
+          session a later, unrelated commit would happily unlink files whose own
+          transaction rolled back — the original bug through a different door.
+        * The handlers compare transaction identity, and are unregistered by the
+          next call rather than from inside the dispatch — removing a listener
+          while SQLAlchemy is iterating its own listener deque raises. Sessions
+          here are caller-supplied and long-lived (``collect_word_assets`` calls in
+          three times per word), so listeners that are never cleaned up accumulate
+          one set per delete for the life of the session.
+
+        Nested transactions (savepoints) are ignored deliberately: releasing a
+        SAVEPOINT is not durability, and unlinking there would destroy files that
+        an outer rollback still owns.
+        """
+        paths = [path for path in file_paths if path is not None]
+        if not paths:
+            return
+
+        sync_session = session.sync_session
+        # The transaction these deletes belong to. Anything that ends a DIFFERENT
+        # transaction is somebody else's business.
+        target = sync_session.get_transaction()
+        if target is None:  # pragma: no cover - no active transaction to wait on
+            for path in paths:
+                self._unlink(path)
+            return
+
+        self._detach_spent_listeners(sync_session)
+        committed = False
+
+        def _on_commit(_session) -> None:
+            nonlocal committed
+            if _session.get_transaction() is target:
+                committed = True
+
+        def _on_transaction_end(_session, transaction) -> None:
+            if transaction is not target:
+                return  # a savepoint, or an unrelated later transaction
+            # Mark for removal instead of removing here: this runs inside the
+            # dispatch loop over the very deque `event.remove` would mutate.
+            self._spent_listeners.append((sync_session, _on_commit, _on_transaction_end))
+            if not committed:
+                return  # rolled back: the rows survive, so their files must too
+            for path in paths:
+                self._unlink(path)
+
+        event.listen(sync_session, "after_commit", _on_commit)
+        event.listen(sync_session, "after_transaction_end", _on_transaction_end)
+
+    def _detach_spent_listeners(self, _session: object) -> None:
+        """Unregister listeners whose transaction has already ended.
+
+        Done on the way IN to the next deferral rather than from inside a handler,
+        because ``event.remove`` cannot run while SQLAlchemy iterates the listener
+        collection it would mutate.
+        """
+        while self._spent_listeners:
+            sync_session, on_commit, on_end = self._spent_listeners.pop()
+            event.remove(sync_session, "after_commit", on_commit)
+            event.remove(sync_session, "after_transaction_end", on_end)
 
     @staticmethod
     def _to_asset(row: AssetRow) -> Asset:

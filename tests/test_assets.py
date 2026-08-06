@@ -382,6 +382,119 @@ async def test_gc_rolls_back_with_caller_transaction(session_factory, assets):
     assert len(rows) == 1
 
 
+async def test_a_rolled_back_gc_leaves_the_file_on_disk(session_factory, assets, tmp_path):
+    """The row surviving a rollback is only half the guarantee — the file must too.
+
+    Unlinking during the transaction destroys content that the rollback then
+    restores a row for: the row points at a file that no longer exists, and every
+    later read is a miss on content nobody deleted on purpose. Unlike a row, a
+    deleted file cannot be rolled back, so the unlink has to wait for the commit.
+    """
+    sid = await _make_sense(session_factory)
+    text = "a small domestic cat"
+    p_a = normalize_asset_params("tts", voice="alloy", fmt="mp3")
+    file_asset = await assets.put_file("sense_def", sid, "tts", p_a, text, b"\x01", ext="mp3")
+    file_path = tmp_path / file_asset.file_path
+    assert file_path.exists()
+
+    with pytest.raises(RuntimeError):
+        async with session_scope(session_factory) as session:
+            await assets.delete_by_source(session, "sense_def", sid)
+            raise RuntimeError("boom after gc")
+
+    async with session_scope(session_factory) as session:
+        rows = (await session.execute(select(AssetRow))).scalars().all()
+    assert len(rows) == 1, "the row should have survived the rollback"
+    assert file_path.exists(), "the file was unlinked for a transaction that rolled back"
+
+
+async def test_a_committed_gc_still_unlinks_the_file(session_factory, assets, tmp_path):
+    """Deferring the unlink must not turn into never unlinking it."""
+    sid = await _make_sense(session_factory)
+    text = "a small domestic cat"
+    p_a = normalize_asset_params("tts", voice="alloy", fmt="mp3")
+    file_asset = await assets.put_file("sense_def", sid, "tts", p_a, text, b"\x01", ext="mp3")
+    file_path = tmp_path / file_asset.file_path
+
+    async with session_scope(session_factory) as session:
+        await assets.delete_by_source(session, "sense_def", sid)
+        # Still inside the transaction: the row is going away, but the bytes are
+        # not gone until the commit makes that decision final.
+        assert file_path.exists(), "unlinked before the commit"
+
+    assert not file_path.exists(), "the file outlived a committed delete"
+
+
+async def test_a_rolled_back_gc_does_not_unlink_on_a_later_commit(
+    session_factory, assets, tmp_path
+):
+    """A deferred unlink must be tied to ITS transaction, not to whatever commits next.
+
+    Sessions here are caller-supplied and reused. A listener that simply waits for
+    "the next commit" will fire for an unrelated one, deleting files whose own
+    transaction rolled back — the original bug, reached through a different door.
+    """
+    sid = await _make_sense(session_factory)
+    text = "a small domestic cat"
+    p_a = normalize_asset_params("tts", voice="alloy", fmt="mp3")
+    file_asset = await assets.put_file("sense_def", sid, "tts", p_a, text, b"\x01", ext="mp3")
+    file_path = tmp_path / file_asset.file_path
+
+    session = session_factory()
+    try:
+        await assets.delete_by_source(session, "sense_def", sid)
+        await session.rollback()
+
+        # An unrelated unit of work on the same session, committed normally.
+        other = await _make_sense(session_factory, "an unrelated definition")
+        assert other  # the write above uses its own scope; commit this session too
+        await session.commit()
+    finally:
+        await session.close()
+
+    assert file_path.exists(), "an unrelated commit unlinked a rolled-back delete's file"
+    async with session_scope(session_factory) as check:
+        rows = (await check.execute(select(AssetRow))).scalars().all()
+    assert len(rows) == 1, "the row survived but its file did not"
+
+
+async def test_repeated_deferred_unlinks_stay_correct_on_a_reused_session(
+    session_factory, assets, tmp_path
+):
+    """Many deletes on one long-lived session, each resolving independently.
+
+    ``collect_word_assets`` calls in three times per word, and the session is the
+    caller's, so the deferral has to work repeatedly rather than once. Interleaves
+    committed and rolled-back deletes: every committed file must be gone and every
+    rolled-back file must remain, which is only true if each deferral is tied to
+    its own transaction.
+    """
+    session = session_factory()
+    try:
+        p_a = normalize_asset_params("tts", voice="alloy", fmt="mp3")
+        committed_paths = []
+        kept_paths = []
+
+        for i in range(4):
+            sid = await _make_sense(session_factory, f"definition {i}")
+            asset = await assets.put_file(
+                "sense_def", sid, "tts", p_a, f"definition {i}", b"\x01", ext="mp3"
+            )
+            path = tmp_path / asset.file_path
+            await assets.delete_by_source(session, "sense_def", sid)
+            if i % 2 == 0:
+                await session.commit()
+                committed_paths.append(path)
+            else:
+                await session.rollback()
+                kept_paths.append(path)
+
+        assert all(not p.exists() for p in committed_paths), "a committed delete kept its file"
+        assert all(p.exists() for p in kept_paths), "a rolled-back delete lost its file"
+    finally:
+        await session.close()
+
+
 # --- API surface: translate ------------------------------------------------
 
 
