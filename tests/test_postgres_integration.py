@@ -278,3 +278,46 @@ async def test_postgres_over_length_source_ref_is_clamped(pg_session_factory):
         ref = (await session.execute(select(SenseReference))).scalar_one()
     assert word.status == "done", "over-length source_ref rolled the word back to error"
     assert len(ref.source_ref) <= 255
+
+
+# ---------------------------------------------------------------------------
+# Schema access paths
+# ---------------------------------------------------------------------------
+
+
+async def test_senses_word_id_has_an_index_to_read_a_word_by(pg_session_factory):
+    """`senses.word_id` is the most-filtered column and needs its own index.
+
+    Unindexed, every read of a word's senses and the join behind entry assembly
+    has no access path but a sequential scan of the whole table. The other
+    `word_id` columns in the schema do not need one: aliases and tags lead their
+    UNIQUE constraints with it, and Postgres backs a unique constraint with a btree
+    index a lookup on the leading column can already use. `senses` has no such
+    constraint.
+
+    Asserted against a schema Alembic built, which is the point — the ORM
+    declaration is not in question, whether the migration puts it in the database
+    is. Dropping the `create_index` makes this fail, and the SQLite tier cannot
+    tell either way.
+    """
+    from sqlalchemy import inspect
+
+    from tests.conftest import PG_SCHEMA
+
+    async with pg_session_factory() as session:
+        connection = await session.connection()
+        indexes = await connection.run_sync(
+            lambda sync_connection: inspect(sync_connection).get_indexes(
+                "senses", schema=PG_SCHEMA
+            )
+        )
+
+    covering = [
+        index
+        for index in indexes
+        if index["column_names"] and index["column_names"][0] == "word_id"
+    ]
+    assert covering, (
+        "no index leads with senses.word_id, so reading a word's senses is a "
+        f"sequential scan. Indexes present: {[i['name'] for i in indexes]}"
+    )
