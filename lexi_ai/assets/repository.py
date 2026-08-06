@@ -395,7 +395,22 @@ class AssetRepository:
             return len(rows)
 
     def _unlink(self, file_path: str | None) -> None:
-        """Remove a backing file under the cache dir, ignoring a missing file."""
+        """Remove a backing file under the cache dir, ignoring a missing file.
+
+        Synchronous, and deliberately left that way. Offloading this and the write
+        above with `asyncio.to_thread` was tried and reverted: every caller is
+        either the after-commit listener, which SQLAlchemy dispatches synchronously
+        with no loop to await on, or a path with a transaction open on this
+        connection. The await yields the event loop, a sibling task then works on
+        the same connection, and its savepoint is invalidated —
+        `OperationalError: no such savepoint`, reproduced by two concurrent TTS
+        writes in roughly one run in six against a suite that was 10-for-10 clean
+        before the change.
+
+        The blocking call is real but bounded: a local cache write of a few KB.
+        Making it async needs per-connection isolation for these writes first, which
+        is a design change rather than a `to_thread` wrapper.
+        """
         if file_path is None:
             return
         (self._cache_dir / file_path).unlink(missing_ok=True)

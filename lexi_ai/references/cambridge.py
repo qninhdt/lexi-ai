@@ -279,19 +279,40 @@ class CambridgeSource:
             conn.close()
 
     def _first_definition_sync(self, word_ids: Iterable[int]) -> dict[int, str]:
-        """First sense definition per word_id (a gloss for disambiguation)."""
+        """First sense definition per word_id (a gloss for disambiguation).
+
+        One query for the whole batch, not one per id. This runs on the search
+        path — a `search()` asking for ten candidates issued ten round trips
+        against the reference database, each opening its own statement, and the
+        cost scaled with the result count rather than staying flat.
+
+        The window function does what `LIMIT 1` did per word: rank each word's
+        senses by the same `(entry_order, sense_order)` and keep the first. SQLite
+        has supported window functions since 3.25 (2018), and this file already
+        requires a modern SQLite for its FTS5 usage.
+        """
+        ids = list(word_ids)
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
         conn = self._connect()
         try:
-            out: dict[int, str] = {}
-            for word_id in word_ids:
-                row = conn.execute(
-                    "SELECT s.definition FROM entries e JOIN senses s ON s.entry_id = e.id "
-                    "WHERE e.word_id = ? ORDER BY e.entry_order, s.sense_order LIMIT 1",
-                    (word_id,),
-                ).fetchone()
-                if row is not None and row["definition"]:
-                    out[word_id] = row["definition"]
-            return out
+            rows = conn.execute(
+                "SELECT word_id, definition FROM ("
+                "  SELECT e.word_id AS word_id, s.definition AS definition, "
+                "         ROW_NUMBER() OVER ("
+                "           PARTITION BY e.word_id ORDER BY e.entry_order, s.sense_order"
+                "         ) AS rank "
+                "  FROM entries e JOIN senses s ON s.entry_id = e.id "
+                f"  WHERE e.word_id IN ({placeholders})"
+                ") WHERE rank = 1",
+                ids,
+            ).fetchall()
+            return {
+                row["word_id"]: row["definition"]
+                for row in rows
+                if row["definition"]
+            }
         finally:
             conn.close()
 

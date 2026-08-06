@@ -108,10 +108,20 @@ class SqlSenseRepo(SenseRelationResolutionMixin):
         await self._requeue_unresolvable_inbound(word_id)
         # Deleting senses cascades to references, examples, collocations, and forms.
         await self._session.execute(delete(Sense).where(Sense.word_id == word_id))
-        for order, generated in enumerate(senses):
-            sense = self._build_sense(word_id, order, generated, cefr_map)
-            self._session.add(sense)
-            await self._session.flush()
+        # Two passes with one flush between them, rather than a flush per sense.
+        #
+        # Children and relation edges need their parent's `sense.id`, which only a
+        # flush assigns, so *a* flush is unavoidable — but one flush for the whole
+        # batch assigns every id at once. The per-sense version paid a round trip
+        # per sense, and a regenerated word carries a dozen: the cost scaled with
+        # the size of the entry for no reason but the order of these statements.
+        built = [
+            (self._build_sense(word_id, order, generated, cefr_map), generated)
+            for order, generated in enumerate(senses)
+        ]
+        self._session.add_all([sense for sense, _ in built])
+        await self._session.flush()
+        for sense, generated in built:
             self._add_children(sense.id, generated)
             await self._link_sense_relations(sense.id, word_id, generated.relations)
         await self._session.flush()

@@ -12,6 +12,37 @@ from lexi_ai.domain.ports import UnitOfWork, VectorIndex
 from lexi_ai.normalize import render, tag_key
 from lexi_ai.read_models import BatchResult, Entry, SearchResult, SenseView, Stats, TagCount
 
+# Ceilings on the batch reads, which a caller supplies the size of.
+#
+# `entries` and `statuses` issue one query per id, so an unbounded list is an
+# unbounded fan-out against the database from a single call — and `gather_batch`
+# with no `concurrency` runs them all at once. `senses` is one query, but its `IN`
+# list grows with the caller's input and Postgres plans a large one poorly.
+#
+# Both are far above any real caller: Pycil's largest batch is a session's admitted
+# senses, which the learner's own settings cap well below this. They exist so one
+# malformed request cannot become a thousand concurrent statements.
+MAX_BATCH_IDS = 500
+# Concurrent in-flight queries within one batch, distinct from the ceiling above.
+# 500 sequential-ish reads are fine; 500 simultaneous ones exhaust the pool and
+# starve every other caller in the process.
+BATCH_CONCURRENCY = 16
+
+
+def _bounded(ids: Sequence[int], surface: str) -> list[int]:
+    """The caller's ids, refused rather than truncated when there are too many.
+
+    Truncating would answer a 600-id request with 500 results in order, which the
+    caller reads as "the last hundred do not exist" — a wrong answer is worse than
+    a refusal it can page around.
+    """
+    if len(ids) > MAX_BATCH_IDS:
+        raise ValueError(
+            f"{surface} takes at most {MAX_BATCH_IDS} ids, got {len(ids)}; "
+            "page the request rather than widening this bound"
+        )
+    return list(ids)
+
 
 class DictionaryService:
     """Read use cases over the unit of work."""
@@ -61,14 +92,16 @@ class DictionaryService:
         async def _one(word_id: int) -> Entry:
             return await self.entry(word_id, theme=theme)
 
-        return await gather_batch(list(word_ids), _one)
+        return await gather_batch(
+            _bounded(word_ids, "entries"), _one, concurrency=BATCH_CONCURRENCY
+        )
 
     async def senses(self, sense_ids: Sequence[int]) -> list[SenseView]:
         """Views for the given senses, in order. Unknown ids are skipped."""
         if not sense_ids:
             return []
         async with self._uow() as uow:
-            return await uow.entries.sense_views(list(sense_ids))
+            return await uow.entries.sense_views(_bounded(sense_ids, "senses"))
 
     async def status(self, word_id: int) -> str | None:
         """Lifecycle status of a word, or ``None`` when the id is unknown."""
@@ -81,7 +114,9 @@ class DictionaryService:
         async def _one(word_id: int) -> str | None:
             return await self.status(word_id)
 
-        return await gather_batch(list(word_ids), _one)
+        return await gather_batch(
+            _bounded(word_ids, "statuses"), _one, concurrency=BATCH_CONCURRENCY
+        )
 
     async def list_entries(
         self, *, status: str = "done", limit: int | None = None, offset: int = 0
