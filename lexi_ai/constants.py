@@ -172,25 +172,6 @@ REL_LEVEL = {
 WORD_REL_TYPES = frozenset(rt for rt, level in REL_LEVEL.items() if level == "word")
 SENSE_REL_TYPES = frozenset(rt for rt, level in REL_LEVEL.items() if level == "sense")
 
-# Direction semantics of each SENSE-level rel_type, used by the READ model (Phase
-# 6) to surface inverse/symmetric edges from the far side WITHOUT ever mutating a
-# row ([F8] — canonicalize-on-read, never on-write). Values:
-#   "symmetric"      — the relation reads the same both ways (synonym↔synonym).
-#   "inverse:<other>" — reading from the target flips the label (hypernym seen
-#                       from the target is a hyponym, and vice versa).
-# Only sense-level types appear (word-level relations are not WSD-resolved and are
-# surfaced as emitted). A test asserts every SENSE_REL_TYPES member is classified
-# and that every ``inverse:<other>`` names a real, mutually-inverse sense type.
-REL_SYMMETRY = {
-    "synonym": "symmetric",
-    "antonym": "symmetric",
-    "see_also": "symmetric",
-    "hypernym": "inverse:hyponym",
-    "hyponym": "inverse:hypernym",
-    "meronym": "inverse:holonym",
-    "holonym": "inverse:meronym",
-}
-
 # WSD batch cost guards ([F9]) — caller/data-controlled sizes are DoS vectors, so
 # both are hard-clamped in the resolve path (never merely defaulted):
 #   WSD_BATCH_CEIL   — max edges reconciled per resolve_relations() call.
@@ -301,11 +282,6 @@ INFLECTION_LABELS = frozenset(
         "superlative",
     }
 )
-
-# Score.kind — how a verdict was reached (deterministic rule vs llm judge). This
-# is caller-facing OUTPUT the scorer reports about itself; the engine never reads
-# it (the engine is interface-driven and does not branch on backend identity).
-SCORE_KINDS = frozenset({"rule", "llm"})
 
 # ISO 639-1 language codes mapped to their English names
 TRANSLATION_LANGUAGES = {
