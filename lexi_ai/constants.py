@@ -232,11 +232,20 @@ ASSET_KINDS = frozenset({"translate", "tts"})
 # a closed vocab at the one normalize_asset_params choke point closes that
 # collision (and the identity-separator ambiguity) the same way lang does.
 #
-# The OpenAI-compatible provider vocab. The config defaults (config.tts_voice /
-# tts_format = "alloy"/"mp3") MUST be members — a test asserts it — so the happy
-# path never hard-rejects. ``None`` resolves to those defaults BEFORE validation.
+# The OpenAI-compatible provider vocab. The defaults below MUST be members — a
+# test asserts it — so the happy path never hard-rejects. ``None`` resolves to
+# those defaults BEFORE validation.
 TTS_VOICES = frozenset({"alloy", "echo", "fable", "onyx", "nova", "shimmer"})
 TTS_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
+
+# Which member of each vocab a `None` resolves to. Here rather than only in
+# `config`, because the identity rules need them and `domain/asset_identity.py`
+# must not read runtime settings: an asset's on-disk identity has to be
+# reproducible from the parameters alone, or the same logical asset gets two paths
+# across two differently-configured processes. `config` still exposes these as
+# overridable settings, defaulted from here so the two cannot disagree.
+DEFAULT_TTS_VOICE = "alloy"
+DEFAULT_TTS_FORMAT = "mp3"
 
 # assets.source_kind — the source row a cached asset derives from. Each kind maps
 # to a (table, text column) in the asset repository's resolver; that mapping is

@@ -89,6 +89,17 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.importlinter]
 root_package = "lexi_ai"
 include_external_packages = true
+# A name imported under `if TYPE_CHECKING:` is not an edge at runtime: it exists so
+# a Protocol can be annotated, and it is erased before anything executes. Counting
+# it as a dependency would force the layered contracts to reject exactly the
+# type-only imports that let `domain/ports.py` describe its own boundary.
+#
+# This is set globally and deliberately: with it, a contract that passes means the
+# import graph is clean at runtime, which is the claim these contracts are meant
+# to make. Type-level coupling is a design question (see the note on
+# `domain/ports.py` and `generation.schemas`), not something a forbidden-import
+# rule should decide.
+exclude_type_checking_imports = true
 
 [[tool.importlinter.contracts]]
 name = "contracts package is dependency-free (no domain/app/infra/orm)"
@@ -107,14 +118,34 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "domain must not import infrastructure or ORM"
+name = "domain must not import infrastructure, ORM, or runtime wiring"
 type = "forbidden"
 source_modules = ["lexi_ai.domain"]
+# The root modules below are the addition. This contract passed while
+# `domain/asset_identity.py` imported `config`, `db` and a private name out of
+# `normalize`, because it named only packages and every one of those is a loose
+# module at the root — outside the scope of every contract in this file.
+#
+# `config` is the one that mattered: reading runtime settings inside the identity
+# rules made an asset's on-disk path depend on the configuration of whichever
+# process computed it, so two differently-configured processes derived two paths
+# for one logical asset. The defaults moved to `constants` and the import is gone.
+#
+# `constants` and `normalize` are deliberately NOT forbidden. Both are pure and
+# import nothing from `lexi_ai` at all, so a domain module depending on them is
+# not a layering violation — forbidding them would force a copy of the closed
+# vocabularies, which is the drift these modules exist to prevent.
 forbidden_modules = [
     "lexi_ai.infrastructure",
     "lexi_ai.persistence",
     "lexi_ai.api",
     "lexi_ai.models",
+    "lexi_ai.config",
+    "lexi_ai.db",
+    "lexi_ai.vectors",
+    "lexi_ai.read_models",
+    "lexi_ai.llm",
+    "lexi_ai.embeddings",
     "sqlalchemy",
 ]
 

@@ -15,14 +15,15 @@ at a single choke point, which is what closed the collision where `en-US` and
 
 import hashlib
 
-from lexi_ai.config import get_settings
 from lexi_ai.constants import (
     ASSET_KINDS,
+    DEFAULT_TTS_FORMAT,
+    DEFAULT_TTS_VOICE,
     TRANSLATION_LANGUAGES,
     TTS_FORMATS,
     TTS_VOICES,
 )
-from lexi_ai.normalize import _CTRL_RE
+from lexi_ai.normalize import strip_control_chars
 
 
 def content_hash(text: str) -> str:
@@ -32,7 +33,7 @@ def content_hash(text: str) -> str:
     hashing so trailing/interior-whitespace variants of the same text collapse to
     one hash. The SAME normalization on every call — this is the verify contract.
     """
-    s = _CTRL_RE.sub(" ", text)
+    s = strip_control_chars(text)
     s = " ".join(s.split()).strip()
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
@@ -47,9 +48,18 @@ def normalize_asset_params(kind: str, **kw: str | None) -> str:
     (like ``lang`` against ``TRANSLATION_LANGUAGES``): ``voice``/``fmt`` against
     ``TTS_VOICES``/``TTS_FORMATS``. This closes the filename-collision bug where
     two distinct DB rows (``en-US`` vs ``en_US``) squashed to the SAME on-disk
-    path and served each other's bytes. A ``None`` voice/fmt resolves to the
-    configured default (``alloy``/``mp3``) BEFORE validation, so a default TTS
-    call never hard-rejects on the happy path.
+    path and served each other's bytes. A ``None`` voice/fmt resolves to
+    ``DEFAULT_TTS_VOICE``/``DEFAULT_TTS_FORMAT`` BEFORE validation, so a default
+    TTS call never hard-rejects on the happy path.
+
+    Those defaults come from ``constants``, not from runtime settings. This used to
+    call ``get_settings()``, which made an asset's identity depend on the
+    configuration of whichever process computed it — two processes with different
+    ``tts_voice`` would derive two different paths for the same logical asset, and
+    a cache written by one would miss for the other. ``AssetService`` still
+    resolves its own configured voice/fmt and passes them explicitly, so the
+    configurable path is unchanged; what is gone is the domain reading config
+    behind the caller's back.
     """
     if kind not in ASSET_KINDS:
         raise ValueError(f"unknown asset kind: {kind!r}")
@@ -58,10 +68,9 @@ def normalize_asset_params(kind: str, **kw: str | None) -> str:
         if lang not in TRANSLATION_LANGUAGES:
             raise ValueError(f"invalid/unsupported language code: {lang!r}")
         return lang
-    # tts — resolve None to the configured default, then validate both params.
-    settings = get_settings()
-    voice = _norm_token(kw.get("voice") if kw.get("voice") is not None else settings.tts_voice)
-    fmt = _norm_token(kw.get("fmt") if kw.get("fmt") is not None else settings.tts_format)
+    # tts — resolve None to the vocabulary default, then validate both params.
+    voice = _norm_token(kw.get("voice") if kw.get("voice") is not None else DEFAULT_TTS_VOICE)
+    fmt = _norm_token(kw.get("fmt") if kw.get("fmt") is not None else DEFAULT_TTS_FORMAT)
     if voice not in TTS_VOICES:
         raise ValueError(f"invalid/unsupported TTS voice: {voice!r}")
     if fmt not in TTS_FORMATS:

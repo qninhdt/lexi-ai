@@ -7,6 +7,8 @@ Cambridge source (``cambridge_db_path``).
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from lexi_ai.constants import DEFAULT_TTS_FORMAT, DEFAULT_TTS_VOICE
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -91,8 +93,10 @@ class Settings(BaseSettings):
     tts_base_url: str = ""
     tts_api_key: str = ""
     tts_model: str = ""
-    tts_voice: str = "alloy"
-    tts_format: str = "mp3"
+    # Defaulted from `constants` rather than restated, so the value the identity
+    # rules fall back to and the value an unconfigured process uses cannot drift.
+    tts_voice: str = DEFAULT_TTS_VOICE
+    tts_format: str = DEFAULT_TTS_FORMAT
 
     # Third-party question types are discovered via the ``lexi_ai.question_types``
     # entry-point group, but registered ONLY when their type_id appears here.

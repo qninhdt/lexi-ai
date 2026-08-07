@@ -95,6 +95,18 @@ _WS_RE = re.compile(r"\s+")
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
+def strip_control_chars(s: str) -> str:
+    """Replace control characters with spaces.
+
+    The public form of `_CTRL_RE`, which `domain/asset_identity.py` used to import
+    directly. Reaching for another module's underscore-prefixed name means the
+    owning module cannot change how it does this without breaking a caller it
+    never agreed to have, so the capability is named instead of the regex being
+    borrowed.
+    """
+    return _CTRL_RE.sub(" ", s)
+
+
 def _canonicalize(s: str) -> str:
     """NFKC-normalize: canonical composition plus compatibility folding.
 
