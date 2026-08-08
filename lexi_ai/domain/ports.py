@@ -83,6 +83,16 @@ class WordRepo(Protocol):
 
     async def mark_done(self, word_id: int) -> None: ...
 
+    async def mark_error(
+        self, norms: Sequence[str], message: str, fence: GenerationFence | None = None
+    ) -> None:
+        """Stamp every unit of a failed generation with an error status.
+
+        Takes norms rather than ids because the failure can happen before any row
+        exists. A fence, when supplied, keeps the write from touching a word a
+        newer generation epoch has already claimed.
+        """
+
     async def record(self, word_id: int) -> WordRecord: ...
 
     async def records(self, word_ids: Sequence[int]) -> list[WordRecord]: ...
@@ -241,8 +251,13 @@ class TagRepo(Protocol):
 class EntryRepo(Protocol):
     """Read-model reads that need eager loading rather than a projection."""
 
-    async def entry(self, word_id: int, overlay: object | None = None) -> "Entry":
-        """The full entry for one word, optionally overlaid with a theme."""
+    async def entry(self, word_id: int, overlay: object | None = None) -> "Entry | None":
+        """The full entry for one word, or ``None`` when the id is unknown.
+
+        Optional because a lookup miss is ordinary. The implementation used to
+        raise while this said otherwise, so a caller typed against the port could
+        not see the exception it had to handle.
+        """
 
     async def sense_views(self, sense_ids: Sequence[int]) -> list["SenseView"]:
         """Views for the given senses, in the order requested, skipping unknown ids."""

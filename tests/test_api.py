@@ -328,10 +328,43 @@ async def test_get_and_status_by_lexi_id(engine):
     assert lexi_id is not None
 
     fetched = await lex.reader().get_entry(lexi_id)
+    assert fetched is not None
     assert fetched.norm == entry.norm
     assert await lex.reader().get_status(lexi_id) == "done"
     # Unknown id → None, no crash.
     assert await lex.reader().get_status(999999) is None
+
+
+async def test_get_entry_answers_none_for_an_unknown_id(engine):
+    """A lookup miss is an ordinary outcome, not an exception.
+
+    `SqlEntryRepo.entry` used `.scalar_one()`, so this raised `NoResultFound`
+    while the declared return type — here, on the domain port, and on pycil's
+    `LexiReader` port — said `Entry | None`. Nothing could see the mismatch: no
+    test asked for a missing id, and pycil's search route wrapped the call in
+    `except Exception`, which meant a genuine Lexi outage was also swallowed and
+    reported as a search that simply found thin results.
+    """
+    # No seeded words: the point is that the id resolves to nothing.
+    lex, _gen, _sf = _make_lexicon(engine, cam_words={}, norm_by_id={}, results_by_word={})
+
+    assert await lex.reader().get_entry(999999) is None
+
+
+async def test_a_batch_still_reports_an_unknown_id_as_a_failure(engine):
+    """`get_many` must not report a miss as a successful read of nothing.
+
+    `gather_batch` sorts outcomes by whether they are exceptions, so making
+    `entry()` return `None` would have turned a missing id into
+    `BatchResult(value=None)` — an item claiming success while carrying no entry.
+    """
+    lex, _gen, _sf = _make_lexicon(engine, cam_words={}, norm_by_id={}, results_by_word={})
+
+    results = await lex.reader().get_many([999999])
+
+    assert len(results) == 1
+    assert results[0].value is None
+    assert results[0].error is not None, "a missing id must be reported as an error"
 
 
 async def test_search_finds_custom_word(engine):

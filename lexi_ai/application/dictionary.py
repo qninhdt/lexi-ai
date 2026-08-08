@@ -59,18 +59,20 @@ class DictionaryService:
         # keeps this service independent of the theme service.
         self._resolve_theme = resolve_theme
 
-    async def entry(self, word_id: int, theme: str | int | None = None) -> Entry:
-        """One entry by id, optionally overlaid with a theme.
+    async def entry(self, word_id: int, theme: str | int | None = None) -> Entry | None:
+        """One entry by id, or ``None`` when the id is unknown.
 
-        An unknown theme raises rather than quietly returning the neutral entry,
-        which would hide a caller's mistake.
+        An unknown theme still raises rather than quietly returning the neutral
+        entry, which would hide a caller's mistake. The two are different cases: a
+        missing word is ordinary, a theme the caller named that does not exist is a
+        bug in the call.
         """
         theme_id = None
         if theme is not None:
             theme_id, _style = await self._resolve_theme(theme)
         return await self.entry_by_theme_id(word_id, theme_id)
 
-    async def entry_by_theme_id(self, word_id: int, theme_id: int | None = None) -> Entry:
+    async def entry_by_theme_id(self, word_id: int, theme_id: int | None = None) -> Entry | None:
         """One entry by id, overlaid with an ALREADY RESOLVED theme id.
 
         The generation path resolves the theme itself (it needs the style prompt
@@ -87,10 +89,20 @@ class DictionaryService:
     async def entries(
         self, word_ids: Sequence[int], theme: str | int | None = None
     ) -> list[BatchResult]:
-        """Batch entry reads; an unknown id is reported, not raised."""
+        """Batch entry reads; an unknown id is reported, not raised.
+
+        The miss is raised here so `gather_batch` can classify it. That helper
+        sorts outcomes by whether they are exceptions, so once `entry()` started
+        answering `None` for a missing id, a miss would otherwise have been
+        reported as a *successful* result carrying `None` — the batch surface would
+        have claimed it read an entry it did not find.
+        """
 
         async def _one(word_id: int) -> Entry:
-            return await self.entry(word_id, theme=theme)
+            found = await self.entry(word_id, theme=theme)
+            if found is None:
+                raise KeyError(f"no entry for word id {word_id}")
+            return found
 
         return await gather_batch(
             _bounded(word_ids, "entries"), _one, concurrency=BATCH_CONCURRENCY

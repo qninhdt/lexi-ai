@@ -74,12 +74,15 @@ class LexiconReader:
 
     # --- entries ----------------------------------------------------------
 
-    async def get_entry(self, word_id: int, theme: str | int | None = None) -> Entry:
-        """Load a generated entry by its dictionary id. Never generates.
+    async def get_entry(self, word_id: int, theme: str | int | None = None) -> Entry | None:
+        """Load a generated entry by its dictionary id, or ``None`` if there is
+        none. Never generates.
 
         ``theme`` (key or id) overlays the themed definition and examples where a
         themed row exists, falling back to neutral per sense. An unknown ``theme``
         raises ``ValueError`` — returning neutral silently would hide a caller bug.
+        That is deliberately not the same as an unknown ``word_id``: a lookup miss
+        is ordinary and answers ``None``, like every sibling read here.
         """
         return await self._lexicon.dictionary().entry(word_id, theme)
 

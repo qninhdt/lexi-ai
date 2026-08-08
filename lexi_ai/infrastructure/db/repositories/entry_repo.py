@@ -45,8 +45,19 @@ class SqlEntryRepo:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def entry(self, word_id: int, overlay: ThemedOverlay | None = None) -> Entry:
-        """The full entry for one word. Raises when the id is unknown."""
+    async def entry(self, word_id: int, overlay: ThemedOverlay | None = None) -> Entry | None:
+        """The full entry for one word, or ``None`` when the id is unknown.
+
+        `.scalar_one_or_none()` rather than `.scalar_one()`: a word that is not in
+        the dictionary is a normal outcome of a lookup, not an exceptional one, and
+        every sibling read on this surface already says so — `get_status`,
+        `get_theme`, `get_asset` and `get_question` all return `| None`.
+
+        Raising made the caller's type wrong in a way no checker could see. pycil's
+        port declares `EntryView | None` and its search route only survived because
+        it wrapped the call in `except Exception`, which is also how a real Lexi
+        outage would have been swallowed as a thin result.
+        """
         word = (
             await self._session.execute(
                 select(Word)
@@ -58,8 +69,8 @@ class SqlEntryRepo:
                 )
                 .where(Word.id == word_id)
             )
-        ).scalar_one()
-        return entry_view(word, overlay)
+        ).scalar_one_or_none()
+        return None if word is None else entry_view(word, overlay)
 
     async def sense_views(self, sense_ids: Sequence[int]) -> list[SenseView]:
         """Views for the given senses, in the order requested.
