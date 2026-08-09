@@ -1,4 +1,4 @@
-"""Reference-addressed asset cache repository (Phase 1, hash-verified).
+"""Reference-addressed asset cache repository (hash-verified).
 
 Identity is ``(source_kind, source_id, kind, params)`` — the source row an asset
 derives from plus its kind and a normalized param token — so a consumer holding a
@@ -361,9 +361,7 @@ class AssetRepository:
             return
         (self._cache_dir / file_path).unlink(missing_ok=True)
 
-    def _unlink_after_commit(
-        self, session: AsyncSession, file_paths: Sequence[str | None]
-    ) -> None:
+    def _unlink_after_commit(self, session: AsyncSession, file_paths: Sequence[str | None]) -> None:
         """Unlink these files once — and only once — the caller's transaction commits.
 
         Deleting the file first is not recoverable. The row deletions that go with

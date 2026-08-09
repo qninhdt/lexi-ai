@@ -3,14 +3,14 @@
 Navigation map for `lexi_ai`. For *why* the layers are shaped this way, read
 [system-architecture.md](./system-architecture.md); this file is the *where*.
 
-- **Package:** `lexi_ai`, 12.4K LOC across 96 modules
-- **Tests:** `tests/`, 9.9K LOC across 34 modules, 565 tests
+- **Package:** `lexi_ai` Python package
+- **Tests:** `tests/` pytest suite
 - **Python:** >= 3.10 · **Build:** `uv_build` · **Lint:** ruff · **Boundaries:** import-linter
 
 ## Layers
 
 Dependencies point inward. `contracts` and `domain` know nothing about the ORM;
-`application` reaches persistence only through ports. Three import-linter
+`application` reaches persistence only through ports. Five import-linter
 contracts in `pyproject.toml` enforce exactly that.
 
 ```
@@ -39,7 +39,7 @@ contracts/        dependency-free wire types shared with plugins
 | `api.py` | 276 | `Lexicon` — the ONLY entry point. `Lexicon.from_settings()`, then `.reader()` / `.engine()`. Wiring only; no use case of its own (locked by a test). |
 | `facades/reader.py` | 209 | `LexiconReader` — free reads. Cannot mutate, cannot call a provider. |
 | `facades/engine.py` | 293 | `LexiconEngine` — everything that can generate, write or spend money. |
-| `contracts/` | 223 | Wire types for third-party question plugins. Dependency-free by contract. |
+| `contracts/` | — | Dependency-free wire types for question consumers. |
 
 `LexiconReader`/`LexiconEngine` have no `from_settings` of their own on purpose:
 two graphs would mean two DB engines and two `SingleFlight` registries, so one
@@ -64,9 +64,9 @@ word could generate twice.
 
 ## `domain/` — the middle
 
-`models.py` (176) domain models · `ports.py` (306) every port the application
-depends on, incl. `UnitOfWork` and `VectorIndex` · `questions.py` (74) question domain
-· `errors.py` (5) · `hashing.py` (15) content hashing.
+`models.py` domain models · `ports.py` every port the application depends on,
+including `UnitOfWork` and `VectorIndex` · `questions.py` question domain · `errors.py`
+· `hashing.py` content hashing.
 
 ## `infrastructure/` — adapters
 
@@ -80,10 +80,10 @@ db/
   types.py                custom column types
   asset_gc.py             orphaned-asset collection
 vectors/
-  lancedb_index.py (179)  durable ANN index (LEXI_VECTOR_BACKEND=lancedb)
-  memory_index.py   (68)  exact scan, non-durable — the hermetic test default
-  validation.py     (18)  shared vector/metadata checks
-providers.py     (176)  LLM / translator / TTS provider factories
+  lancedb_index.py       durable ANN index (LEXI_VECTOR_BACKEND=lancedb)
+  memory_index.py        exact scan, non-durable — the hermetic test backend
+  validation.py          shared vector/metadata checks
+providers.py             LLM / translator / TTS provider factories
 question_engine_factory.py  caches the question engine per capability context
 ```
 
@@ -97,7 +97,7 @@ question_engine_factory.py  caches the question engine per capability context
 | `assets/` | `repository.py` (408) content-addressed cache, `translate.py`, `tts.py`. |
 | `theming/` | Themed-overlay generation and its schemas. |
 | `prep/` | `phrase_overlap.py` — pre-generation phrase checks. |
-| `migrations/` | Alembic. Baseline `20260724_01`, head `20260724_02`. |
+| `migrations/` | Alembic migrations. |
 | `prompts/` | Jinja prompt templates. |
 
 ## Top-level modules
@@ -117,5 +117,5 @@ dependency-free cosine.
 | Change what the LLM returns | `generation/schemas.py` + the prompt in `prompts/` |
 | Change the schema | `infrastructure/db/models.py`, then a new Alembic revision |
 | Add a vector backend | one module in `infrastructure/vectors/` + a branch in `build_vector_index` |
-| Add a question type | `questions/types/`, register in the `lexi_ai.question_types` entry-point group |
+| Add a question type | `questions/types/`, then call `register(...)` from the built-in type package |
 | Add a provider | `infrastructure/providers.py` |

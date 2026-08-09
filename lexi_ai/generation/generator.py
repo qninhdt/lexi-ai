@@ -1,4 +1,4 @@
-"""LLM generation pipeline (Phase 4).
+"""LLM generation pipeline.
 
 Wraps an OpenAI-compatible chat model (via the ``openai`` SDK) bound to the
 :class:`GeneratedResult` structured-output schema. The model is injectable so

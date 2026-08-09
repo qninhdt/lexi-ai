@@ -1,15 +1,15 @@
 """Internal question domain types. NEVER re-exported from ``lexi_ai.contracts``.
 
 ``GradingSpec`` holds the correct answer / rubric — the data that must never cross
-the consumer boundary. ``StoredQuestion`` binds an answer-free
-``PresentedQuestion`` to its ``GradingSpec`` for persistence and grading.
+the consumer boundary. ``PersistedQuestion`` carries the stored payload until it is
+projected into an answer-free presentation and grading spec.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from lexi_ai.contracts.questions import PresentedQuestion, RenderKind
+from lexi_ai.contracts.questions import RenderKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,18 +36,6 @@ class RubricGrading:
 
 
 GradingSpec = ChoiceGrading | SpanGrading | RubricGrading
-
-
-@dataclass(frozen=True, slots=True)
-class StoredQuestion:
-    """Full persisted record: the answer-free presentation plus its grading spec.
-
-    ``grading`` is ``None`` for exposure (flashcard) questions, which are never
-    graded.
-    """
-
-    presentation: PresentedQuestion
-    grading: GradingSpec | None
 
 
 @dataclass(frozen=True, slots=True)

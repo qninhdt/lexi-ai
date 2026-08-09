@@ -1,8 +1,8 @@
-"""Reference loader (Phase 3): merge Cambridge + WordNet into a bundle.
+"""Reference loader: merge Cambridge + WordNet into a bundle.
 
 The :class:`ReferenceBundle` is the hallucination anchor handed to the LLM
-prompt in Phase 4. WordNet content may be empty (idioms/expressions) — that is
-acceptable (decision #12), not an error.
+prompt. WordNet content may be empty (idioms/expressions) — that is acceptable,
+not an error.
 """
 
 from dataclasses import dataclass, field

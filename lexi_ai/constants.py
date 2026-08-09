@@ -1,8 +1,7 @@
 """Controlled vocabularies — single source of truth.
 
-Both the ORM models (Phase 2, app-level validation) and the LLM output schema
-(Phase 4, strict enums) import these sets so the write path and the generation
-path can never drift.
+Both the ORM models and the LLM output schema import these sets so the write path
+and generation path can never drift.
 """
 
 # words.entry_type
@@ -16,7 +15,7 @@ TIERS = ("core", "common", "extended", "rare")
 TIER_SET = frozenset(TIERS)
 TIER_ORDER = {tier: i for i, tier in enumerate(TIERS)}
 
-# senses.pos — closed controlled vocab (Phase 1 of sense-level relations). The
+# senses.pos — closed controlled vocab for sense-level relations. The
 # 12 learner-facing part-of-speech labels. Closing this (previously free
 # ``String(32)``) is the foundation for the WSD POS-filter: a target sense whose
 # POS is a drifted variant ("adj" vs "adjective") would be filtered wrong. The
@@ -78,12 +77,12 @@ _POS_ALIASES = {
 
 
 def normalize_pos(raw: str | None) -> str | None:
-    """Fold a loose/legacy POS surface form to a canonical :data:`POS_TAGS` label.
+    """Fold a loose POS surface form to a canonical :data:`POS_TAGS` label.
 
     Pure function: lowercase + strip, accept an exact vocab label, else map a
     known alias (``adj`` -> ``adjective``, ``N`` -> ``noun``). Returns ``None``
     for empty / unmappable input — it NEVER guesses (an unknown POS is treated as
-    "unknown", not force-fit to a tag). Used by the WSD POS-filter (Phase 4, both
+    "unknown", not force-fit to a tag). Used by the WSD POS-filter on both
     source and target side) and as a safety net when reading pre-vocab rows.
     """
     if not raw:
@@ -126,7 +125,7 @@ DIALECTS = frozenset({"uk", "us"})
 # relation rel_type — the full vocabulary. Each type is routed to ONE table by
 # ``REL_LEVEL`` below: word-level types ride the ``related[]`` → ``word_relation``
 # path (match_key stub-rows + dedup), sense-level types become ``sense_relation``
-# half-edges emitted per SENSE and later WSD-resolved (Phase 3/4).
+# half-edges emitted per SENSE and later WSD-resolved.
 REL_TYPES = frozenset(
     {
         "arrow_redirect",
@@ -172,7 +171,7 @@ REL_LEVEL = {
 WORD_REL_TYPES = frozenset(rt for rt, level in REL_LEVEL.items() if level == "word")
 SENSE_REL_TYPES = frozenset(rt for rt, level in REL_LEVEL.items() if level == "sense")
 
-# WSD batch cost guards ([F9]) — caller/data-controlled sizes are DoS vectors, so
+# WSD batch cost guards — caller/data-controlled sizes are DoS vectors, so
 # both are hard-clamped in the resolve path (never merely defaulted):
 #   WSD_BATCH_CEIL   — max edges reconciled per resolve_relations() call.
 #   WSD_CANDIDATE_CAP — max target senses shown to the judge per task (top-K by

@@ -20,7 +20,7 @@ lemmas, so the token regex is unambiguous.
   learner's typed answer against the expected one.
 - ``render(norm)`` — human display form: expand brace tokens to words.
 
-A ``/`` is kept literal (decision #8): ``match_key`` never splits on it.
+A ``/`` is kept literal: ``match_key`` never splits on it.
 """
 
 import re

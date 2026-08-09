@@ -1,4 +1,4 @@
-"""LLM themed-generation pipeline (Phase 2).
+"""LLM themed-generation pipeline.
 
 Mirrors :mod:`lexi_ai.generation.generator`: wraps an OpenAI-compatible chat
 model bound to :class:`ThemedResult`, injectable for hermetic tests, retried

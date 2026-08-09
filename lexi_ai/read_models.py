@@ -1,4 +1,4 @@
-"""Public read models for the lazy lookup API (Phase 6).
+"""Public read models for the lazy lookup API.
 
 Plain dataclasses assembled inside the DB session (never lazy-loaded after the
 session closes). ``display`` is always ``render(norm)`` — never a stored column.
@@ -78,7 +78,7 @@ class SenseRelationView:
     ``to_sense_gloss`` are set only once WSD reconciled it AND the read-time hash
     still matches (F5 — a stale target is surfaced as unresolved).
 
-    ``wsd_state`` is DERIVED (Q1 — there is no ``wsd_state`` DB column): the read
+    ``wsd_state`` is derived (there is no ``wsd_state`` DB column): the read
     model computes ``resolved`` / ``unresolvable`` / ``pending`` from
     ``to_sense_id`` + ``resolve_attempted_at`` + the hash-verify result, exposed
     as a string for consumers to filter on.
@@ -158,8 +158,9 @@ class Asset:
     to the asset cache dir. ``ready`` tells a ready asset from a placeholder.
 
     Identity is the reference tuple ``(source_kind, source_id, kind, params)``
-    (Phase 1). ``id`` is the DB id when this view was assembled from a persisted
-    row (the handle passed to ``get_asset``/``delete_asset``); ``None`` for a
+    The reference tuple is stable across row replacement. ``id`` is the DB id when
+    this view was assembled from a persisted row (the handle passed to
+    ``get_asset``/``delete_asset``); ``None`` for a
     placeholder synthesized without a row (e.g. an empty-text short-circuit).
     NOTE: a durable consumer (e.g. a frozen question payload) must bind to the
     reference tuple, NOT ``id`` — a purge/regenerate deletes the row."""

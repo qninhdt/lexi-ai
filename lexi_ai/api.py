@@ -104,7 +104,6 @@ class Lexicon:
             self._embedder,
             self._providers,
             self._vectors,
-            self._speak,
             self._read_entry,
         )
 
@@ -275,10 +274,6 @@ class Lexicon:
             self._question_engines.repository(),
             self._read_entry,
         )
-
-    async def _speak(self, source_kind: str, source_id: int, voice: str, fmt: str):  # noqa: ANN202
-        """Synthesize one clip, for the question engine's audio port."""
-        return await self.assets().speak(source_kind, source_id, voice, fmt)
 
     async def _read_entry(self, word_id: int) -> Entry:
         """One neutral entry, for the question engine's sense loader."""

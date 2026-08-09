@@ -44,7 +44,7 @@ cost zero tokens.
   miss (never stale content), and a repeat call spends zero tokens.
 - **Question engine** — prepare, retrieve, and evaluate persisted vocabulary
   questions through five registered types. Plugin identity (`type_id`) is separate
-  from the UI contract (`render_format`); level 0 is exposure and levels 1–4 are
+   from the UI contract (`render_kind`); level 0 is exposure and levels 1–4 are
   assessments. Preparation is best-effort, retrieval is exact and never generates,
   and evaluation reports `graded` or `pending`.
 - **Portable storage** — one schema runs on both SQLite and Postgres (portable
@@ -113,8 +113,8 @@ async def main():
     print(entry.display, entry.senses[0].definition)
 
     # Question engine: inspect capabilities, prepare persisted assessments,
-    # retrieve one exact question, then evaluate by durable question id.
-    from lexi_ai import PrepareDemand
+    # retrieve one exact question, then evaluate a learner submission.
+    from lexi_ai import AnswerSubmission, ChoiceResponse, PrepareDemand
 
     question_types = work.question_types()
     sense_id = entry.senses[0].sense_id
@@ -129,11 +129,15 @@ async def main():
         type_id="definition_mcq",
     )
     if question is not None:
-        # Grading a rubric type needs the judge, so it goes through the engine.
+        # The presentation has no answer key; grading discloses it in the result.
         evaluation = await work.evaluate_answer(
-            question.question_id, question.payload["correct_index"]
+            int(question.question_id),
+            AnswerSubmission(
+                question_id=question.question_id,
+                response=ChoiceResponse(selected_index=0),
+            ),
         )
-        print(question.type_id, question.render_format, evaluation.status)
+        print(question.type_id, question.render, evaluation.status)
 
     # Themes: author a voice once (LLM-expanded if description/tone are omitted,
     # generated in-line the first time a word is fetched under it), read the overlay.
@@ -157,14 +161,14 @@ second instance would silently undo both.
 
 Configuration is env-driven (prefix `LEXI_`): `LLM_BASE_URL`, `LLM_API_KEY`,
 `LLM_MODEL`, `DB_URL`, `CAMBRIDGE_DB_PATH`. Copy `examples/.env.example` to `.env`
-to get started. The model is **never hardcoded** — it comes only from
-`LEXI_LLM_MODEL`.
+to get started. `LEXI_LLM_MODEL` overrides the Settings default
+`gpt-4o-mini`.
 
 Asset and theme knobs (all `LEXI_`-prefixed):
 
 - `ASSET_CACHE_DIR` — where TTS clips are written (default `./lexi-assets`);
   translation results live in the DB.
-- `VECTOR_BACKEND` — `lancedb` (default; durable, on disk) or `memory`
+- `VECTOR_BACKEND` — `none` (default/off), `lancedb` (durable, on disk), or `memory`
   (non-durable, in-process). `VECTOR_PATH` is the LanceDB store directory
   (default `./lexi-vectors`); `VECTOR_METRIC` defaults to `cosine`.
 - `TRANSLATE_MODEL` — optional per-task model override for translation; falls
@@ -216,9 +220,8 @@ question IDs, and never generates or falls back. `retrieve_exposure(sense_id)`
 builds the level-0 flashcard. `evaluate_answer(question_id, answer)` returns an
 `Evaluation` with status `graded` or `pending`; exposure cards are not assessable.
 
-The existing `matching`, `listening`, `spelling`, `pronunciation_mcq`, and
-`collocation_fill` plugin files are intentionally unregistered while they await
-migration to this contract in a follow-up.
+The package currently registers five question types: `flashcard`,
+`definition_mcq`, `contextual_mcq`, `cloze`, and `use_in_sentence`.
 
 ## Examples
 

@@ -1,17 +1,14 @@
-"""Async engine + session factory, dual SQLite/Postgres (Phase 2).
+"""Async engine + session factory for SQLite and Postgres.
 
 SQLite does not enforce foreign keys (or ``ON DELETE CASCADE``) unless
 ``PRAGMA foreign_keys=ON`` is set on each connection, so we wire that on connect
 for SQLite URLs. Postgres enforces FKs natively and needs no pragma.
 """
 
-import os
-import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 
-from sqlalchemy import event, func, select
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -20,29 +17,21 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from lexi_ai.config import Settings, get_settings
-from lexi_ai.infrastructure.db.models import Asset, Base
+from lexi_ai.infrastructure.db.models import Base
 
 
 def _enable_sqlite_fk(engine: AsyncEngine) -> None:
-    """Make SQLite behave transactionally (no-op on other backends).
+    """Make SQLite transactional (no-op on other backends).
 
-    Two driver defaults need correcting, both invisible until something fails:
-
-    * SQLite does not enforce foreign keys, or ``ON DELETE CASCADE``, unless the
-      pragma is set per connection.
-    * pysqlite opens its own implicit transaction, which breaks SAVEPOINT: a write
-      made inside ``begin_nested()`` stays committed even when the enclosing
-      session rolls back. Several repositories insert inside a savepoint to recover
-      from a concurrent unique-key winner, so without this a failed multi-step
-      write would leak committed stub rows. Handing transaction control back to
-      SQLAlchemy and emitting BEGIN explicitly is the documented remedy.
+    SQLite needs foreign-key enforcement enabled per connection. Its implicit
+    transaction also breaks SAVEPOINT rollback, so SQLAlchemy owns BEGIN explicitly.
     """
     if not engine.url.get_backend_name().startswith("sqlite"):
         return
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_pragma(dbapi_conn, _record):  # noqa: ANN001
-        dbapi_conn.isolation_level = None  # stop pysqlite's implicit BEGIN
+        dbapi_conn.isolation_level = None
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
@@ -57,7 +46,7 @@ def create_engine(settings: Settings | None = None) -> AsyncEngine:
     engine_options = {}
     if settings.db_url.startswith("postgresql"):
         engine_options = {"execution_options": {"schema_translate_map": {None: settings.db_schema}}}
-    engine = create_async_engine(settings.db_url, future=True, **engine_options)
+    engine = create_async_engine(settings.db_url, **engine_options)
     _enable_sqlite_fk(engine)
     return engine
 
@@ -74,51 +63,6 @@ async def init_models(engine: AsyncEngine) -> None:
         raise RuntimeError("library bootstrap DDL is supported only for SQLite")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-
-async def reset_assets_table(
-    engine: AsyncEngine,
-    *,
-    cache_dir: str | None = None,
-    allow_destructive: bool | None = None,
-) -> None:
-    """Drop + recreate the ``assets`` table and clear its on-disk cache shard.
-
-    ``create_all`` cannot reshape an existing table, so a structural change to
-    ``assets`` (the Phase 1 reference-addressing columns) needs an explicit
-    drop+recreate. This is DESTRUCTIVE — it discards every cached translation/TTS
-    row and its backing files — so it refuses to drop a NON-EMPTY table unless
-    destructive migration is explicitly allowed (``allow_destructive`` arg, or the
-    ``LEXI_ALLOW_DESTRUCTIVE_MIGRATION`` env flag). An empty table recreates freely.
-
-    On reset the whole ``cache_dir`` is ``rmtree``d so orphaned binaries do not
-    leak (3.8): this is safe ONLY because ``cache_dir`` is the assets-EXCLUSIVE
-    shard (``config.asset_cache_dir`` = ``./lexi-assets``), never a shared dir —
-    every file under it is a cached TTS/translation binary this table owns. Pass a
-    dedicated assets dir; never point ``cache_dir`` at a path holding other data.
-    """
-    if engine.url.get_backend_name() != "sqlite":
-        raise RuntimeError("library bootstrap DDL is supported only for SQLite")
-    if allow_destructive is None:
-        flag = os.environ.get("LEXI_ALLOW_DESTRUCTIVE_MIGRATION", "").strip().lower()
-        allow_destructive = flag in ("1", "true", "yes")
-    table = Base.metadata.tables[Asset.__tablename__]
-    async with engine.begin() as conn:
-        has_table = await conn.run_sync(
-            lambda sync_conn: engine.dialect.has_table(sync_conn, Asset.__tablename__)
-        )
-        if has_table:
-            count = await conn.scalar(select(func.count()).select_from(Asset))
-            if count and not allow_destructive:
-                raise RuntimeError(
-                    f"refusing to drop non-empty {Asset.__tablename__!r} "
-                    f"({count} rows): set LEXI_ALLOW_DESTRUCTIVE_MIGRATION=1 to allow"
-                )
-            await conn.run_sync(Base.metadata.drop_all, tables=[table], checkfirst=True)
-        await conn.run_sync(Base.metadata.create_all, tables=[table], checkfirst=True)
-    # Reclaim on-disk clips so orphaned binaries don't leak after the row drop.
-    if cache_dir:
-        shutil.rmtree(Path(cache_dir), ignore_errors=True)
 
 
 @asynccontextmanager

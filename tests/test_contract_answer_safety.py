@@ -66,24 +66,11 @@ def test_grading_spec_not_public_in_contracts():
         "ChoiceGrading",
         "SpanGrading",
         "RubricGrading",
-        "StoredQuestion",
     ):
         assert not hasattr(contracts, name), f"{name} must NOT be public in lexi_ai.contracts"
     # It lives only in the internal domain module.
     dom = importlib.import_module("lexi_ai.domain.questions")
     assert hasattr(dom, "GradingSpec")
-    assert hasattr(dom, "StoredQuestion")
-
-
-def test_stored_question_presentation_is_answer_free():
-    # StoredQuestion binds a PresentedQuestion (answer-free) + a separate spec;
-    # the presentation half must be the exact answer-free contract type.
-    from lexi_ai.domain.questions import StoredQuestion
-
-    ann = {f.name: f.type for f in dataclasses.fields(StoredQuestion)}
-    assert "presentation" in ann and "grading" in ann
-    # grading is a distinct attribute, never merged into presentation.
-    assert "grading" not in {f.name for f in dataclasses.fields(q.PresentedQuestion)}
 
 
 async def test_retrieved_question_hides_answer_but_grading_reveals_it():

@@ -279,19 +279,17 @@ def build_structured_llm(settings, model: str | None = None) -> StructuredLLM:
     """Build the real openai-backed :class:`StructuredLLM` from settings.
 
     ``model`` overrides ``settings.llm_model`` (e.g. a per-task translate model);
-    base_url/api_key/temperature/method/reasoning always come from the shared LLM
-    settings. ``method``/``reasoning_effort`` fall back to safe defaults when the
-    settings object predates them (duck-typed via ``getattr``).
+    all other values come from the current Settings contract.
     """
     return OpenAIStructuredLLM(
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
         model=model or settings.llm_model,
         temperature=settings.llm_temperature,
-        method=getattr(settings, "llm_structured_method", "json_schema"),
-        reasoning_effort=getattr(settings, "llm_reasoning_effort", ""),
-        max_tokens=getattr(settings, "llm_max_tokens", 0),
-        timeout_seconds=getattr(settings, "llm_timeout_seconds", 0.0),
+        method=settings.llm_structured_method,
+        reasoning_effort=settings.llm_reasoning_effort,
+        max_tokens=settings.llm_max_tokens,
+        timeout_seconds=settings.llm_timeout_seconds,
     )
 
 

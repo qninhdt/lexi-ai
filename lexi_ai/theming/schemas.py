@@ -1,4 +1,4 @@
-"""Structured-output schema for themed generation (Phase 2).
+"""Structured-output schema for themed generation.
 
 The model returns ``ThemedResult.senses`` in the SAME order the neutral senses
 were numbered in the prompt: index ``i`` maps to the i-th neutral sense's id.

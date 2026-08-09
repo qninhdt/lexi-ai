@@ -1,9 +1,7 @@
-"""Text-to-speech seam: interface, stub, and OpenAI-compatible provider.
+"""Text-to-speech stub and OpenAI-compatible provider.
 
-The ``TTSProvider`` protocol is the stable seam a real provider drops into.
-``StubTTSProvider`` RAISES rather than returning empty bytes — a stub that
-returned empty audio could be cached as if valid, poisoning the cache. Raising
-keeps the cache clean (no row/file on a stubbed miss).
+``StubTTSProvider`` raises rather than returning empty bytes — a stub that returned
+empty audio could be cached as if valid, poisoning the cache.
 
 ``OpenAICompatibleTTSProvider`` POSTs to an OpenAI-compatible ``/audio/speech``
 endpoint via the ``openai`` SDK (no vendor TTS dep). Provider-specific config
@@ -12,22 +10,15 @@ the seam stays minimal.
 """
 
 import ipaddress
-from typing import Any, Protocol
+from typing import Any
 from urllib.parse import urlparse
 
 
-class TTSProvider(Protocol):
-    async def synthesize(self, text: str, voice: str, fmt: str) -> bytes:
-        """Synthesize ``text`` into audio bytes in ``fmt`` using ``voice``."""
-        ...
-
-
 class StubTTSProvider:
-    """Not-yet-implemented provider. Raises so no bogus asset is ever cached."""
+    """Unconfigured provider that prevents bogus assets from being cached."""
 
     async def synthesize(self, text: str, voice: str, fmt: str) -> bytes:
         raise NotImplementedError("TTS provider not configured — stub only")
-        # real provider wires here
 
 
 def _require_safe_base_url(base_url: str, api_key: str) -> None:

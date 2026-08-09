@@ -7,9 +7,9 @@ Answer-safe question contract: the correct answer never appears on
 ``PresentedQuestion`` / ``RenderContract``; it is disclosed only through
 ``Evaluation.reveal`` after grading.
 
-Dictionary DTOs (``Entry``, ``SenseView``, ``Theme``, ``Asset``, ...) migrate into
-``contracts/dictionary.py`` in Phase 3, when the ``read_models`` importers are
-repointed; today they still live in ``lexi_ai.read_models``.
+Dictionary DTOs (``Entry``, ``SenseView``, ``Theme``, ``Asset``, ...) remain in
+``lexi_ai.read_models`` because they are not part of the dependency-free question
+contract.
 """
 
 from lexi_ai.contracts.questions import (

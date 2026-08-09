@@ -1,4 +1,4 @@
-"""LLM translation provider (Phase 5).
+"""LLM translation provider.
 
 Mirrors :mod:`lexi_ai.generation.generator`: an OpenAI-compatible chat model
 bound to a tiny structured-output schema, injectable for hermetic tests. The

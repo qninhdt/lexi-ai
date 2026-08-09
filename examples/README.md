@@ -11,8 +11,8 @@ cp examples/.env.example .env          # from the repo root; .env is gitignored
 uv sync                                # install deps (once)
 ```
 
-The trials read all config from `.env` via the `LEXI_` env prefix — **the model
-is never hardcoded** (`LEXI_LLM_MODEL`). Defaults in `.env.example`:
+The trials read all config from `.env` via the `LEXI_` env prefix. Set
+`LEXI_LLM_MODEL` to override the Settings default. Defaults in `.env.example`:
 
 | Var | Meaning |
 |-----|---------|
@@ -67,11 +67,12 @@ flow.**
 | `05_related_graph.py [word]` | related words persist as `pending` stubs, generated on demand |
 | `06_interactive_repl.py` | type words by hand; watch them cache |
 | `07_inspect_matching.py [word]` | how a string maps to Cambridge + WordNet anchors |
-| `08_resolve_and_pick.py [query]` | the real `resolve → pick → get(sug)` flow + `peek`/`exists`/`status`/`add` |
+| `08_resolve_and_pick.py [query]` | the real `search → pick → generate` flow |
 | `09_semantic_search.py` | rank generated senses by **meaning** via local embeddings (`semantic_search`, `backfill_embeddings`) |
 | `10_topic_tags.py` | open-vocabulary **topic tags** per word; browse via `list_tags` / `list_entries_by_tag` |
 | `11_word_enrichment.py [word]` | learner-dictionary **enrichments**: guideword, grammar, register, connotation, collocations + word-family / confused-with links |
-| `12_question_engine.py [word]` | **question engine**: generate + grade questions across 4 formats; llm questions persist for 0-token reuse |
+| `12_question_engine.py [word]` | **question engine**: prepare, retrieve, and grade five registered types |
+| `13_resolve_relations.py [source] [target]` | resolve pending sense relations with the WSD judge |
 
 ```bash
 uv run python examples/08_resolve_and_pick.py serendipity
@@ -145,20 +146,21 @@ All fields are best-effort: a sense the model leaves unmarked still persists
 
 ## Question engine (example 12)
 
-Turns a done word into vocabulary questions across four formats and grades
-answers. The three axes — format, generator, scorer — are wired through
-`answer_kind`, and the engine is a pure dispatcher: each format is a
-self-contained plugin that owns its own generation, grading, and persistence.
+Turns a done word into vocabulary questions across five registered types and grades
+answers. Each type declares its render kind, interaction, supported levels, and
+evaluation path; the engine dispatches through that registry.
 
+- `flashcard` (exposure) — show the word, definition, and example
 - `definition_mcq` (rule) — "which word means <definition>?"
 - `cloze` (rule) — fill the blank in a real example sentence
 - `contextual_mcq` (llm) — MCQ from a novel context; **persists** for reuse
 - `use_in_sentence` (rule prompt, **llm-graded** by a rubric)
 
-Only `contextual_mcq` talks to an LLM and persists — it calls the store itself, so
-a re-run lists it back at zero token cost. The other three are ephemeral. Grading
-dispatches to the plugin: MCQs grade deterministically by index/value; the
-free-text answer is judged against a rubric by the LLM.
+`contextual_mcq` uses an LLM to generate and persists — a re-run lists it back at
+zero token cost. `use_in_sentence` uses an LLM only for rubric grading; the other
+assessment types are deterministic and ephemeral. Grading dispatches by type:
+MCQs grade by index/value, text spans use normalized forms, and free text is judged
+against a rubric.
 
 ```bash
 uv run python examples/12_question_engine.py eloquent
@@ -171,8 +173,8 @@ MCQ degrades to fewer options rather than fabricating a wrong answer.
 
 - **Cost:** only the first lookup of a given word spends tokens. Delete the cache
   to start fresh: `rm -f examples-lexi.db*`.
-- **`resolve()` is FREE but not instant:** it fuzzy-scans the 113k Cambridge
-  headwords (~1s cold) — no LLM, no tokens. Exact matches still score 1.0 on top.
+- **`search()` is FREE:** it ranks Cambridge and generated matches without an LLM
+  call. Generation happens only after the caller picks a result.
 - **Why `_common.py` rebuilds the generator:** the library's default
   structured-output method (`json_schema`) is not strictly enforced by this
   proxy, so `_common.py` uses `method="function_calling"` plus a

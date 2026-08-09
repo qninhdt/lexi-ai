@@ -1,4 +1,4 @@
-"""Generation package (Phase 4): ReferenceBundle -> validated GeneratedResult."""
+"""Generation package: ReferenceBundle -> validated GeneratedResult."""
 
 from lexi_ai.generation.generator import Generator
 from lexi_ai.generation.schemas import (

@@ -25,10 +25,6 @@ class GeneratedMCQ(BaseModel):
         max_length=512,
         description="Novel sentence/context with the target sense implied.",
     )
-    correct: str = Field(
-        max_length=128,
-        description="The correct answer (the target word's display).",
-    )
     distractors: list[str] = Field(
         min_length=2,
         max_length=3,

@@ -10,7 +10,7 @@ the two — its ``render_kind`` maps to/from the stored ``render_format`` string
 import hashlib
 import json
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -120,11 +120,6 @@ class QuestionRepository:
         async with session_scope(self._session_factory) as session:
             row = await session.get(QuestionRow, question_id)
             return _to_persisted(row) if row is not None else None
-
-    async def delete(self, question_id: int) -> bool:
-        async with session_scope(self._session_factory) as session:
-            result = await session.execute(delete(QuestionRow).where(QuestionRow.id == question_id))
-            return (result.rowcount or 0) > 0
 
 
 async def _find_existing(

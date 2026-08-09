@@ -1,14 +1,14 @@
-"""SQLAlchemy 2.0 async ORM models (Phase 2).
+"""SQLAlchemy 2.0 async ORM models.
 
 Portable types only (``Text``/``String``/``Integer``/``Boolean``) so the schema
 runs identically on SQLite and Postgres — no JSONB, no ARRAY, no native ENUM
 (controlled vocabularies live in :mod:`lexi_ai.constants` and are validated at
 the application layer, in the repository).
 
-Two-DB topology (decision #14): these tables are the *generated* dictionary,
+Two-DB topology: these tables are the *generated* dictionary,
 separate from the read-only Cambridge source. ``words.match_key`` is UNIQUE —
 the durable dedup key and the concurrency safety net. Keys are computed only by
-the repository (Phase 5) via :mod:`lexi_ai.normalize`; models never compute
+the repository via :mod:`lexi_ai.normalize`; models never compute
 them.
 """
 
@@ -68,7 +68,7 @@ class Word(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     norm: Mapped[str] = mapped_column(Text, nullable=False)
-    # Lossy, CODE-computed (Phase 1). UNIQUE = durable dedup + concurrency guard.
+    # Lossy, code-computed. UNIQUE = durable dedup + concurrency guard.
     match_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True, index=True)
     entry_type: Mapped[str | None] = mapped_column(Vocabulary(32, ENTRY_TYPES, "words.entry_type"))
     status: Mapped[str] = mapped_column(
@@ -100,9 +100,7 @@ class Word(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    # Outgoing word-level links (this word -> others). Table renamed
-    # EntryLink -> WordRelation (Phase 2); the ``links_out`` attribute name is
-    # kept so the read model / consumers do not churn.
+    # Outgoing word-level links (this word -> others).
     links_out: Mapped[list["WordRelation"]] = relationship(
         back_populates="from_word",
         foreign_keys="WordRelation.from_word_id",
@@ -138,10 +136,10 @@ class WordAlias(Base):
 
 
 class WordRelation(Base):
-    """A WORD-level relation (this word -> another word), Phase 2 rename of the
-    former ``EntryLink`` / ``entry_links`` table. Shape is unchanged: no sense on
-    either end, no WSD. ``word_family``/``confused_with``/``variant_of``/
-    ``arrow_redirect``/``another_word``/``part_of_phrasal_family`` ride this path.
+    """A WORD-level relation (this word -> another word).
+
+    There is no sense on either end, so WSD is not involved. Word-level relation
+    types ride this path.
 
     Sense-DEPENDENT relations (synonym/antonym/hypernym/...) live in the separate
     :class:`SenseRelation` table (sense-level).
@@ -156,7 +154,7 @@ class WordRelation(Base):
     from_word_id: Mapped[int] = mapped_column(
         ForeignKey("words.id", ondelete="CASCADE"), nullable=False
     )
-    # Always a real id (stub-row pattern, decision #11) — never a dangling string.
+    # Always a real id (stub-row pattern) — never a dangling string.
     to_word_id: Mapped[int] = mapped_column(
         ForeignKey("words.id", ondelete="CASCADE"), nullable=False
     )
@@ -172,10 +170,10 @@ class WordRelation(Base):
 
 class SenseRelation(Base):
     """A SENSE-level semantic relation: it is BOTH the edge AND the WSD work-queue
-    row (Phase 2). Emitted at generation time as a half-edge
+    row. Emitted at generation time as a half-edge
     ``from_sense -> (to_word, gloss)``; a later WSD pass fills ``to_sense_id``.
 
-    State is DERIVED (Q1 — there is deliberately NO ``wsd_state`` column):
+    State is derived; there is deliberately no ``wsd_state`` column:
 
     - ``resolved``     ⟺ ``to_sense_id IS NOT NULL``
     - ``unresolvable`` ⟺ ``to_sense_id IS NULL AND resolve_attempted_at IS NOT NULL``
@@ -184,13 +182,13 @@ class SenseRelation(Base):
     FK ondelete is load-bearing:
 
     - ``from_sense_id`` CASCADE — source sense gone ⇒ the edge is meaningless, drop
-      it (Case 6; re-emitted when the source regenerates).
+      it and let regeneration emit a fresh edge.
     - ``to_sense_id``   SET NULL — target sense gone ⇒ keep the edge at sense->word
       level (``to_word_id`` still valid), only the resolved target is cleared. This
       auto-demotes ``resolved`` -> (``to_sense_id`` NULL) via a single FK path, so
       there is no hand-maintained column to fall out of sync (the F4 bug class).
       A ``_demote_edges_for_senses`` helper still resets ``resolve_attempted_at``
-      so the edge lands back in ``pending`` rather than ``unresolvable`` (Phase 5).
+      so the edge lands back in ``pending`` rather than ``unresolvable``.
     """
 
     __tablename__ = "sense_relation"
@@ -209,19 +207,19 @@ class SenseRelation(Base):
         ForeignKey("words.id", ondelete="CASCADE"), nullable=False
     )
     # Target SENSE: filled by WSD (resolved); SET NULL when the target sense is
-    # deleted/regenerated (Case 2). NULL = not-yet / no-longer resolved.
+    # deleted or regenerated. NULL = not-yet / no-longer resolved.
     to_sense_id: Mapped[int | None] = mapped_column(ForeignKey("senses.id", ondelete="SET NULL"))
     rel_type: Mapped[str] = mapped_column(
         Vocabulary(32, SENSE_REL_TYPES, "sense_relation.rel_type"), nullable=False
     )
     # LM description of the TARGET's intended meaning — the load-bearing signal WSD
-    # uses to pick the right target sense. Non-empty (Phase 3 skips empty edges).
+    # uses to pick the right target sense. Non-empty by contract.
     gloss: Mapped[str] = mapped_column(Text, nullable=False)
     # sha256 of the resolved to_sense content, stamped at resolve; VERIFIED on read
-    # (Phase 6) so a mutated/regenerated target is treated as unresolved.
+    # so a mutated/regenerated target is treated as unresolved.
     target_hash: Mapped[str | None] = mapped_column(String(64))
     # Marks "WSD tried and the judge returned none" — the ONLY thing distinguishing
-    # derived ``unresolvable`` from ``pending`` (Q1). NO ``wsd_state`` column.
+    # derived ``unresolvable`` from ``pending``. No ``wsd_state`` column.
     resolve_attempted_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     from_sense: Mapped["Sense"] = relationship(
@@ -249,7 +247,7 @@ class Sense(Base):
     tier: Mapped[str] = mapped_column(Vocabulary(16, TIER_SET, "senses.tier"), nullable=False)
     sense_order: Mapped[int] = mapped_column(Integer, default=0)
     pos: Mapped[str | None] = mapped_column(Vocabulary(32, POS_TAGS, "senses.pos"))
-    # Cambridge-first, LLM fallback (decision #13).
+    # Cambridge-first, LLM fallback.
     cefr_level: Mapped[str | None] = mapped_column(String(8))
     # IPA pronunciation per POS (senses carry pos; Cambridge entries are POS-grouped,
     # so per-sense IPA folds heteronyms in naturally). Cambridge-anchored, LLM

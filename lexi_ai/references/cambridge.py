@@ -1,4 +1,4 @@
-"""Read-only Cambridge source access (Phase 3).
+"""Read-only Cambridge source access.
 
 Opens the Cambridge SQLite file with a ``file:...?mode=ro`` URI so writes are
 impossible. All sqlite calls are synchronous and wrapped in
@@ -308,11 +308,7 @@ class CambridgeSource:
                 ") WHERE rank = 1",
                 ids,
             ).fetchall()
-            return {
-                row["word_id"]: row["definition"]
-                for row in rows
-                if row["definition"]
-            }
+            return {row["word_id"]: row["definition"] for row in rows if row["definition"]}
         finally:
             conn.close()
 
@@ -435,7 +431,7 @@ class CambridgeSource:
     ) -> AsyncIterator[tuple[str, str | None]]:
         """Yield Cambridge (surface_form, entry_type) not yet generated.
 
-        "Not yet generated" (decision #14) = a Cambridge word whose match_key
+        "Not yet generated" = a Cambridge word whose match_key
         has no ``done`` row in the generated DB. Diff is by match_key in-app
         (no cross-DB join).
         """

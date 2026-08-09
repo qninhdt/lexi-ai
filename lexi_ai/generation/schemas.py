@@ -1,14 +1,14 @@
-"""Pydantic structured-output schema for LLM generation (Phase 4).
+"""Pydantic structured-output schema for LLM generation.
 
 Enums are built from :mod:`lexi_ai.constants` (single source of truth shared
-with the Phase 2 ORM validation) so the generation path and the write path can
+with ORM validation) so the generation path and the write path can
 never drift. ``Literal[<tuple>]`` unpacks each vocabulary into a JSON-schema
 enum, which steers the model and hard-rejects out-of-vocab values at validation.
 
 ``GeneratedResult.units`` is a list: length 1 normally, length N when a Cambridge
-page bundles genuinely independent lemmas (decision #16 — splitting is a
+  page bundles genuinely independent lemmas (splitting is a
 correctness requirement). Same-meaning surface variants must NOT split; they
-become ``aliases`` on one unit (decision #17, enforced by the prompt).
+  become ``aliases`` on one unit (enforced by the prompt).
 """
 
 # ``Literal[tuple(sorted(<frozenset>))]`` builds each enum from the constants
@@ -92,12 +92,12 @@ class GeneratedForm(BaseModel):
 
 
 class GeneratedSenseRelation(BaseModel):
-    """One SENSE-level relation emitted by a specific sense (Phase 3).
+    """One SENSE-level relation emitted by a specific sense.
 
     Unlike ``RelatedWord`` (word-level), this carries a ``gloss`` describing the
     TARGET's intended meaning — the load-bearing signal the later WSD pass (Phase
-    4) uses to pick the right target sense. ``gloss`` is REQUIRED + non-empty
-    ([F12]); a blank one gets the whole edge skipped on the write path, never
+    4) uses to pick the right target sense. ``gloss`` is required and non-empty;
+    a blank one gets the whole edge skipped on the write path, never
     persisted as a dead row.
     """
 
@@ -118,8 +118,8 @@ class GeneratedSenseRelation(BaseModel):
 class GeneratedSense(BaseModel):
     definition: str = Field(description="Learner-friendly definition.")
     tier: _TierLit = Field(description="core | common | extended | rare.")
-    # [F2] REQUIRED per sense (no default): the WSD POS-filter (Phase 4) mass-marks
-    # edges unresolvable when target senses carry no POS. Closed vocab (POS_TAGS)
+    # Required per sense: the WSD POS-filter can otherwise mass-mark edges
+    # unresolvable when target senses carry no POS. Closed vocab (POS_TAGS)
     # hard-rejects out-of-vocab, and the prompt mandates emitting one per sense.
     pos: _PosLit = Field(description="Part of speech (required); one of the 12 allowed labels.")
     cefr_level: str | None = Field(
@@ -318,7 +318,7 @@ class WsdCandidate(BaseModel):
     """One target-sense option shown to the WSD judge. ``index`` is the position
     in the task's ``candidates`` list (0-based) and is what the judge echoes back
     as ``chosen_index`` — the mapping index->sense_id is held server-side and NEVER
-    trusted from the model ([F3])."""
+    trusted from the model."""
 
     index: int
     definition: str
@@ -328,7 +328,7 @@ class WsdTask(BaseModel):
     """One reconciliation ask: given a source sense that emitted a relation with a
     ``gloss`` describing the intended target meaning, which candidate target sense
     (if any) does it point to? ``gloss``/``source_def`` are UNTRUSTED free text
-    ([F14]) — the prompt fences them as data."""
+    — the prompt fences them as data."""
 
     rel_type: str
     gloss: str
@@ -340,7 +340,7 @@ class WsdChoice(BaseModel):
     """The judge's pick for one task. ``chosen_index`` is the candidate index the
     relation resolves to, or ``None`` when NO candidate fits the gloss (→ derived
     ``unresolvable``). The value is validated against the candidate bounds on apply
-    ([F3]) — an out-of-range index is treated as ``None``, never indexed blindly."""
+    — an out-of-range index is treated as ``None``, never indexed blindly."""
 
     chosen_index: int | None = Field(
         default=None,

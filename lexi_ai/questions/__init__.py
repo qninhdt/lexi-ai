@@ -12,7 +12,6 @@ from lexi_ai.questions.base import (
     REGISTRY,
     QuestionContext,
     QuestionStore,
-    load_entry_point_types,
     register,
 )
 from lexi_ai.questions.render import to_grading, to_presented, to_render, to_reveal
@@ -21,7 +20,6 @@ __all__ = [
     "QuestionContext",
     "QuestionStore",
     "REGISTRY",
-    "load_entry_point_types",
     "register",
     "to_grading",
     "to_presented",

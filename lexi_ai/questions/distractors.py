@@ -37,13 +37,11 @@ class DistractorProvider:
         self._embedder = embedder
         self._vectors = vectors
 
-    async def for_word(self, entry: Entry, *, k: int, pos: str | None = None) -> list[str]:
+    async def for_word(self, entry: Entry, *, k: int) -> list[str]:
         """Up to ``k`` distinct distractor display strings for ``entry``'s core sense.
 
-        ``pos`` is accepted for interface stability and future POS-aware ranking;
-        the topic fallback can't filter on it (the tag query returns entry_type,
-        not part-of-speech), so v1 leans on semantic + topic relatedness. Never
-        raises: any source failure degrades to fewer options.
+        The provider uses semantic and topic relatedness. It never raises: any
+        source failure degrades to fewer options.
         """
         if k <= 0:
             return []

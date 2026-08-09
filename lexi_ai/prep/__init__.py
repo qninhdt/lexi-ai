@@ -1,4 +1,4 @@
-"""Phrase-overlap data-prep package (Phase 7)."""
+"""Phrase-overlap data-prep package."""
 
 from lexi_ai.prep.phrase_overlap import PhraseOverlapPrep, PhraseOverlapReport
 

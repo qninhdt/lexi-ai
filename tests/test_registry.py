@@ -48,15 +48,6 @@ def _plugin(info, *, grade=True):
     return type("FakeType", (), attrs)
 
 
-class _FakeEntryPoint:
-    def __init__(self, name, factory):
-        self.name = name
-        self._factory = factory
-
-    def load(self):
-        return self._factory
-
-
 @pytest.fixture(autouse=True)
 def _restore_registry():
     original = dict(base.REGISTRY)
@@ -117,34 +108,6 @@ def test_register_rejects_exposure_with_grade():
     )
     with pytest.raises(ValueError, match="must not define grade"):
         base.register(_plugin(info, grade=True))
-
-
-def test_load_entry_point_types_gates_on_allowlist_and_skips_registered(monkeypatch):
-    calls = []
-    alpha, beta, gamma = object(), object(), object()
-    eps = [
-        _FakeEntryPoint("alpha", alpha),
-        _FakeEntryPoint("beta", beta),
-        _FakeEntryPoint("gamma", gamma),
-    ]
-    monkeypatch.setattr(base, "entry_points", lambda group: eps)
-    monkeypatch.setattr(base, "register", lambda make_plugin: calls.append(make_plugin))
-    # A type already in the registry is never re-registered even if allowlisted.
-    base.REGISTRY["beta"] = object()
-
-    base.load_entry_point_types({"alpha", "beta"})
-
-    # gamma is not allowlisted; beta is already registered -> only alpha loads.
-    assert calls == [alpha]
-
-
-def test_load_entry_point_types_without_allowlist_is_noop(monkeypatch):
-    def _boom(group):
-        raise AssertionError("entry points must not be scanned without an allowlist")
-
-    monkeypatch.setattr(base, "entry_points", _boom)
-    base.load_entry_point_types(None)
-    base.load_entry_point_types(set())
 
 
 def _entry() -> tuple[Entry, SenseView]:

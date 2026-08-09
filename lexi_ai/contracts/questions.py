@@ -163,4 +163,3 @@ class PrepareDemand:
     sense_id: str
     difficulty_level: int
     expected_count: int = 1
-    type_id: str | None = None

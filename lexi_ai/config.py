@@ -1,6 +1,6 @@
 """Runtime configuration (pydantic-settings).
 
-Env-driven with sane dev defaults. Two DB locations (decision #14): the
+Env-driven with sane dev defaults. Two DB locations: the
 generated dictionary (``db_url``, read/write) is separate from the read-only
 Cambridge source (``cambridge_db_path``).
 """
@@ -18,7 +18,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # LLM (OpenAI-compatible endpoint, decision #10).
+    # LLM (OpenAI-compatible endpoint).
     llm_base_url: str = "https://api.openai.com/v1"
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
@@ -88,8 +88,7 @@ class Settings(BaseSettings):
     # content-hash prefix; DB rows store paths RELATIVE to it.
     asset_cache_dir: str = "./lexi-assets"
 
-    # TTS provider (interface + stub this round — synthesis is NOT wired yet).
-    # Defined so the seam is complete/documented; a real provider reads these.
+    # TTS provider. Leave the fields empty to use the raising stub.
     tts_base_url: str = ""
     tts_api_key: str = ""
     tts_model: str = ""
@@ -97,11 +96,6 @@ class Settings(BaseSettings):
     # rules fall back to and the value an unconfigured process uses cannot drift.
     tts_voice: str = DEFAULT_TTS_VOICE
     tts_format: str = DEFAULT_TTS_FORMAT
-
-    # Third-party question types are discovered via the ``lexi_ai.question_types``
-    # entry-point group, but registered ONLY when their type_id appears here.
-    # Empty (default) = built-in types only; untrusted discovery stays opt-in.
-    question_type_allowlist: frozenset[str] = frozenset()
 
 
 def get_settings() -> Settings:

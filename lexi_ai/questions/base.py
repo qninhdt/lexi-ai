@@ -1,21 +1,12 @@
-"""Plugin contracts and registry for the unified questions subsystem.
+"""Question type contracts and registry.
 
-A question type is ONE plugin declaring a typed
-:class:`~lexi_ai.contracts.questions.QuestionTypeInfo` (``info``). It owns
-prepare/retrieve and — for assessments — ``grade``. The collapsed model replaces
-the old split of ``QuestionTypeDescriptor`` (type) and a separate render-format
-registry: the render shape now rides ``info.render_kind`` and the answer-safe
-projection lives in :mod:`lexi_ai.questions.render`.
-
-Built-in types register by DIRECT import (see ``lexi_ai.questions.types``).
-Third-party types are discovered via the ``lexi_ai.question_types`` entry-point
-group, but only when their ``type_id`` appears in an explicit allowlist
-(:func:`load_entry_point_types`) — untrusted discovery is opt-in for safety.
+Each type declares a typed ``QuestionTypeInfo`` and owns preparation, retrieval,
+and assessment grading. Built-in types register by direct import from
+``lexi_ai.questions.types``.
 """
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, Protocol, TypeAlias
 
 from lexi_ai.constants import (
@@ -37,9 +28,6 @@ if TYPE_CHECKING:
     from lexi_ai.llm import StructuredLLM
     from lexi_ai.questions.distractors import DistractorProvider
 
-# Entry-point group third-party question types advertise themselves under.
-ENTRY_POINT_GROUP = "lexi_ai.question_types"
-
 
 class QuestionStore(Protocol):
     """Question-only persistence capability supplied to assessment plugins."""
@@ -60,21 +48,11 @@ class QuestionStore(Protocol):
 
     async def get(self, question_id: int) -> PersistedQuestion | None: ...
 
-    async def delete(self, question_id: int) -> bool: ...
-
 
 class SenseEntryLoader(Protocol):
     """Narrow read capability used to build exposure cards from a sense id."""
 
     async def load_entry(self, sense_id: int) -> Entry | None: ...
-
-
-class TtsPort(Protocol):
-    """Narrow audio-synthesis capability retained for future question types."""
-
-    async def ensure_clip(
-        self, source_kind: str, source_id: int
-    ) -> tuple[str, int, str, str] | None: ...
 
 
 @dataclass
@@ -86,7 +64,6 @@ class QuestionContext:
     llm: "StructuredLLM | None" = None
     judge: "StructuredLLM | None" = None
     store: "QuestionStore | None" = None
-    tts: "TtsPort | None" = None
     sense_loader: "SenseEntryLoader | None" = None
 
 
@@ -195,27 +172,8 @@ def register(make_plugin: QuestionTypeFactory) -> None:
     REGISTRY[info.type_id] = plugin
 
 
-def load_entry_point_types(allowlist: set[str] | None = None) -> None:
-    """Discover and register third-party question types via entry points.
-
-    SECURITY: an installed distribution can advertise a plugin under the
-    ``lexi_ai.question_types`` group, but it is registered ONLY when its
-    ``type_id`` (the entry-point name) is present in ``allowlist``. ``None`` / an
-    empty allowlist is a no-op — built-in-only, the default posture. A type_id
-    already in the registry (e.g. a built-in loaded by direct import) is skipped,
-    never double-registered.
-    """
-    if not allowlist:
-        return
-    for ep in entry_points(group=ENTRY_POINT_GROUP):
-        if ep.name not in allowlist or ep.name in REGISTRY:
-            continue
-        register(ep.load())
-
-
 __all__ = [
     "AssessmentType",
-    "ENTRY_POINT_GROUP",
     "ExposureType",
     "NotAssessable",
     "PrepareReport",
@@ -226,8 +184,6 @@ __all__ = [
     "QuestionType",
     "REGISTRY",
     "SenseEntryLoader",
-    "TtsPort",
     "UnknownQuestionType",
-    "load_entry_point_types",
     "register",
 ]

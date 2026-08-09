@@ -35,7 +35,7 @@ class FakeDistractors:
     def __init__(self, pool=("terse", "clumsy", "dull")):
         self.pool = list(pool)
 
-    async def for_word(self, entry, *, k, pos=None):
+    async def for_word(self, entry, *, k):
         return self.pool[:k]
 
 
@@ -97,13 +97,6 @@ class FakeStore:
             (question for question in self.questions if question.question_id == question_id),
             None,
         )
-
-    async def delete(self, question_id):
-        before = len(self.questions)
-        self.questions = [
-            question for question in self.questions if question.question_id != question_id
-        ]
-        return len(self.questions) != before
 
 
 class FakeSenseLoader:
@@ -224,7 +217,6 @@ async def test_contextual_l2_uses_contextual_llm_stem():
     store = FakeStore()
     generated = GeneratedMCQ(
         stem="His ____ speech moved the audience.",
-        correct="eloquent",
         distractors=["terse", "dull"],
     )
     report = await ContextualMCQ().prepare(_ctx(store=store, llm=FakeLLM(generated)), _demand(2))

@@ -1,4 +1,4 @@
-"""Read-only WordNet source access (Phase 3).
+"""Read-only WordNet source access.
 
 nltk WordNet lookups are synchronous, so they run in ``asyncio.to_thread``.
 Lemmas with spaces are mapped to underscore form (``make up`` -> ``make_up``).

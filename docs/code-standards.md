@@ -10,7 +10,7 @@ map is in [codebase-summary.md](./codebase-summary.md).
 |---------|------|---------|
 | Lint | ruff (`E,F,I,UP,B`), line length 100, target `py310` | `uv run ruff check lexi_ai tests examples` |
 | Format | ruff format | `uv run ruff format lexi_ai tests examples` |
-| Boundaries | import-linter, 3 contracts | `uv run lint-imports` |
+| Boundaries | import-linter, 5 contracts | `uv run lint-imports` |
 | Tests | pytest, `asyncio_mode = "auto"` | `uv run pytest -q` |
 | Migrations | alembic 1.18.5 (pinned) | `uv run alembic -c lexi_ai/migrations/alembic.ini upgrade head` |
 
@@ -19,7 +19,7 @@ All four run in CI (`.github/workflows/test.yml`) on push and PR to `main`.
 
 ## Layering (enforced, not advisory)
 
-The three import-linter contracts in `pyproject.toml`:
+The five import-linter contracts in `pyproject.toml`:
 
 1. `lexi_ai.contracts` imports nothing from domain, application, infrastructure,
    the ORM or SQLAlchemy — it is the wire surface plugins share.
@@ -27,6 +27,9 @@ The three import-linter contracts in `pyproject.toml`:
 3. `lexi_ai.application` and `lexi_ai.api` never import
    `infrastructure.db.models` directly. Reaching the ORM *through* the unit of
    work is the point; a direct import is a second persistence path.
+4. `lexi_ai.application` depends on ports rather than infrastructure adapters.
+5. `lexi_ai.assets` and `lexi_ai.questions` do not import the ORM or concrete
+   persistence models.
 
 Breaking one fails CI. These rules are not self-detecting at runtime — a domain
 module importing the ORM works perfectly and only shows up later as coupling.

@@ -1,6 +1,6 @@
 """Read-only access to anchor sources (Cambridge + WordNet).
 
-Produces a :class:`ReferenceBundle` that the LLM prompt (Phase 4) consumes for
+Produces a :class:`ReferenceBundle` that the LLM prompt consumes for
 hallucination control.
 """
 

@@ -1,4 +1,4 @@
-"""Content-addressed derived-asset cache (Phase 4).
+"""Content-addressed derived-asset cache.
 
 Assets (translation text, TTS clips) are keyed by a hash of the EXACT source
 text plus a normalized param token — never by sense/word location. So themed vs

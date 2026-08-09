@@ -1,9 +1,7 @@
 """The five built-in MVP question types.
 
 Importing this package runs each module's ``register()`` call, populating the
-registry by DIRECT import (the trusted, always-on path). Third-party types are
-discovered separately and only under an explicit allowlist — see
-``lexi_ai.questions.base.load_entry_point_types``.
+registry by direct import.
 """
 
 from lexi_ai.questions.types.cloze import Cloze

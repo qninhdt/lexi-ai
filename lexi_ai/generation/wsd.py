@@ -1,4 +1,4 @@
-"""WSD judge — the LLM half of sense-relation reconciliation (Phase 4).
+"""WSD judge — the LLM half of sense-relation reconciliation.
 
 A thin wrapper over the injectable :class:`StructuredLLM` seam that turns a list
 of :class:`WsdTask` (a source gloss + its POS-filtered target-sense candidates)
@@ -8,7 +8,7 @@ model is injectable so tests pass a fake and never touch the network, mirroring
 
 The judge NEVER trusts the returned index: order-alignment (``choices[i]`` ↔
 ``tasks[i]``) is repaired here (pad/truncate to the task count); bounds-checking
-of ``chosen_index`` happens at the apply site ([F3]).
+of ``chosen_index`` happens at the apply site.
 """
 
 from collections.abc import Iterable, Sequence
@@ -18,18 +18,16 @@ from lexi_ai.generation.schemas import WsdBatch, WsdChoice, WsdTask
 from lexi_ai.llm import StructuredLLM, ainvoke_structured, guarded_messages
 from lexi_ai.prompts import PromptLoader
 
-# [F9] cost guards live in ``constants.py`` (the single source): WSD_BATCH_CEIL is
-# re-exported here for the api resolve path that imports it from this module. The
-# old local WSD_CANDIDATE_CAP was dead (never referenced — the repository holds
-# its own ``_WSD_CANDIDATE_CAP`` for the SQL LIMIT) and has been removed.
+# Cost guards live in ``constants.py`` (the single source). WSD_BATCH_CEIL is
+# re-exported for the API resolve path that imports it from this module.
 __all__ = ["WsdJudge", "pos_filtered_candidates", "WSD_BATCH_CEIL"]
 
 
 def pos_filtered_candidates(source_pos: str | None, candidates: Sequence):
-    """Select which target-sense candidates to show the judge, by POS ([F2]).
+    """Select which target-sense candidates to show the judge by POS.
 
     ``normalize_pos`` is applied to BOTH sides so ``adj`` vs ``adjective`` never
-    mis-filters. Rules (all deliberate, see phase-04 F2/F10):
+    mis-filters. Rules:
 
     - Source POS unknown/unmappable → show ALL candidates (can't filter safely).
     - Otherwise, if ≥1 candidate has a CLEAR same-POS match → keep the same-POS

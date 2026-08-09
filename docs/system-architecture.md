@@ -44,15 +44,15 @@ lexi_ai/
     tags.py         topic-tag rename / delete / merge
     assets.py       cache-first translation and speech
     questions.py    prepare / retrieve / evaluate over ONE question engine
-    question_ports.py  the two narrow seams the question engine consumes
+    question_ports.py  the narrow seam the question engine consumes
     single_flight.py   per-key async lock registry (collapse duplicate work)
     batching.py     order-aligned concurrent batch execution
   infrastructure/
     providers.py    lazy LLM / WSD / translator / TTS construction from settings
     question_engine_factory.py  builds and caches the reader / worker engines
     vectors/        similarity search, one module per backend
-      lancedb_index.py  the default: embedded, on disk, ANN query, no server
-      memory_index.py   exact-scan, non-durable — the hermetic test default
+      lancedb_index.py  embedded, on disk, ANN query, no server
+      memory_index.py   exact-scan, non-durable — the hermetic test backend
       validation.py     the uniform-dimension check every backend owes callers
     db/                 the SQLAlchemy adapter
       models.py       SQLAlchemy 2.0 async ORM (portable types only)
@@ -69,24 +69,23 @@ lexi_ai/
   llm.py            StructuredLLM — wraps openai.AsyncOpenAI chat.completions.parse
   generation/       LLM synthesis
     schemas.py      Pydantic GeneratedResult (strict enums from constants)
-    prompts.py      system prompt + tier rubric + split-vs-alias rule + formatter
+    prompts/        Jinja system prompts and formatters
     generator.py    openai structured-output synthesis; retry
   theming/          restyle a done entry's senses in a named voice
     schemas.py      Pydantic ThemedResult (definition + fresh in-voice examples)
-    prompts.py      voice system prompt + neutral-facts formatter (NO neutral examples)
     generator.py    ThemedGenerator — openai structured-output; retry
   assets/           reference-addressed derived-asset cache
     repository.py   AssetRepository + content_hash / normalize_asset_params
     translate.py    Translator (real, LLM-backed) — cache-first
-    tts.py          TTSProvider protocol + StubTTSProvider + OpenAICompatibleTTSProvider
+    tts.py          StubTTSProvider + OpenAICompatibleTTSProvider
   questions/        prepare + retrieve + evaluate persisted vocabulary questions
     base.py         type descriptors, demands, plugin contracts, registry
     distractors.py  best-effort wrong-option ladder (semantic -> topic)
     schemas.py      render-payload validators + structured LLM outputs
     scoring.py      shared evaluation helpers (single choice / text span / rubric)
-    formats/        one module per type; five MVP types self-register on import
+    types/          one module per type; five MVP types self-register on import
       _shared.py    cross-type helpers (MCQ build, target blanking, exposure)
-      *.py          registered types plus unregistered follow-up candidates
+      *.py          registered built-in types
     repository.py   QuestionRepository (durable idempotent question store)
     engine.py       QuestionEngine — prepare/retrieve/evaluate dispatcher
   api.py            Lexicon — the composition root; wires the object graph only
@@ -94,7 +93,7 @@ lexi_ai/
     reader.py       LexiconReader — free reads (cannot mutate, cannot call a provider)
     engine.py       LexiconEngine — generation, enrichment, curation, assets
   prep/
-    phrase_overlap.py  Phase-7 one-off: classify Cambridge phrase_titles
+    phrase_overlap.py  classify Cambridge phrase_titles before generation
 ```
 
 ## The public API is a capability boundary
@@ -254,7 +253,7 @@ not noise — examples are stored WITH the tags intact, and `lexi_ai.markup`
 (`parse_marked_example` / `strip_markup`) is the ONE reader (like `match_key` is
 the one key function). The cloze plugin blanks the tagged span directly; display
 consumers call `strip_markup`. The `forms` surfaces also feed `accepted_forms` in
-cloze/spelling/collocation payloads so a learner typing `ran` for `run` grades
+cloze payloads so a learner typing `ran` for `run` grades
 correct — a form-set widening at grade time, NOT a `match_key` change.
 
 **Targeted example augmentation**: `add_examples(sense_id, n=3, theme=None)` is the
@@ -301,76 +300,36 @@ single session): words-by-status, senses, examples, tags, themes, themed-words
 
 ## Question engine
 
-The question services turn a `done` entry into vocabulary questions and grade
-answers. They *manage* questions (create / read / delete / grade); they do not
-*use* them — rotation, quiz sessions, SRS, and progress are the application's job.
-Two engines exist per process: the reader's, built without providers, and the
-worker's, built with the LLM, the rubric judge, and the speech port.
+The question service prepares, retrieves, and evaluates persisted vocabulary
+questions. Session rotation and SRS scheduling remain application concerns. Two
+engines exist per process: the reader's engine is provider-free, while the worker's
+engine receives the question LLM and rubric judge.
 
-**Three axes wired through `answer_kind`.** A **format** declares an `answer_kind`
-(what an answer looks like: `single_choice` / `text_span` / `free_text` /
-`matching`); a
-**generator** turns an entry into a question; a **scorer** turns `(question,
-answer)` into a score. A format is not bound to a backend — a rule and an LLM are
-just two ways to implement the same interface.
+Each type declares a stable `type_id`, a `render_kind`, an interaction mode, and
+the difficulty levels it supports. The registry validates the level-0 exposure
+versus non-zero assessment rules when the built-in type modules register.
 
-**One plugin per format; the engine is a dispatcher.** Each format is a single
-plugin that owns BOTH halves — `async generate` and `async grade` — so the two
-cannot drift. The engine looks a plugin up by `format`, hands it a
-`QuestionContext` of capabilities (the entry, a distractor provider, optional
-bound `llm`/`judge` runnables, and a narrow `store` façade), and `await`s it. The
-engine never inspects which backend a plugin uses, and grading dispatches by
-`format` to the plugin, which delegates to a shared helper keyed to its
-`answer_kind` — so the same `grade_single_choice` grades any single-choice
-question regardless of who generated it.
+The current built-in set is:
 
-**A plugin owns its persistence.** There is no persistence rule in the engine: a
-plugin that wants a row calls `ctx.store.insert(...)` itself, inside its own
-`generate`; every other plugin returns ephemeral questions (`id=None`). The engine
-cannot tell the difference. `store` is the CRUD façade of `QuestionRepository`
-(the questions write path), so plugins get a DB door, not a session. Grading needs
-no DB — a freshly generated, never-stored question grades fine.
+| Type | Render | Levels | Evaluation |
+|------|--------|--------|------------|
+| `flashcard` | `flashcard` | 0 | exposure only |
+| `definition_mcq` | `single_choice` | 1 | deterministic index |
+| `contextual_mcq` | `single_choice` | 1–2 | deterministic index after LLM context generation |
+| `cloze` | `text_span` | 2–3 | normalized answer plus accepted forms |
+| `use_in_sentence` | `free_text` | 3–4 | rubric judge |
 
-The format set proves the abstraction by covering every backend combination:
+Plugins receive a `QuestionContext` containing the entry, distractor provider,
+optional LLM/judge, store, and sense loader. The context contains no audio seam:
+TTS is an asset capability, not a question-plugin dependency. Payloads are stored
+as canonical JSON in a `Text` column and projected into answer-free
+`PresentedQuestion` values before they reach a consumer. Grading reads the stored
+payload and returns the sanctioned `Evaluation.reveal`.
 
-| Format | answer_kind | Generator | Grader | Persists |
-|--------|-------------|-----------|--------|----------|
-| `definition_mcq` | `single_choice` | rule | rule (index) | no |
-| `pronunciation_mcq` | `single_choice` | rule (IPA) | rule (index) | no |
-| `cloze` | `text_span` | rule | rule (`match_key`) | no |
-| `collocation_fill` | `text_span` | rule | rule (`match_key`) | no |
-| `contextual_mcq` | `single_choice` | llm | rule (index) | yes |
-| `use_in_sentence` | `free_text` | rule | llm (rubric) | no |
-| `matching` | `matching` | rule | rule (permutation) | no |
-| `listening` | `single_choice` | rule (TTS) | rule (index) | yes |
-| `spelling` | `text_span` | rule (TTS) | rule (`match_key`) | no |
-
-`pronunciation_mcq` and `collocation_fill` reuse already-stored content (per-POS
-IPA, and the `collocations` child table) — no new generation cost. `contextual_mcq`
-(llm-generated, rule-graded) and `use_in_sentence` (rule-generated,
-llm-graded) are the cross-axis proofs. `listening`/`spelling` synthesize an audio
-clip via the configured TTS provider (addressed by the durable
-`(source_kind, source_id, voice, fmt)` reference tuple, not a row id, so the payload
-survives a purge/regenerate); with no TTS configured they degrade to no questions
-rather than failing. `cloze`/`collocation_fill`/`spelling` grade `text_span` by
-`match_key` equality against the answer PLUS the sense's `accepted_forms` (its
-inflected surfaces), so a learner typing `ran` for `run` scores right without
-touching the `match_key` invariant; `cloze` also blanks the exact target span from
-the example's `<t inf>` markup (via `lexi_ai.markup`), falling back to a
-word-boundary match when a span is absent. `pronunciation_mcq` reuses the MCQ
-machinery with the sense's IPA as the stem; `collocation_fill` blanks the target in
-a stored collocation. Adding a format is one plugin **module** + one
-`register(...)` line: each format lives in its own file under
-`lexi_ai/questions/formats/` (cross-format helpers in `_shared.py`) and
-self-registers on import, so the package `__init__` importing it populates the
-registry. The registry validates the format↔answer_kind coupling at
-import time (a mis-wire is an import error). Payload is app-level JSON in a `Text`
-column (the one deviation from native typing), (de)serialized only at the
-repository boundary, which rejects an embedded NUL so it round-trips safely on
-Postgres. Distractors are best-effort (semantic neighbours, then shared topic
-tags); an MCQ degrades to fewer options rather than fabricating. The LLM plugin and
-judge are injectable, so the whole subsystem tests with fake runnables and zero
-network.
+Adding a type means adding one module under `lexi_ai/questions/types/` and one
+direct import in that package. Distractors are best-effort (semantic neighbours,
+then shared topic tags), so an MCQ degrades to fewer options rather than fabricating
+a wrong answer. The LLM and judge are injectable, keeping the subsystem hermetic.
 
 **Portability:** only `Text`/`String`/`Integer`/`DateTime` — no
 JSONB/ARRAY/native
@@ -480,7 +439,7 @@ OpenAI-compatible TTS provider. When a `TTS_API_KEY` is set, `TTS_BASE_URL` must
 cleartext. With none configured, TTS falls back to the stub (raises, never caches
 fake audio).
 
-Sense vectors: `VECTOR_BACKEND` (`lancedb` default, or `memory`), `VECTOR_PATH`
+Sense vectors: `VECTOR_BACKEND` (`none` default/off, `lancedb`, or `memory`), `VECTOR_PATH`
 (LanceDB store dir, default `./lexi-vectors`), `VECTOR_METRIC` (`cosine` — must
 match the encoder's geometry; the Embedder L2-normalizes). Encoder knobs stay
 `EMBEDDING_MODEL`/`EMBEDDING_DEVICE`/`EMBEDDING_BATCH_SIZE`/`EMBEDDING_MAX_LENGTH`.

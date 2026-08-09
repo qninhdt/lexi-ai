@@ -23,7 +23,6 @@ from lexi_ai.questions.base import (
     QuestionStore,
     QuestionType,
     SenseEntryLoader,
-    TtsPort,
     UnknownQuestionType,
 )
 from lexi_ai.questions.distractors import DistractorProvider
@@ -50,14 +49,12 @@ class QuestionEngine:
         distractors: DistractorProvider,
         llm: StructuredLLM | None = None,
         judge_llm: StructuredLLM | None = None,
-        tts: TtsPort | None = None,
         sense_loader: SenseEntryLoader | None = None,
     ):
         self._repo = repo
         self._distractors = distractors
         self._llm = llm
         self._judge = judge_llm
-        self._tts = tts
         self._sense_loader = sense_loader
 
     def question_types(self) -> list[QuestionTypeInfo]:
@@ -143,7 +140,6 @@ class QuestionEngine:
             llm=self._llm,
             judge=self._judge,
             store=self._repo,
-            tts=self._tts,
             sense_loader=self._sense_loader,
         )
 

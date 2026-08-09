@@ -28,11 +28,6 @@ _MCQ_MIN_DISTRACTORS = 1
 _CONTEXTUAL_SYSTEM = PromptLoader.render("contextual_mcq_system")
 
 
-def _core_sense(entry: Entry) -> SenseView | None:
-    """The entry's core sense (senses are core-first), or None if it has none."""
-    return entry.senses[0] if entry.senses else None
-
-
 def _accepted_forms(sense: SenseView) -> list[str]:
     """Inflected surfaces the text-span grader folds equal to the answer, so a
     learner typing ``ran`` for ``run`` scores right. Empty when the sense has no
@@ -109,7 +104,7 @@ def _blank_first_token_matching(text: str, want: set[str]) -> str | None:
     """Blank the FIRST whitespace token whose (edge-punct-stripped) core folds into
     ``want`` (a set of ``answer_key`` values), preserving all original separators.
 
-    Shared by ``_blank_target``'s fallback and ``_blank_in_phrase``. Two
+    Shared by ``_blank_target``'s fallback. Two
     correctness fixes over the earlier ``text.split()`` + ``" ".join()`` copies:
 
     - **Separators preserved:** iterate ``\\S+`` tokens by their located offset
@@ -171,16 +166,3 @@ def _blank_target(example: str, entry: Entry) -> str | None:
     # match_key deliberately keeps `café` and `cafe` apart so they can be separate
     # headwords — which would leave an accented target unblanked.
     return _blank_first_token_matching(clean, {answer_key(entry.norm)})
-
-
-def _blank_in_phrase(phrase: str, entry: Entry, accepted: list[str]) -> str | None:
-    """Blank the target token in a collocation, or None if it is not present.
-
-    A collocation carries NO ``<t inf>`` markup (it is a plain partner phrase), so
-    the target is found token-by-token via ``answer_key`` equality against the lemma
-    OR any accepted inflected surface — ``heavy rains`` blanks on the ``rains``
-    form of ``rain``. Blanks the FIRST matching token; None when none matches (the
-    caller tries the next collocation)."""
-    want = {answer_key(entry.norm)}
-    want.update(answer_key(s) for s in accepted if s)
-    return _blank_first_token_matching(phrase, want)

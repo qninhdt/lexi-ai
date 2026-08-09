@@ -1,4 +1,4 @@
-"""Phrase-overlap data-prep (Phase 7).
+"""Phrase-overlap data-prep.
 
 Cambridge stores many multi-word units twice: as an inline ``phrase_title`` on a
 host word's sense AND (often) as a standalone ``words`` row. This one-off prep
@@ -7,11 +7,11 @@ classifies every distinct ``phrase_title`` by ``match_key``:
 - overlap  (a standalone ``words`` row shares the key): link the host word to
   that unit as ``part_of_phrasal_family`` — do not regenerate it.
 - orphan   (no standalone row): seed a ``pending`` stub in the generated DB so
-  it enters the lazy generation queue. Orphans are invisible to the Phase 3
-  candidate scan (which reads Cambridge ``words`` only), so this is the ONLY way
-  they get generated (consistent with two-DB decision #14).
+  it enters the lazy generation queue. Orphans are invisible to the candidate
+  candidate scan (which reads Cambridge ``words`` only), so this is the only way
+  they get generated through the generated dictionary.
 
-Actual sense generation stays lazy (Phases 4-6). This only seeds queue/link
+Actual sense generation stays lazy. This only seeds queue/link
 state, is idempotent, reads Cambridge read-only, and batches over the ~13.7k
 rows.
 """
