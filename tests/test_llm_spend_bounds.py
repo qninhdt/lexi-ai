@@ -157,9 +157,7 @@ async def test_transient_failures_are_still_retried():
                 raise asyncio.TimeoutError("provider stalled")
             return _Shape(value=42)
 
-    result = await ainvoke_structured(
-        _FlakyThenFine(), [user_msg("hi")], _Shape, base_delay=0
-    )
+    result = await ainvoke_structured(_FlakyThenFine(), [user_msg("hi")], _Shape, base_delay=0)
 
     assert result.value == 42
     assert len(calls) == 3, "a transient failure stopped being retried"
@@ -179,3 +177,22 @@ async def test_a_persistent_transient_failure_still_exhausts_and_raises():
         )
 
     assert len(calls) == 3
+
+
+async def test_non_transient_failures_are_not_retried():
+    calls: list[int] = []
+
+    class _InvalidRequest:
+        async def parse(self, _messages, _schema):
+            calls.append(1)
+            raise ValueError("invalid request")
+
+    with pytest.raises(ValueError, match="invalid request"):
+        await ainvoke_structured(_InvalidRequest(), [user_msg("hi")], _Shape, base_delay=0)
+
+    assert len(calls) == 1
+
+
+async def test_retry_count_must_allow_one_attempt():
+    with pytest.raises(ValueError, match="at least 1"):
+        await ainvoke_structured(object(), [user_msg("hi")], _Shape, max_retries=0)

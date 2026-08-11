@@ -93,6 +93,17 @@ def _clip(text: str | None, limit: int = 300) -> str:
     return repr(text) if len(text) <= limit else f"{text[:limit]!r}… ({len(text)} chars)"
 
 
+def _is_transient(exc: Exception) -> bool:
+    """Return whether retrying can plausibly change the provider outcome."""
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, OSError)):
+        return True
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code in {408, 409, 425, 429} or status_code >= 500
+    # OpenAI's connection errors intentionally do not expose an HTTP status.
+    return exc.__class__.__name__ in {"APIConnectionError", "APITimeoutError"}
+
+
 def drop_nullable_unions(schema: dict) -> dict:
     """Rewrite every ``X | None`` property to a plain, non-required ``X``.
 
@@ -313,10 +324,12 @@ async def ainvoke_structured(
     very likely identical. Timeouts, rate limits and connection resets are the
     failures a second attempt actually fixes, so those still retry.
 
-    ``max_retries`` MUST be ``>= 1`` (the default is 3, and every in-scope caller
-    uses ``>= 1``); with ``0`` the loop never runs and the trailing assert would
-    fire a bare ``AssertionError`` (3.9 — dead branch, documented not guarded).
+    ``max_retries`` must be ``>= 1`` so the function always makes at least one
+    provider call and never falls through to an unhelpful assertion.
     """
+    if max_retries < 1:
+        raise ValueError("max_retries must be at least 1")
+
     last_exc: Exception | None = None
     for attempt in range(max_retries):
         try:
@@ -328,7 +341,9 @@ async def ainvoke_structured(
             # Deterministic given the same prompt: raise on the first one rather
             # than paying for two more calls to be told the same thing.
             raise
-        except Exception as exc:  # noqa: BLE001 - retried, then re-raised
+        except Exception as exc:  # noqa: BLE001 - classified below
+            if not _is_transient(exc):
+                raise
             last_exc = exc
             if attempt < max_retries - 1:
                 await asyncio.sleep(base_delay * (2**attempt))

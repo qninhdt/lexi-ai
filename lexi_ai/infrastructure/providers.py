@@ -26,17 +26,19 @@ class ProviderRegistry:
     """Builds the LLM / TTS / translation providers on first use.
 
     ``generator`` and ``wsd_judge`` are pre-built collaborators the owner may inject;
-    the rest are constructed here from :class:`Settings`. Settings are read per call
-    (not captured) so a test that swaps the settings singleton is honoured by the
-    next build.
+    the rest are constructed here from one :class:`Settings` snapshot. When no
+    snapshot is supplied, the ambient settings factory is retained for the low-level
+    test/composition helpers that construct this registry directly.
     """
 
     def __init__(
         self,
         *,
+        settings: Settings | None = None,
         generator: Generator | None = None,
         wsd_judge: WsdJudge | None = None,
     ) -> None:
+        self._settings_value = settings
         self.generator = generator
         # Cached instances. ``None`` means not-yet-built for everything except the
         # WSD judge, whose "not configured" answer is also ``None`` — hence the
@@ -50,9 +52,8 @@ class ProviderRegistry:
 
     # --- settings ---------------------------------------------------------
 
-    @staticmethod
-    def _settings() -> Settings:
-        return get_settings()
+    def _settings(self) -> Settings:
+        return self._settings_value or get_settings()
 
     def llm_configured(self) -> bool:
         """Whether a structured-output LLM can be built."""

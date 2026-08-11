@@ -33,6 +33,7 @@ def theme_view(theme: ThemeRecord) -> Theme:
         tone=theme.tone,
     )
 
+
 class ThemeService:
     """Theme use cases over the unit of work and the theming generators."""
 

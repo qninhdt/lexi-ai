@@ -307,9 +307,7 @@ async def test_senses_word_id_has_an_index_to_read_a_word_by(pg_session_factory)
     async with pg_session_factory() as session:
         connection = await session.connection()
         indexes = await connection.run_sync(
-            lambda sync_connection: inspect(sync_connection).get_indexes(
-                "senses", schema=PG_SCHEMA
-            )
+            lambda sync_connection: inspect(sync_connection).get_indexes("senses", schema=PG_SCHEMA)
         )
 
     covering = [

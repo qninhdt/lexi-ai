@@ -35,6 +35,7 @@ WRITE_OR_PROVIDER = frozenset(
         "tts_many",
         "delete_asset",
         "purge_assets",
+        "sweep_asset_orphans",
         "init",
     }
 )
@@ -117,3 +118,32 @@ def test_both_facades_of_one_lexicon_share_its_process_scoped_state():
     lexicon = Lexicon(MagicMock(), MagicMock(), MagicMock(), vectors=MagicMock())
 
     assert lexicon.reader()._lexicon is lexicon.engine()._lexicon is lexicon
+
+
+def test_lexicon_keeps_explicit_settings_for_all_providers(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+
+    from lexi_ai.config import Settings
+
+    settings = Settings(
+        asset_cache_dir=str(tmp_path),
+        tts_voice="custom-voice",
+        tts_format="wav",
+        vector_backend="none",
+    )
+    monkeypatch.setenv("LEXI_VECTOR_BACKEND", "memory")
+    lexicon = Lexicon(
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        settings=settings,
+    )
+
+    assets = lexicon.assets()
+
+    assert lexicon._providers._settings() is settings
+    assert lexicon._embedder._settings is settings
+    assert lexicon._vectors is None
+    assert lexicon._assets._cache_dir == tmp_path
+    assert assets._voice == "custom-voice"
+    assert assets._fmt == "wav"

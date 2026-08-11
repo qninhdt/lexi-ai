@@ -1318,6 +1318,35 @@ async def test_evaluate_answer_refetches_authoritative_question_by_public_id(eng
     assert question_engine.evaluated == [(authoritative, submission)]
 
 
+async def test_evaluate_answer_uses_authoritative_question_id(engine):
+    from lexi_ai.contracts.questions import AnswerSubmission, ChoiceResponse, RenderKind
+    from lexi_ai.domain.questions import PersistedQuestion
+
+    authoritative = PersistedQuestion(
+        question_id=41,
+        word_id=3,
+        sense_id=7,
+        type_id="definition_mcq",
+        render_kind=RenderKind.SINGLE_CHOICE,
+        difficulty_level=1,
+        interaction="assessment",
+        payload={"stem": "?", "options": ["eloquent"], "correct_index": 0},
+    )
+    lex, _gen, _sf = _make_lexicon(engine, cam_words={}, norm_by_id={}, results_by_word={})
+    repository = _QuestionRepositorySpy(authoritative)
+    question_engine = _QuestionEngineSpy()
+    lex._question_engines._repo = repository
+    lex._question_engines.worker = question_engine
+
+    await lex.engine().evaluate_answer(
+        41,
+        AnswerSubmission(question_id="stale-client-id", response=ChoiceResponse(selected_index=0)),
+    )
+
+    evaluated_submission = question_engine.evaluated[0][1]
+    assert evaluated_submission.question_id == "41"
+
+
 async def test_evaluate_answer_returns_none_for_unknown_question(engine):
     from lexi_ai.contracts.questions import AnswerSubmission, TextResponse
 

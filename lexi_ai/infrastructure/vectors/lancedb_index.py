@@ -12,6 +12,7 @@ batch of a different width is rejected rather than silently corrupting the index
 """
 
 import asyncio
+import threading
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -32,6 +33,12 @@ class LanceDbVectorIndex:
         self._path = path
         self._metric = metric
         self._table = None
+        # LanceDB's Python objects are not safe to drive from two threads at once,
+        # and every call here runs in `asyncio.to_thread`. Two concurrent
+        # `merge_insert`s on one table reach pyarrow on both threads and abort the
+        # process with a SIGSEGV rather than raising — so writes take this lock, and
+        # so does opening/creating the table that every call shares.
+        self._write_lock = threading.RLock()
 
     async def upsert(self, records: Sequence[VectorRecord]) -> int:
         if not records:
@@ -68,14 +75,15 @@ class LanceDbVectorIndex:
     # --- synchronous LanceDB access (always via to_thread) ----------------
 
     def _upsert_sync(self, rows: list[dict], dim: int) -> int:
-        table = self._open(create_with_dim=dim, meta_keys=self._meta_keys(rows))
-        (
-            table.merge_insert(_ID)
-            .when_matched_update_all()
-            .when_not_matched_insert_all()
-            .execute(rows)
-        )
-        return len(rows)
+        with self._write_lock:
+            table = self._open(create_with_dim=dim, meta_keys=self._meta_keys(rows))
+            (
+                table.merge_insert(_ID)
+                .when_matched_update_all()
+                .when_not_matched_insert_all()
+                .execute(rows)
+            )
+            return len(rows)
 
     def _query_sync(self, vector: list[float], k: int, where: Mapping[str, str] | None):  # noqa: ANN202
         table = self._open()
@@ -93,12 +101,13 @@ class LanceDbVectorIndex:
         ]
 
     def _delete_sync(self, ids: list[str]) -> int:
-        table = self._open()
-        if table is None:
-            return 0
-        quoted = ", ".join(f"'{_escape(stored_id)}'" for stored_id in ids)
-        result = table.delete(f"{_ID} IN ({quoted})")
-        return int(getattr(result, "num_deleted_rows", 0) or 0)
+        with self._write_lock:
+            table = self._open()
+            if table is None:
+                return 0
+            quoted = ", ".join(f"'{_escape(stored_id)}'" for stored_id in ids)
+            result = table.delete(f"{_ID} IN ({quoted})")
+            return int(getattr(result, "num_deleted_rows", 0) or 0)
 
     def _ids_sync(self, where: Mapping[str, str] | None) -> set[str]:
         table = self._open()
@@ -124,18 +133,25 @@ class LanceDbVectorIndex:
 
     def _open(self, create_with_dim: int | None = None, meta_keys: Sequence[str] = ()):  # noqa: ANN202
         """The table, opened once. ``None`` when it does not exist yet and no
-        dimension was supplied to create it (a read before the first write)."""
-        if self._table is not None:
-            return self._table
-        import lancedb
+        dimension was supplied to create it (a read before the first write).
 
-        Path(self._path).mkdir(parents=True, exist_ok=True)
-        db = lancedb.connect(self._path)
-        if TABLE in _existing_tables(db):
-            self._table = db.open_table(TABLE)
-        elif create_with_dim is not None:
-            self._table = db.create_table(TABLE, schema=_schema(create_with_dim, meta_keys))
-        return self._table
+        Locked because the cached handle is shared: two threads opening or creating
+        it at once would otherwise race on the same connection, and one of them
+        would win the assignment while the other kept a handle to a table it also
+        just created.
+        """
+        with self._write_lock:
+            if self._table is not None:
+                return self._table
+            import lancedb
+
+            Path(self._path).mkdir(parents=True, exist_ok=True)
+            db = lancedb.connect(self._path)
+            if TABLE in _existing_tables(db):
+                self._table = db.open_table(TABLE)
+            elif create_with_dim is not None:
+                self._table = db.create_table(TABLE, schema=_schema(create_with_dim, meta_keys))
+            return self._table
 
     @staticmethod
     def _meta_keys(rows: list[dict]) -> list[str]:

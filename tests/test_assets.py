@@ -8,6 +8,8 @@ get/put with hash-verify, best-effort GC on the caller's session, and the
 translate/tts API surface. In-memory SQLite + StaticPool; files under tmp_path.
 """
 
+import asyncio
+
 import pytest
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -17,6 +19,7 @@ from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.domain.asset_identity import content_hash, normalize_asset_params
 from lexi_ai.infrastructure.db.models import Asset as AssetRow
 from lexi_ai.infrastructure.db.models import Sense, Word
+from lexi_ai.infrastructure.db.repositories import asset_repo as asset_repo_module
 from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
 from tests.support.persistence_driver import PersistenceDriver
 
@@ -273,6 +276,27 @@ async def test_put_file_shards_and_stores_relative(session_factory, assets, tmp_
     assert got.ready
 
 
+async def test_shared_file_stays_until_last_reference_is_deleted(session_factory, assets, tmp_path):
+    text = "the same audio source"
+    params = normalize_asset_params("tts", voice="alloy", fmt="mp3")
+    first_id = await _make_sense(session_factory, text)
+    second_id = await _make_sense(session_factory, text)
+    first = await assets.put_file("sense_def", first_id, "tts", params, text, b"audio", ext="mp3")
+    second = await assets.put_file("sense_def", second_id, "tts", params, text, b"audio", ext="mp3")
+    file_path = tmp_path / first.file_path
+    assert second.file_path == first.file_path
+    assert file_path.exists()
+
+    assert first.id is not None
+    assert await assets.delete(first.id)
+    assert file_path.exists()
+    assert await assets.get("sense_def", second_id, "tts", params, text) is not None
+
+    assert second.id is not None
+    assert await assets.delete(second.id)
+    assert not file_path.exists()
+
+
 async def test_get_missing_file_is_miss(session_factory, assets, tmp_path):
     sid = await _make_sense(session_factory)
     text = "a small domestic cat"
@@ -282,10 +306,11 @@ async def test_get_missing_file_is_miss(session_factory, assets, tmp_path):
     assert await assets.get("sense_def", sid, "tts", params, text) is None
 
 
-async def test_put_file_unlinks_orphan_on_non_integrity_failure(session_factory, assets, tmp_path):
-    # The file is written BEFORE the row. If the row write fails with a
-    # NON-IntegrityError, the just-written file (created by THIS call) must be
-    # unlinked so it is not orphaned on disk with no backing row.
+async def test_put_file_removes_new_final_path_when_row_write_fails(
+    session_factory, assets, tmp_path
+):
+    # A failed insert may leave a final-path orphan, but maintenance can remove it
+    # after the write attempt has safely ended.
     sid = await _make_sense(session_factory)
     text = "a small domestic cat"
     params = normalize_asset_params("tts", voice="alloy", fmt="mp3")
@@ -299,22 +324,58 @@ async def test_put_file_unlinks_orphan_on_non_integrity_failure(session_factory,
     assets._get = _boom  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="row write failed"):
         await assets.put_file("sense_def", sid, "tts", params, text, b"\x01\x02", ext="mp3")
-    # The orphan file this call wrote is gone.
+    assert (tmp_path / rel_path).exists()
+    assert await assets.sweep_orphans(min_age_seconds=0) == 1
     assert not (tmp_path / rel_path).exists()
+
+
+async def test_sweep_respects_grace_and_keeps_referenced_files(session_factory, assets, tmp_path):
+    sid = await _make_sense(session_factory, "a referenced definition")
+    params = normalize_asset_params("tts", voice="alloy", fmt="mp3")
+    referenced = await assets.put_file(
+        "sense_def", sid, "tts", params, "a referenced definition", b"live", ext="mp3"
+    )
+    referenced_path = tmp_path / referenced.file_path
+
+    orphan_hash = content_hash("an abandoned write")
+    orphan_rel_path = f"{orphan_hash[:2]}/{orphan_hash}.alloy-mp3.mp3"
+    orphan_path = tmp_path / orphan_rel_path
+    orphan_path.parent.mkdir(parents=True, exist_ok=True)
+    orphan_path.write_bytes(b"orphan")
+
+    assert await assets.sweep_orphans(min_age_seconds=3600) == 0
+    assert orphan_path.exists()
+    assert referenced_path.exists()
+
+    assert await assets.sweep_orphans(min_age_seconds=0) == 1
+    assert not orphan_path.exists()
+    assert referenced_path.exists()
+
+    temp_path = tmp_path / orphan_hash[:2] / f".{orphan_hash}.alloy-mp3.mp3.tmp_dead.tmp"
+    temp_path.write_bytes(b"stale temp")
+    assert await assets.sweep_orphans(min_age_seconds=0) == 1
+    assert not temp_path.exists()
+
+    unicode_path = tmp_path / orphan_hash[:2] / f"{orphan_hash}.É.MP3"
+    unicode_path.write_bytes(b"unicode orphan")
+    assert await assets.sweep_orphans(min_age_seconds=0) == 1
+    assert not unicode_path.exists()
+
+    wrong_shard = tmp_path / "ff" / f"{orphan_hash}.alloy-mp3.mp3"
+    wrong_shard.parent.mkdir(parents=True, exist_ok=True)
+    wrong_shard.write_bytes(b"not managed here")
+    assert await assets.sweep_orphans(min_age_seconds=0) == 0
+    assert wrong_shard.exists()
 
 
 async def test_put_file_keeps_preexisting_file_on_failure(session_factory, assets, tmp_path):
     # A file that PRE-EXISTED this call (same content-addressed path from an
-    # earlier put) must NEVER be unlinked on a failure — only a file this call
-    # created is ours to roll back.
+    # earlier put) must be restored when the row update fails.
     sid = await _make_sense(session_factory)
     text = "a small domestic cat"
     params = normalize_asset_params("tts", voice="alloy", fmt="mp3")
-    h = content_hash(text)
-    rel_path = f"{h[:2]}/{h}.alloy-mp3.mp3"
-    # Seed the file on disk so this call sees it as pre-existing.
-    (tmp_path / rel_path).parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / rel_path).write_bytes(b"PRE")
+    initial = await assets.put_file("sense_def", sid, "tts", params, text, b"PRE", ext="mp3")
+    rel_path = initial.file_path
 
     async def _boom(*_args, **_kwargs):
         raise RuntimeError("row write failed")
@@ -322,8 +383,55 @@ async def test_put_file_keeps_preexisting_file_on_failure(session_factory, asset
     assets._get = _boom  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="row write failed"):
         await assets.put_file("sense_def", sid, "tts", params, text, b"\x99", ext="mp3")
-    # The pre-existing file is untouched (not unlinked by the failure path).
-    assert (tmp_path / rel_path).exists()
+    assert (tmp_path / rel_path).read_bytes() == b"PRE"
+
+
+async def test_put_file_cancellation_keeps_complete_file_and_releases_lock(
+    session_factory, assets, tmp_path
+):
+    sid = await _make_sense(session_factory)
+    text = "a small domestic cat"
+    params = normalize_asset_params("tts", voice="alloy", fmt="mp3")
+    initial = await assets.put_file("sense_def", sid, "tts", params, text, b"PRE", ext="mp3")
+    file_path = tmp_path / initial.file_path
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _blocked(*_args, **_kwargs):
+        entered.set()
+        await release.wait()
+
+    assets._get = _blocked  # type: ignore[method-assign]
+    task = asyncio.create_task(
+        assets.put_file("sense_def", sid, "tts", params, text, b"NEW", ext="mp3")
+    )
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert file_path.read_bytes() == b"PRE"
+    assert not assets._file_lock.locked()
+
+
+async def test_post_commit_replace_failure_keeps_old_file_and_sweeps_temp(
+    session_factory, assets, tmp_path, monkeypatch
+):
+    sid = await _make_sense(session_factory)
+    text = "a small domestic cat"
+    params = normalize_asset_params("tts", voice="alloy", fmt="mp3")
+    initial = await assets.put_file("sense_def", sid, "tts", params, text, b"PRE", ext="mp3")
+    file_path = tmp_path / initial.file_path
+
+    def _fail_replace(*_args, **_kwargs):
+        raise OSError("filesystem unavailable")
+
+    monkeypatch.setattr(asset_repo_module.os, "replace", _fail_replace)
+    updated = await assets.put_file("sense_def", sid, "tts", params, text, b"NEW", ext="mp3")
+
+    assert updated.file_path == initial.file_path
+    assert file_path.read_bytes() == b"PRE"
+    assert await assets.sweep_orphans(min_age_seconds=0) == 1
 
 
 async def test_put_file_path_traversal_is_contained(session_factory, assets, tmp_path):
@@ -550,6 +658,7 @@ async def test_translate_bad_ref_raises(session_factory, tmp_path):
 
 async def test_translate_no_llm_raises(session_factory, tmp_path, monkeypatch):
     sid = await _make_sense(session_factory)
+    monkeypatch.setenv("LEXI_LLM_API_KEY", "")
     from lexi_ai.api import Lexicon
 
     assets = AssetRepository(session_factory, str(tmp_path))
@@ -559,7 +668,6 @@ async def test_translate_no_llm_raises(session_factory, tmp_path, monkeypatch):
         None,  # type: ignore[arg-type]
         assets=assets,
     )
-    monkeypatch.setenv("LEXI_LLM_API_KEY", "")
     with pytest.raises(ValueError):
         await lex.engine().translate_sense(sid, "vi")
 

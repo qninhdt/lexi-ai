@@ -334,10 +334,13 @@ async def test_generate_retries_then_succeeds():
         ]
     )
 
+    class TransientProviderError(RuntimeError):
+        status_code = 503
+
     async def _flaky(_messages):
         calls["n"] += 1
         if calls["n"] < 2:
-            raise RuntimeError("transient")
+            raise TransientProviderError("transient")
         return good
 
     gen = Generator(structured_llm=_FakeLLM(_flaky), base_delay=0.0)
@@ -346,13 +349,17 @@ async def test_generate_retries_then_succeeds():
     assert out.units[0].norm == "book"
 
 
-async def test_generate_raises_after_exhausting_retries():
+async def test_generate_does_not_retry_non_transient_failures():
+    calls = {"n": 0}
+
     async def _always_fail(_messages):
-        raise RuntimeError("permanent")
+        calls["n"] += 1
+        raise ValueError("permanent")
 
     gen = Generator(structured_llm=_FakeLLM(_always_fail), max_retries=2, base_delay=0.0)
-    with pytest.raises(RuntimeError, match="permanent"):
+    with pytest.raises(ValueError, match="permanent"):
         await gen.generate(_bundle_book())
+    assert calls["n"] == 1
 
 
 def test_structured_method_overrides_an_initialized_default_llm(monkeypatch):

@@ -129,6 +129,40 @@ async def test_a_mixed_dimension_upsert_is_rejected(index):
         await index.upsert([_record("1", [1.0, 0.0]), _record("2", [1.0, 0.0, 0.0])])
 
 
+async def test_concurrent_upserts_all_land(index):
+    """Every adapter call runs in a worker thread, so writes really do overlap.
+
+    On LanceDB that overlap was not a lost update but a process abort: two
+    `merge_insert`s driving one table object reach pyarrow on two threads and the
+    interpreter dies with a SIGSEGV, taking the whole suite with it. Nothing raises,
+    so only a test that actually issues concurrent writes can catch it.
+    """
+    import asyncio
+
+    await asyncio.gather(
+        *(index.upsert([_record(str(number), [1.0, float(number)])]) for number in range(8))
+    )
+
+    assert await index.ids() == {str(number) for number in range(8)}
+
+
+async def test_concurrent_writes_and_reads_stay_consistent(index):
+    """Deletes are writes too, and reads share the same cached table handle."""
+    import asyncio
+
+    await index.upsert([_record(str(number), [1.0, float(number)]) for number in range(6)])
+
+    await asyncio.gather(
+        index.delete(["0", "1"]),
+        index.upsert([_record("6", [1.0, 6.0])]),
+        index.ids(),
+        index.query([1.0, 2.0], 3),
+        index.fetch(["2", "3"]),
+    )
+
+    assert await index.ids() == {"2", "3", "4", "5", "6"}
+
+
 # --- backend selection ------------------------------------------------------
 
 

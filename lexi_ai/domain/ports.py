@@ -332,15 +332,13 @@ class VectorIndex(Protocol):
         """
 
 
-class QuestionStore(Protocol):
-    """Reading persisted questions, as the question service needs them.
+class QuestionReader(Protocol):
+    """Read-only question capability required by the application service.
 
-    Narrow on purpose: three of the concrete repository's methods, and only the
-    reads. The service annotated the concrete `QuestionRepository` instead, which
-    the `application` layer is forbidden to import — the annotation was under
-    `TYPE_CHECKING`, so it cost nothing at runtime and still coupled the layer to
-    a table-aware module. Writes stay off this port because the service does not
-    perform them; the engine owns persistence.
+    The plugin-facing question persistence protocol lives in ``questions.base``
+    and intentionally has a different shape. Keeping this port read-only avoids
+    coupling the application layer to either the repository implementation or
+    the plugin write path.
     """
 
     async def get(self, question_id: int) -> PersistedQuestion | None:
@@ -350,9 +348,6 @@ class QuestionStore(Protocol):
         self, sense_id: int, type_id: str | None = None
     ) -> list[PersistedQuestion]:
         """Questions bound to one sense, newest first, optionally by type."""
-
-    async def delete(self, question_id: int) -> bool:
-        """Remove one question. ``False`` when it was already gone."""
 
 
 class AssetStore(Protocol):
@@ -393,3 +388,6 @@ class AssetStore(Protocol):
 
     async def purge(self, kind: str | None = None) -> int:
         """Remove every cached asset, or every one of a kind. Returns the count."""
+
+    async def sweep_orphans(self, *, min_age_seconds: float = 3600.0) -> int:
+        """Remove old managed files not referenced by an asset row."""

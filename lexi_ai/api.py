@@ -70,12 +70,14 @@ class Lexicon:
         assets: AssetRepository | None = None,
         wsd_judge: WsdJudge | None = None,
         vectors: VectorIndex | None = _UNSET,
+        settings: Settings | None = None,
     ):
+        self._settings = settings or get_settings()
         self._session_factory = session_factory
         self._loader = loader
         self._writer = GenerationWriter(self._uow)
         self._engine = engine
-        self._embedder = embedder or Embedder()
+        self._embedder = embedder or Embedder(settings=self._settings)
         self._assets = assets
         # Sense vectors live outside the primary database and are eventually
         # consistent: written post-commit, best-effort, reconciled by a backfill.
@@ -84,12 +86,16 @@ class Lexicon:
         # from the ambient environment every time a caller passed the disabled
         # index, silently overriding an explicit decision (and ignoring the
         # ``settings`` that produced it).
-        self._vectors = build_vector_index() if vectors is _UNSET else vectors
+        self._vectors = build_vector_index(self._settings) if vectors is _UNSET else vectors
         # Every optional external capability (LLM, WSD judge, translator, TTS,
         # themed generators) is built on first use by the registry, which owns the
         # "is it configured?" branching. Injected collaborators are handed over so
         # there is exactly one place that answers for a provider.
-        self._providers = ProviderRegistry(generator=generator, wsd_judge=wsd_judge)
+        self._providers = ProviderRegistry(
+            settings=self._settings,
+            generator=generator,
+            wsd_judge=wsd_judge,
+        )
         self._locks = SingleFlight()
         # A DISTINCT registry from _locks so the themed-overlay lock can never form a
         # cycle with the neutral per-key lock. Keyed on (word_id, theme_id): word_id
@@ -122,6 +128,7 @@ class Lexicon:
             embedder=Embedder(settings=settings),
             assets=AssetRepository(session_factory, settings.asset_cache_dir),
             vectors=build_vector_index(settings),
+            settings=settings,
         )
 
     # --- lifecycle --------------------------------------------------------
@@ -158,7 +165,7 @@ class Lexicon:
     def _require_assets(self) -> AssetRepository:
         """The asset cache, constructed lazily from settings if not injected."""
         if self._assets is None:
-            self._assets = AssetRepository(self._session_factory, get_settings().asset_cache_dir)
+            self._assets = AssetRepository(self._session_factory, self._settings.asset_cache_dir)
         return self._assets
 
     # --- application services ---------------------------------------------
@@ -239,13 +246,12 @@ class Lexicon:
 
     def assets(self) -> AssetService:
         """Cached translations and speech clips."""
-        settings = get_settings()
         return AssetService(
             self._require_assets(),
             self._providers.translator_provider,
             self._providers.tts_provider,
-            voice=settings.tts_voice,
-            fmt=settings.tts_format,
+            voice=self._settings.tts_voice,
+            fmt=self._settings.tts_format,
         )
 
     async def _embed_words(self, word_ids: list[int]) -> int:

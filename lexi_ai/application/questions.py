@@ -20,7 +20,7 @@ from lexi_ai.contracts.questions import (
     PresentedQuestion,
     QuestionTypeInfo,
 )
-from lexi_ai.domain.ports import QuestionStore
+from lexi_ai.domain.ports import QuestionReader
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,7 +50,7 @@ class QuestionService:
     def __init__(
         self,
         engine: "QuestionEngine",
-        repository: QuestionStore,
+        repository: QuestionReader,
         load_entry: "Callable[[int], object]",
     ) -> None:
         self._engine = engine
@@ -97,4 +97,11 @@ class QuestionService:
         persisted = await self._repository.get(question_id)
         if persisted is None:
             return None
+        # The route/facade argument identifies the persisted question. Do not let a
+        # stale or forged body ID relabel an evaluation for that row.
+        if submission.question_id != str(question_id):
+            submission = AnswerSubmission(
+                question_id=str(question_id),
+                response=submission.response,
+            )
         return await self._engine.evaluate(persisted, submission)

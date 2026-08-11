@@ -248,6 +248,10 @@ class LexiconEngine:
         """Delete every cached asset, unlinking backing files."""
         return await self._lexicon.assets().purge(kind=kind)
 
+    async def sweep_asset_orphans(self, *, min_age_seconds: float = 3600.0) -> int:
+        """Remove old binary cache files that have no committed asset row."""
+        return await self._lexicon.assets().sweep_orphans(min_age_seconds=min_age_seconds)
+
     # --- questions --------------------------------------------------------
 
     def question_types(self) -> list[QuestionTypeInfo]:

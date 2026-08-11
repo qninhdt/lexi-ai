@@ -179,12 +179,17 @@ Asset and theme knobs (all `LEXI_`-prefixed):
   them unset and TTS falls back to a stub that raises rather than caching fake
   audio.
 
+Failed binary writes can leave an unreferenced file because the content-addressed
+path may be shared by a concurrent writer. Run `await engine.sweep_asset_orphans()`
+from maintenance with its default one-hour grace period; pass
+`min_age_seconds=0` only for a controlled cleanup where no writes are active.
+
 ### Managing & batch
 
 Every resource has get/list/delete alongside create — `get_theme`/`update_theme`/
 `delete_theme`, `delete_entry`/`list_entries`/`list_entries_by_tag`,
 `rename_tag`/`delete_tag`/`merge_tags`, `get_asset`/`list_assets`/`delete_asset`/
-`purge_assets`. Bulk variants (`generate_many`, `get_many`, `translate_many`,
+`purge_assets`/`sweep_asset_orphans`. Bulk variants (`generate_many`, `get_many`, `translate_many`,
 `tts_many`, `get_status_many`) run concurrently and return a
 `list[BatchResult]` — one entry per input, in order; a failed item never aborts
 the rest (check `result.ok` / `result.value` / `result.error`). Question work uses

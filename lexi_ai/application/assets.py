@@ -135,6 +135,10 @@ class AssetService:
     async def purge(self, *, kind: str | None = None) -> int:
         return await self._assets.purge(kind=kind)
 
+    async def sweep_orphans(self, *, min_age_seconds: float = 3600.0) -> int:
+        """Remove old unreferenced binary files left by failed cache writes."""
+        return await self._assets.sweep_orphans(min_age_seconds=min_age_seconds)
+
     async def _resolve_or_raise(self, source_kind: str, source_id: int) -> str:
         text = await self._assets.resolve_source_text(source_kind, source_id)
         if text is None:
