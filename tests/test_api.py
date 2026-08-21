@@ -17,9 +17,9 @@ from sqlalchemy.pool import StaticPool
 
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models, session_scope
-from lexi_ai.domain.errors import SemanticSearchDisabled
+from lexi_ai.domain.errors import EmbeddingUnavailable, SemanticSearchDisabled
 from lexi_ai.domain.models import VectorRecord
-from lexi_ai.embeddings import Embedder, EmbeddingUnavailable
+from lexi_ai.embeddings import Embedder
 from lexi_ai.facades import LexiconEngine, LexiconReader
 from lexi_ai.generation.schemas import (
     ExampleBatch,

@@ -13,12 +13,12 @@ import pytest
 
 from lexi_ai.config import Settings
 from lexi_ai.domain.errors import (
+    EmbeddingUnavailable,
     SemanticSearchDisabled,
     SemanticSearchUnavailable,
     VectorBackendUnavailable,
 )
 from lexi_ai.domain.models import VectorRecord
-from lexi_ai.embeddings import EmbeddingUnavailable
 from lexi_ai.infrastructure.vectors import build_vector_index
 from lexi_ai.infrastructure.vectors.memory_index import InMemoryVectorIndex
 
