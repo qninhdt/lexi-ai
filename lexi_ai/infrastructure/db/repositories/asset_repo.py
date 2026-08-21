@@ -12,15 +12,14 @@ correctness guarantee, not the FK cascade.
 ``put_*`` writes the file BEFORE the row (a row implies a file); a missing file
 for an existing row is treated as a miss and rewritten. ``normalize_asset_params``
 runs ONCE on every call (read and write), like ``match_key``/``tag_key``.
+
+The filesystem primitives (staged writes, verified unlinks, orphan sweep) live in
+`asset_file_store.py`; this module owns transactions, identity upserts, and the
+coordination between the two.
 """
 
 import asyncio
 import logging
-import math
-import os
-import re
-import tempfile
-import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -33,6 +32,7 @@ from lexi_ai.constants import (
 )
 from lexi_ai.db import session_scope
 from lexi_ai.domain.asset_identity import content_hash
+from lexi_ai.infrastructure.db.asset_file_store import AssetFileStore
 from lexi_ai.infrastructure.db.models import Asset as AssetRow
 from lexi_ai.infrastructure.db.models import Collocation, Example, Sense
 from lexi_ai.read_models import Asset
@@ -48,8 +48,6 @@ _SOURCE_TABLES = {
 }
 
 _DEFAULT_ORPHAN_GRACE_SECONDS = 60 * 60
-_MANAGED_FILE = re.compile(r"(?P<hash>[0-9a-f]{64})\.[^./\\]+\.[^./\\]+")
-_TEMP_FILE = re.compile(r"\.(?P<hash>[0-9a-f]{64})\.[^./\\]+\.[^./\\]+\.[^./\\]+\.tmp")
 
 
 def _check_source_kind(source_kind: str) -> None:
@@ -60,7 +58,7 @@ def _check_source_kind(source_kind: str) -> None:
 class AssetRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession], cache_dir: str):
         self._session_factory = session_factory
-        self._cache_dir = Path(cache_dir)
+        self._files = AssetFileStore(cache_dir)
         # Deferred-unlink listeners whose transaction has ended, awaiting removal.
         # See `_detach_spent_listeners` for why they are not removed in place.
         self._spent_listeners: list[tuple] = []
@@ -70,6 +68,11 @@ class AssetRepository:
         self._file_lock = asyncio.Lock()
         self._caller_file_locks: dict[object, object | None] = {}
         self._file_lock_listeners: list[tuple] = []
+
+    @property
+    def cache_dir(self) -> Path:
+        """The configured cache directory (the file store's root)."""
+        return self._files.root
 
     # --- source resolution -------------------------------------------------
 
@@ -102,7 +105,7 @@ class AssetRepository:
             row = await self._get(session, source_kind, source_id, kind, params)
             if row is None or row.content_hash != want:
                 return None
-            if row.file_path is not None and not (self._cache_dir / row.file_path).exists():
+            if row.file_path is not None and not self._files.exists(row.file_path):
                 return None  # row without its file — treat as a miss
             return self._to_asset(row)
 
@@ -222,29 +225,22 @@ class AssetRepository:
         """Write bytes to a sharded path then upsert the row on the reference identity.
 
         Path: ``{cache_dir}/{hash[:2]}/{hash}.{params}.{ext}`` — sharded by hash
-        prefix, params folded in so two assets differing only by params (e.g. same
-        text/fmt, different TTS voice) map to distinct files. ``params``/``ext`` are
-        sanitized to path-safe tokens (no traversal via env ``voice``/``fmt``). Bytes
-        are staged and fsynced first. An unreferenced final path is atomically
+        prefix; see :meth:`AssetFileStore.relative_path` for the token sanitizing.
+        Bytes are staged and fsynced first. An unreferenced final path is atomically
         installed before its row; a path already referenced by the DB is replaced
         only after the row transaction commits, so a rollback never corrupts a live
         asset. A failed new-row write may leave an inert orphan;
         :meth:`sweep_orphans` removes old unreferenced files later."""
         _check_source_kind(source_kind)
         h = content_hash(source_text)
-        safe_ext = "".join(c if c.isalnum() else "-" for c in ext.strip().lstrip(".")).lower()
-        safe_ext = safe_ext.strip("-") or "bin"
-        safe_params = "".join(c if c.isalnum() else "-" for c in params).strip("-") or "x"
-        rel_path = f"{h[:2]}/{h}.{safe_params}.{safe_ext}"
-        abs_path = self._cache_dir / rel_path
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self._write_file_to_temp(abs_path, data)
+        rel_path = self._files.relative_path(h, params, ext)
+        temporary = self._files.stage(rel_path, data)
         try:
             async with session_scope(self._session_factory) as session:
                 path_is_referenced = await self._path_is_referenced(session, rel_path)
-                replace_after_commit = path_is_referenced and abs_path.exists()
+                replace_after_commit = path_is_referenced and self._files.exists(rel_path)
                 if not replace_after_commit:
-                    os.replace(temporary, abs_path)
+                    self._files.replace(temporary, rel_path)
                     temporary = None
                 row = await self._get(session, source_kind, source_id, kind, params)
                 if row is not None:
@@ -293,7 +289,7 @@ class AssetRepository:
                 stored = self._to_asset(row)
             if replace_after_commit:
                 try:
-                    os.replace(temporary, abs_path)
+                    self._files.replace(temporary, rel_path)
                 except OSError:
                     # The committed row still has the previous complete file. Keep
                     # the staged candidate for a later retry/sweep rather than
@@ -309,7 +305,7 @@ class AssetRepository:
             return stored
         finally:
             if temporary is not None:
-                temporary.unlink(missing_ok=True)
+                self._files.discard(temporary)
 
     async def _get(
         self, session: AsyncSession, source_kind: str, source_id: int, kind: str, params: str
@@ -500,18 +496,10 @@ class AssetRepository:
     ) -> int:
         """Remove old managed files that no asset row references.
 
-        The age gate is the concurrency guard: ``put_file`` writes bytes before its
-        row commits, so a fresh unreferenced path may belong to an in-flight writer.
-        A database snapshot is taken before the filesystem scan; writers that start
-        after it update the file mtime and remain inside the grace window. Unknown
-        files are ignored rather than treating the whole cache directory as owned.
-        Returns the number of files removed.
+        The database snapshot of referenced paths is taken BEFORE the filesystem
+        scan; see :meth:`AssetFileStore.sweep` for why that ordering and the age
+        gate make an in-flight writer safe. Returns the number of files removed.
         """
-        if not math.isfinite(min_age_seconds) or min_age_seconds < 0:
-            raise ValueError("min_age_seconds must be finite and non-negative")
-        if not self._cache_dir.exists():
-            return 0
-
         async with session_scope(self._session_factory) as session:
             referenced = {
                 path
@@ -524,42 +512,7 @@ class AssetRepository:
                 .all()
                 if path is not None
             }
-
-        cutoff = time.time() - min_age_seconds
-        removed = 0
-        for path in self._cache_dir.rglob("*"):
-            if not path.is_file():
-                continue
-            relative = path.relative_to(self._cache_dir)
-            if len(relative.parts) != 2:
-                continue
-            if not re.fullmatch(r"[0-9a-f]{2}", relative.parts[0]):
-                continue
-            managed = _MANAGED_FILE.fullmatch(relative.name)
-            temporary = _TEMP_FILE.fullmatch(relative.name)
-            if managed is None and temporary is None:
-                continue
-            match = managed or temporary
-            if relative.parts[0] != match.group("hash")[:2]:
-                continue
-            try:
-                stat = path.stat()
-                if stat.st_mtime > cutoff:
-                    continue
-            except FileNotFoundError:
-                continue
-            except OSError:
-                logger.warning(
-                    "Could not inspect cached asset file during sweep",
-                    extra={"file_path": relative.as_posix()},
-                    exc_info=True,
-                )
-                continue
-            if managed is not None and relative.as_posix() in referenced:
-                continue
-            if self._unlink_if_unchanged(relative.as_posix(), self._stat_identity(stat)):
-                removed += 1
-        return removed
+        return self._files.sweep(referenced, min_age_seconds=min_age_seconds)
 
     async def _acquire_caller_file_lock(self, session: AsyncSession) -> bool:
         """Hold the filesystem lock until a caller-owned transaction ends."""
@@ -599,80 +552,6 @@ class AssetRepository:
             sync_session, on_end = self._file_lock_listeners.pop()
             event.remove(sync_session, "after_transaction_end", on_end)
 
-    @staticmethod
-    def _stat_identity(stat: os.stat_result) -> tuple[int, int, int, int]:
-        return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
-
-    def _file_identity(self, file_path: str) -> tuple[int, int, int, int] | None:
-        try:
-            return self._stat_identity((self._cache_dir / file_path).stat())
-        except FileNotFoundError:
-            return None
-        except OSError:
-            logger.warning(
-                "Could not inspect cached asset file",
-                extra={"file_path": file_path},
-                exc_info=True,
-            )
-            return None
-
-    def _unlink_if_unchanged(
-        self, file_path: str, expected: tuple[int, int, int, int] | None
-    ) -> bool:
-        if expected is None or self._file_identity(file_path) != expected:
-            return False
-        return self._unlink(file_path)
-
-    def _write_file_to_temp(self, path: Path, data: bytes) -> Path:
-        temporary: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                dir=path.parent,
-                prefix=f".{path.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as handle:
-                temporary = Path(handle.name)
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
-            assert temporary is not None
-            return temporary
-        except BaseException:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
-            raise
-
-    def _unlink(self, file_path: str | None) -> bool:
-        """Remove a backing file under the cache dir, ignoring a missing file.
-
-        Synchronous, and deliberately left that way. Offloading this and the write
-        above with `asyncio.to_thread` was tried and reverted: every caller is
-        either the after-commit listener, which SQLAlchemy dispatches synchronously
-        with no loop to await on, or a path with a transaction open on this
-        connection. The await yields the event loop, a sibling task then works on
-        the same connection, and its savepoint is invalidated —
-        `OperationalError: no such savepoint`, reproduced by two concurrent TTS
-        writes in roughly one run in six against a suite that was 10-for-10 clean
-        before the change.
-
-        The blocking call is real but bounded: a local cache write of a few KB.
-        Making it async needs per-connection isolation for these writes first, which
-        is a design change rather than a `to_thread` wrapper.
-        """
-        if file_path is None:
-            return False
-        try:
-            (self._cache_dir / file_path).unlink(missing_ok=True)
-        except OSError:
-            logger.warning(
-                "Could not remove cached asset file",
-                extra={"file_path": file_path},
-                exc_info=True,
-            )
-            return False
-        return True
-
     def _unlink_after_commit(self, session: AsyncSession, file_paths: Sequence[str | None]) -> None:
         """Unlink these files once — and only once — the caller's transaction commits.
 
@@ -709,7 +588,7 @@ class AssetRepository:
         paths = [path for path in file_paths if path is not None]
         if not paths:
             return
-        expected = {path: self._file_identity(path) for path in paths}
+        expected = {path: self._files.identity(path) for path in paths}
 
         sync_session = session.sync_session
         # Keep both the operation savepoint and its root. A savepoint release is
@@ -719,7 +598,7 @@ class AssetRepository:
         operation = sync_session.get_nested_transaction() or root
         if root is None:  # pragma: no cover - no active transaction to wait on
             for path in paths:
-                self._unlink_if_unchanged(path, expected[path])
+                self._files.unlink_if_unchanged(path, expected[path])
             return
 
         self._detach_spent_listeners(sync_session)
@@ -742,7 +621,7 @@ class AssetRepository:
             if not root_committed or not operation_committed:
                 return  # a rollback at either level keeps the file and row
             for path in paths:
-                self._unlink_if_unchanged(path, expected[path])
+                self._files.unlink_if_unchanged(path, expected[path])
 
         event.listen(sync_session, "after_commit", _on_commit)
         event.listen(sync_session, "after_transaction_end", _on_transaction_end)

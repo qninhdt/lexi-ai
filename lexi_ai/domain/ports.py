@@ -134,8 +134,13 @@ class SenseRepo(Protocol):
     ) -> None:
         """Replace a word's senses and their children."""
 
-    async def word_id_for(self, sense_id: int) -> int:
-        """Owning word id. Raises when the sense does not exist."""
+    async def word_id_for(self, sense_id: int) -> int | None:
+        """Owning word id, or ``None`` when the sense does not exist.
+
+        Optional because a lookup miss is ordinary — a caller may be holding a
+        stale id — and the miss is translated at this edge rather than surfacing
+        as a driver exception above the port.
+        """
 
     async def needing_embedding(
         self,
@@ -369,11 +374,34 @@ class AssetStore(Protocol):
     ) -> "Asset | None":
         """Cached asset for a reference identity, verified against its source text."""
 
-    async def put_text(self, *args, **kwargs) -> "Asset":
-        """Store a text asset, returning the stored row."""
+    async def put_text(
+        self,
+        source_kind: str,
+        source_id: int,
+        kind: str,
+        params: str,
+        source_text: str,
+        text_value: str,
+        meta: str | None = None,
+    ) -> "Asset":
+        """Store a text asset on its reference identity, returning the stored row.
 
-    async def put_file(self, *args, **kwargs) -> "Asset":
-        """Store a binary asset and its backing file."""
+        A stale row (the source id was reused/regenerated) is overwritten with
+        the new hash and value.
+        """
+
+    async def put_file(
+        self,
+        source_kind: str,
+        source_id: int,
+        kind: str,
+        params: str,
+        source_text: str,
+        data: bytes,
+        ext: str,
+        meta: str | None = None,
+    ) -> "Asset":
+        """Write bytes to a sharded path and upsert the row on the reference identity."""
 
     async def get_by_id(self, asset_id: int) -> "Asset | None":
         """One asset by its own id."""

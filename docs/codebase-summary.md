@@ -58,7 +58,6 @@ word could generate twice.
 | `assets.py` | 141 | Translation text and TTS clips. |
 | `questions.py` | 100 | Question preparation and retrieval. |
 | `tags.py` | 42 | Topic tags. |
-| `question_ports.py` | 69 | Ports the question engine needs. |
 | `single_flight.py` | 40 | One in-flight generation per key, process-wide. |
 | `batching.py` | 37 | Batch-result plumbing. |
 

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         Flashcard,
         FreeText,
         PrepareDemand,
+        PrepareReport,
         PresentedQuestion,
         QuestionTypeInfo,
         RenderContract,
@@ -33,7 +34,6 @@ if TYPE_CHECKING:
     from lexi_ai.facades import LexiconEngine, LexiconReader
     from lexi_ai.markup import parse_marked_example, strip_markup
     from lexi_ai.normalize import match_key, render
-    from lexi_ai.questions.base import PrepareReport
     from lexi_ai.read_models import (
         Asset,
         BatchResult,
@@ -57,6 +57,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "Flashcard": ("lexi_ai.contracts.questions", "Flashcard"),
     "FreeText": ("lexi_ai.contracts.questions", "FreeText"),
     "PrepareDemand": ("lexi_ai.contracts.questions", "PrepareDemand"),
+    "PrepareReport": ("lexi_ai.contracts.questions", "PrepareReport"),
     "PresentedQuestion": ("lexi_ai.contracts.questions", "PresentedQuestion"),
     "QuestionTypeInfo": ("lexi_ai.contracts.questions", "QuestionTypeInfo"),
     "RenderContract": ("lexi_ai.contracts.questions", "RenderContract"),
@@ -68,7 +69,6 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "SpanReveal": ("lexi_ai.contracts.questions", "SpanReveal"),
     "TextResponse": ("lexi_ai.contracts.questions", "TextResponse"),
     "TextSpan": ("lexi_ai.contracts.questions", "TextSpan"),
-    "PrepareReport": ("lexi_ai.questions.base", "PrepareReport"),
     "Asset": ("lexi_ai.read_models", "Asset"),
     "BatchResult": ("lexi_ai.read_models", "BatchResult"),
     "Entry": ("lexi_ai.read_models", "Entry"),

@@ -23,7 +23,13 @@ from lexi_ai.application.enrichment import EnrichmentService
 from lexi_ai.application.search import SearchService
 from lexi_ai.application.tags import TagService
 from lexi_ai.application.themes import ThemeService
-from lexi_ai.domain.errors import SemanticSearchDisabled
+from lexi_ai.domain.errors import (
+    InvalidThemeName,
+    SemanticSearchDisabled,
+    ThemedOverlayMissing,
+    ThemeTargetInvalid,
+    UnknownTheme,
+)
 from lexi_ai.domain.models import SemanticSenseRow, VectorHit
 from lexi_ai.read_models import Entry, SenseView
 
@@ -225,8 +231,17 @@ async def test_updating_an_unknown_theme_raises_rather_than_creating_one():
     uow = FakeUnitOfWork(themes=FakeRepo(update=None))
     service = ThemeService(uow, _unused, _unused, _unused, _unused, 12)
 
-    with pytest.raises(ValueError, match="unknown theme"):
+    with pytest.raises(ValueError, match="unknown theme") as raised:
         await service.update("ghost", name="Ghost")
+    assert isinstance(raised.value, UnknownTheme)
+
+
+async def test_creating_a_theme_with_an_empty_key_raises_a_typed_error():
+    service = ThemeService(FakeUnitOfWork(), _unused, _unused, _unused, _unused, 12)
+
+    with pytest.raises(ValueError, match="yields no valid key") as raised:
+        await service.create("", "style")
+    assert isinstance(raised.value, InvalidThemeName)
 
 
 async def test_restyling_refuses_a_word_that_is_not_done():
@@ -237,8 +252,9 @@ async def test_restyling_refuses_a_word_that_is_not_done():
 
     service = ThemeService(FakeUnitOfWork(), _unused, _unused, _unused, status, 12)
 
-    with pytest.raises(ValueError, match="not done"):
+    with pytest.raises(ValueError, match="not done") as raised:
         await service.restyle_word(1, 2, "style")
+    assert isinstance(raised.value, ThemeTargetInvalid)
 
 
 async def test_appending_themed_examples_requires_an_existing_overlay():
@@ -254,8 +270,9 @@ async def test_appending_themed_examples_requires_an_existing_overlay():
     service = ThemeService(uow, _unused, _unused, _unused, _unused, 12)
     service.resolve_or_raise = resolve  # type: ignore[method-assign]
 
-    with pytest.raises(ValueError, match="no themed overlay"):
+    with pytest.raises(ValueError, match="no themed overlay") as raised:
         await service.append_examples(5, 3, "pirate")
+    assert isinstance(raised.value, ThemedOverlayMissing)
 
 
 # --- search -----------------------------------------------------------------

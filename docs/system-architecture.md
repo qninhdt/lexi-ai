@@ -24,16 +24,22 @@ is always rendered at read time; there is **no** `display` column.
 lexi_ai/
   normalize.py      match_key / render (pure, zero-I/O; THE invariant)
   constants.py      controlled vocabularies (single source: ORM + LLM schema)
-   config.py         pydantic-settings (LLM credentials and database location)
+  config.py         pydantic-settings (LLM credentials and database location)
   db.py             async engine + session_scope; SQLite FK + transaction pragmas
   read_models.py    dataclass views returned to callers
   markup.py         parse/strip the <t inf> example target tags (one reader)
+  llm.py            StructuredLLM — wraps openai.AsyncOpenAI chat.completions.parse
+  embeddings.py     local sentence-transformer encoder (optional [embeddings] extra)
+  vectors.py        cosine similarity in plain Python (memory-backend helper)
   domain/           technology-free core
-    ports.py        repository, unit-of-work, and vector-index Protocols
+    ports.py        repository, unit-of-work, vector-index, and asset-store Protocols
     models.py       records crossing the persistence boundary (never ORM rows)
-    errors.py       failures callers branch on (StaleGenerationError)
+    errors.py       failures callers branch on (generation, semantic search, themes)
     hashing.py      sense_content_hash — content identity of a sense
+    asset_identity.py  content_hash / normalize_asset_params — asset identity rules
     questions.py    presented question -> grading spec mapping
+  contracts/        answer-safe public DTOs; dependency-free by import-linter
+    questions.py    PresentedQuestion / RenderContract / Evaluation / PrepareReport
   application/      use cases; they own transaction boundaries
     dictionary.py   free reads: entry, senses, status, listings, stats
     search.py       lexical search over references + semantic ranking
@@ -44,12 +50,12 @@ lexi_ai/
     tags.py         topic-tag rename / delete / merge
     assets.py       cache-first translation and speech
     questions.py    prepare / retrieve / evaluate over ONE question engine
-    question_ports.py  the narrow seam the question engine consumes
     single_flight.py   per-key async lock registry (collapse duplicate work)
     batching.py     order-aligned concurrent batch execution
   infrastructure/
     providers.py    lazy LLM / WSD / translator / TTS construction from settings
-    question_engine_factory.py  builds and caches the reader / worker engines
+    question_engine_factory.py  builds and caches the reader / worker engines,
+                    plus the sense->entry loader adapter the engines consume
     vectors/        similarity search, one module per backend
       lancedb_index.py  embedded, on disk, ANN query, no server
       memory_index.py   exact-scan, non-durable — the hermetic test backend
@@ -60,33 +66,38 @@ lexi_ai/
       sanitize.py     LLM-text cleaning + column caps shared by every repository
       mappers.py      the single ORM <-> domain <-> read-model translation home
       asset_gc.py     collect cached assets for rows about to be deleted
+      asset_file_store.py  filesystem half of the asset cache: staged writes,
+                      verified unlinks, orphan sweep
       uow.py          SqlAlchemyUnitOfWork — one session, one commit boundary
-      repositories/   one module per aggregate: word, sense, theme, tag, stats, entry
+      repositories/   one module per aggregate: word, sense (+ relation mixin),
+                      theme, tag, stats, entry, question, asset
   references/       read-only anchors
     cambridge.py    Cambridge SQLite (mode=ro), fetch + candidates + phrase_titles
     wordnet.py      nltk WordNet via asyncio.to_thread
     loader.py       ReferenceBundle = Cambridge + WordNet
-  llm.py            StructuredLLM — wraps openai.AsyncOpenAI chat.completions.parse
   generation/       LLM synthesis
     schemas.py      Pydantic GeneratedResult (strict enums from constants)
-    prompts/        Jinja system prompts and formatters
     generator.py    openai structured-output synthesis; retry
+    wsd.py          word-sense disambiguation for distractor ranking
+  prompts/          Jinja prompt templates, top-level (shared by generation/theming/assets)
+    loader.py       PromptLoader — renders *.jinja templates
+    _partials/      shared template fragments
   theming/          restyle a done entry's senses in a named voice
     schemas.py      Pydantic ThemedResult (definition + fresh in-voice examples)
     generator.py    ThemedGenerator — openai structured-output; retry
-  assets/           reference-addressed derived-asset cache
-    repository.py   AssetRepository + content_hash / normalize_asset_params
-    translate.py    Translator (real, LLM-backed) — cache-first
+  assets/           provider adapters for derived assets (no persistence here)
+    translate.py    Translator (real, LLM-backed) — cache-first via AssetService
     tts.py          StubTTSProvider + OpenAICompatibleTTSProvider
   questions/        prepare + retrieve + evaluate persisted vocabulary questions
     base.py         type descriptors, demands, plugin contracts, registry
     distractors.py  best-effort wrong-option ladder (semantic -> topic)
     schemas.py      render-payload validators + structured LLM outputs
     scoring.py      shared evaluation helpers (single choice / text span / rubric)
+    render.py       persisted row -> render / grading / reveal projections
+    dedup.py        shared distractor exclude+dedup rule (target-collision guard)
     types/          one module per type; five MVP types self-register on import
       _shared.py    cross-type helpers (MCQ build, target blanking, exposure)
       *.py          registered built-in types
-    repository.py   QuestionRepository (durable idempotent question store)
     engine.py       QuestionEngine — prepare/retrieve/evaluate dispatcher
   api.py            Lexicon — the composition root; wires the object graph only
   facades/          THE public API: two capability facades

@@ -9,6 +9,7 @@ translate/tts API surface. In-memory SQLite + StaticPool; files under tmp_path.
 """
 
 import asyncio
+import inspect
 
 import pytest
 from sqlalchemy import event, select
@@ -17,9 +18,9 @@ from sqlalchemy.pool import StaticPool
 
 from lexi_ai.db import create_session_factory, init_models, session_scope
 from lexi_ai.domain.asset_identity import content_hash, normalize_asset_params
+from lexi_ai.infrastructure.db import asset_file_store as asset_file_store_module
 from lexi_ai.infrastructure.db.models import Asset as AssetRow
 from lexi_ai.infrastructure.db.models import Sense, Word
-from lexi_ai.infrastructure.db.repositories import asset_repo as asset_repo_module
 from lexi_ai.infrastructure.db.repositories.asset_repo import AssetRepository
 from tests.support.persistence_driver import PersistenceDriver
 
@@ -426,7 +427,7 @@ async def test_post_commit_replace_failure_keeps_old_file_and_sweeps_temp(
     def _fail_replace(*_args, **_kwargs):
         raise OSError("filesystem unavailable")
 
-    monkeypatch.setattr(asset_repo_module.os, "replace", _fail_replace)
+    monkeypatch.setattr(asset_file_store_module.os, "replace", _fail_replace)
     updated = await assets.put_file("sense_def", sid, "tts", params, text, b"NEW", ext="mp3")
 
     assert updated.file_path == initial.file_path
@@ -973,3 +974,77 @@ async def test_delete_word_gcs_assets(session_factory, tmp_path):
     async with session_scope(session_factory) as session:
         rows = (await session.execute(select(AssetRow))).scalars().all()
     assert rows == []  # asset GC'd with the word
+
+
+# --- typed AssetStore port -------------------------------------------------
+
+
+def test_asset_repository_conforms_to_the_asset_store_port():
+    """Every AssetStore operation exists on the impl with the same parameters.
+
+    The Protocol carries the stable implementation signatures, so this pins the
+    two together: signature drift on either side fails here instead of surfacing
+    as a silent duck-type break in a port-typed consumer.
+    """
+    from lexi_ai.domain.ports import AssetStore
+
+    port_methods = {
+        name: member
+        for name, member in vars(AssetStore).items()
+        if not name.startswith("_") and inspect.isfunction(member)
+    }
+    assert set(port_methods) == {
+        "resolve_source_text",
+        "get",
+        "put_text",
+        "put_file",
+        "get_by_id",
+        "list",
+        "delete",
+        "purge",
+        "sweep_orphans",
+    }
+
+    for name, port_fn in port_methods.items():
+        impl_fn = getattr(AssetRepository, name)
+        port_params = inspect.signature(port_fn).parameters
+        impl_params = inspect.signature(impl_fn).parameters
+        assert list(port_params) == list(impl_params), name
+        for param_name, port_param in port_params.items():
+            assert port_param.kind == impl_params[param_name].kind, name
+            assert port_param.default == impl_params[param_name].default, name
+
+
+class _ScriptedTTS:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def synthesize(self, text: str, voice: str, fmt: str) -> bytes:
+        return self._data
+
+
+async def test_asset_service_round_trips_through_the_typed_port(session_factory, tmp_path):
+    """The port-typed consumer drives the real repository end to end.
+
+    AssetService annotates its store as the ``AssetStore`` Protocol; this runs a
+    speak -> persist -> get-by-id round trip through that seam with the concrete
+    repository behind it.
+    """
+    from lexi_ai.application.assets import AssetService
+
+    sid = await _make_sense(session_factory)
+    service = AssetService(
+        AssetRepository(session_factory, str(tmp_path)),
+        translator_factory=lambda: None,
+        tts_factory=lambda: _ScriptedTTS(b"clip"),
+        voice="alloy",
+        fmt="mp3",
+    )
+
+    stored = await service.speak("sense_def", sid)
+    assert stored.id is not None
+    fetched = await service.get(stored.id)
+
+    assert fetched is not None
+    assert fetched.file_path == stored.file_path
+    assert (tmp_path / fetched.file_path).read_bytes() == b"clip"

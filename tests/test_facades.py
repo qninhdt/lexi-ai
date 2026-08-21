@@ -144,6 +144,6 @@ def test_lexicon_keeps_explicit_settings_for_all_providers(tmp_path, monkeypatch
     assert lexicon._providers._settings() is settings
     assert lexicon._embedder._settings is settings
     assert lexicon._vectors is None
-    assert lexicon._assets._cache_dir == tmp_path
+    assert lexicon._assets.cache_dir == tmp_path
     assert assets._voice == "custom-voice"
     assert assets._fmt == "wav"

@@ -10,6 +10,12 @@ transaction open across it would idle a connection for its duration.
 
 from collections.abc import Callable, Sequence
 
+from lexi_ai.domain.errors import (
+    InvalidThemeName,
+    ThemedOverlayMissing,
+    ThemeTargetInvalid,
+    UnknownTheme,
+)
 from lexi_ai.domain.models import ThemeRecord
 from lexi_ai.domain.ports import UnitOfWork
 from lexi_ai.normalize import theme_key as normalize_theme_key
@@ -68,7 +74,7 @@ class ThemeService:
         """
         key = normalize_theme_key(name)
         if not key:
-            raise ValueError(f"theme name yields no valid key: {name!r}")
+            raise InvalidThemeName(f"theme name yields no valid key: {name!r}")
         if description is None or tone is None:
             generated = await self._metadata_generator().generate(key, style_prompt)
             fields = {
@@ -123,7 +129,7 @@ class ThemeService:
             )
             await uow.commit()
         if theme is None:
-            raise ValueError(f"unknown theme: {key!r}")
+            raise UnknownTheme(f"unknown theme: {key!r}")
         return theme_view(theme)
 
     async def delete(self, key: str) -> bool:
@@ -137,7 +143,7 @@ class ThemeService:
         """Resolve a theme to ``(id, style_prompt)`` or raise."""
         resolved = await self.resolve(theme)
         if resolved is None:
-            raise ValueError(f"unknown theme: {theme!r}")
+            raise UnknownTheme(f"unknown theme: {theme!r}")
         return resolved
 
     async def resolve(self, theme: str | int) -> tuple[int, str] | None:
@@ -161,11 +167,11 @@ class ThemeService:
         """
         status = await self._word_status(word_id)
         if status != "done":
-            raise ValueError(f"word {word_id} is not done (status={status!r})")
+            raise ThemeTargetInvalid(f"word {word_id} is not done (status={status!r})")
         async with self._uow() as uow:
             neutral = await uow.senses.for_theming(word_id)
         if not neutral:
-            raise ValueError(f"word {word_id} has no senses to theme")
+            raise ThemeTargetInvalid(f"word {word_id} has no senses to theme")
         sense_ids = [row.sense_id for row in neutral]
         facts = [(row.definition, row.pos, row.guideword, row.tier) for row in neutral]
         result = await self._themed_generator().generate(style_prompt, facts)
@@ -179,6 +185,8 @@ class ThemeService:
         base = (await self._read_senses([sense_id]))[0]
         async with self._uow() as uow:
             word_id = await uow.senses.word_id_for(sense_id)
+            if word_id is None:
+                raise ThemeTargetInvalid(f"unknown sense_id: {sense_id}")
             overlay = await uow.themes.overlay_for_word(word_id, theme_id)
         themed = overlay.get(sense_id)
         if themed is not None:
@@ -196,10 +204,10 @@ class ThemeService:
         async with self._uow() as uow:
             context = await uow.senses.example_context(sense_id)
             if context is None:
-                raise ValueError(f"unknown sense_id: {sense_id}")
+                raise ThemeTargetInvalid(f"unknown sense_id: {sense_id}")
             overlay = await uow.themes.overlay_for_sense(sense_id, theme_id)
         if overlay is None:
-            raise ValueError(
+            raise ThemedOverlayMissing(
                 f"sense {sense_id} has no themed overlay for theme {theme!r}; "
                 "theme the word first via generate(theme=)"
             )

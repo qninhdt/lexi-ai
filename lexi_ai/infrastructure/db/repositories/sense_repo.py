@@ -118,11 +118,15 @@ class SqlSenseRepo(SenseRelationResolutionMixin):
             await self._link_sense_relations(sense.id, word_id, generated.relations)
         await self._session.flush()
 
-    async def word_id_for(self, sense_id: int) -> int:
-        """Owning word id. Raises when the sense does not exist."""
+    async def word_id_for(self, sense_id: int) -> int | None:
+        """Owning word id, or ``None`` for an unknown sense.
+
+        A lookup miss is translated here, at the session boundary, so callers
+        above the port branch on ``None`` instead of catching a driver exception.
+        """
         return (
             await self._session.execute(select(Sense.word_id).where(Sense.id == sense_id))
-        ).scalar_one()
+        ).scalar_one_or_none()
 
     async def needing_embedding(
         self,

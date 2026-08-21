@@ -13,6 +13,11 @@ from sqlalchemy.pool import StaticPool
 
 from lexi_ai.api import Lexicon
 from lexi_ai.db import create_session_factory, init_models, session_scope
+from lexi_ai.domain.errors import (
+    ThemedOverlayMissing,
+    ThemeTargetInvalid,
+    UnknownTheme,
+)
 from lexi_ai.generation.schemas import ExampleBatch
 from lexi_ai.infrastructure.db.models import Example, Sense, ThemedExample, ThemedSense, Word
 from lexi_ai.markup import parse_marked_example
@@ -377,8 +382,9 @@ async def test_generate_theme_requires_done_word(session_factory):
     await lex.engine().create_theme("Bard", "voice", description="voice", tone="tone")
 
     source = SearchResult(display="pending", entry_type="word", lexi_word_id=wid)
-    with pytest.raises(ValueError, match="is not done"):
+    with pytest.raises(ValueError, match="is not done") as raised:
         await lex.engine().generate(source, theme="bard")
+    assert isinstance(raised.value, ThemeTargetInvalid)
 
 
 async def test_generate_theme_unknown_theme_raises(session_factory):
@@ -389,8 +395,9 @@ async def test_generate_theme_unknown_theme_raises(session_factory):
     lex = _lexicon(session_factory, gen)
 
     source = SearchResult(display="dragon", entry_type="word", lexi_word_id=word_id)
-    with pytest.raises(ValueError, match="unknown theme"):
+    with pytest.raises(ValueError, match="unknown theme") as raised:
         await lex.engine().generate(source, theme="nonexistent")
+    assert isinstance(raised.value, UnknownTheme)
 
 
 # --- read overlay (Phase 3) -----------------------------------------------
@@ -601,8 +608,9 @@ async def test_themed_add_examples_unknown_theme_raises(session_factory, repo):
     _wid, sense_id, _theme = await _seed_themed_overlay(session_factory, repo, [])
     gen = FakeThemedGenerator(ThemedResult(senses=[ThemedSenseSchema(definition="x")]))
     lex = _lexicon(session_factory, gen)
-    with pytest.raises(ValueError, match="unknown theme"):
+    with pytest.raises(ValueError, match="unknown theme") as raised:
         await lex.engine().add_examples(sense_id, n=2, theme="ghost")
+    assert isinstance(raised.value, UnknownTheme)
 
 
 async def test_themed_add_examples_missing_overlay_raises(session_factory, repo):
@@ -612,8 +620,9 @@ async def test_themed_add_examples_missing_overlay_raises(session_factory, repo)
     await repo.create_theme("Bard", "speak like a bard")
     gen = FakeThemedGenerator(ThemedResult(senses=[ThemedSenseSchema(definition="x")]))
     lex = _lexicon(session_factory, gen)
-    with pytest.raises(ValueError, match="no themed overlay"):
+    with pytest.raises(ValueError, match="no themed overlay") as raised:
         await lex.engine().add_examples(sense_ids[0], n=2, theme="bard")
+    assert isinstance(raised.value, ThemedOverlayMissing)
     assert gen.example_calls == 0
 
 

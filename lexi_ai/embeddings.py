@@ -23,19 +23,11 @@ import threading
 from collections.abc import Callable
 
 from lexi_ai.config import Settings, get_settings
-from lexi_ai.domain.errors import SemanticSearchUnavailable
+from lexi_ai.domain.errors import EmbeddingUnavailable
 
 # An injected encoder: batch of texts -> list of vectors (already normalized).
 # Takes a concrete list (``embed`` always materializes one before calling).
 EncodeFn = Callable[[list[str]], list[list[float]]]
-
-
-class EmbeddingUnavailable(SemanticSearchUnavailable):
-    """Raised when the ``[embeddings]`` extra (torch/transformers) is not installed.
-
-    A ``SemanticSearchUnavailable`` so a caller can catch the base class once
-    instead of listing every way the feature can be missing.
-    """
 
 
 class Embedder:

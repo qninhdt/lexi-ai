@@ -18,6 +18,7 @@ from lexi_ai.constants import (
 from lexi_ai.contracts.questions import (
     AnswerSubmission,
     Evaluation,
+    PrepareReport,
     QuestionTypeInfo,
     RenderKind,
 )
@@ -84,9 +85,8 @@ class QuestionQuery:
     excluded_question_ids: frozenset[int] = frozenset()
 
 
-@dataclass(frozen=True)
-class PrepareReport:
-    produced: dict[tuple[int, int], int]
+# ``PrepareReport`` is defined in the dependency-free contract package and
+# re-exported here: plugins speak it, but its home is the public surface.
 
 
 class UnknownQuestionType(ValueError):

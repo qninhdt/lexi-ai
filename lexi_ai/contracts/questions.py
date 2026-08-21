@@ -163,3 +163,13 @@ class PrepareDemand:
     sense_id: str
     difficulty_level: int
     expected_count: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class PrepareReport:
+    """Outcome DTO: how many questions each prepare demand produced.
+
+    ``produced`` is keyed by ``(sense_id, difficulty_level)``; counts aggregate
+    when several types supply the same demand."""
+
+    produced: dict[tuple[int, int], int]

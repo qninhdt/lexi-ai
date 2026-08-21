@@ -58,7 +58,6 @@ class QuestionEngineFactory:
         return self._repo
 
     def _build(self, *, providers: bool) -> QuestionEngine:
-        from lexi_ai.application.question_ports import SenseEntryLoader
         from lexi_ai.questions.distractors import DistractorProvider
         from lexi_ai.questions.engine import QuestionEngine
 
@@ -69,3 +68,29 @@ class QuestionEngineFactory:
             judge_llm=self._providers.judge_llm() if providers else None,
             sense_loader=SenseEntryLoader(self._uow, self._load_entry),
         )
+
+
+class SenseEntryLoader:
+    """Adapter that resolves a sense to its owning entry, for exposure cards.
+
+    Lives beside the engine assembly because the question engine is its only
+    consumer. The capability plugins see stays the narrow Protocol in
+    ``questions.base``, which this satisfies structurally; the unknown-sense miss
+    is translated to ``None`` by the repository, so no driver exception crosses.
+    """
+
+    def __init__(
+        self,
+        uow_factory: Callable[[], UnitOfWork],
+        read_entry: Callable[[int], Awaitable[Entry]],
+    ) -> None:
+        self._uow = uow_factory
+        self._read_entry = read_entry
+
+    async def load_entry(self, sense_id: int) -> Entry | None:
+        """The sense's owning entry, or ``None`` when the sense is gone."""
+        async with self._uow() as uow:
+            word_id = await uow.senses.word_id_for(sense_id)
+        if word_id is None:
+            return None
+        return await self._read_entry(word_id)

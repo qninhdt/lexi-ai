@@ -105,26 +105,36 @@ class GenerationService:
     async def _resolve_source(
         self, source: SearchResult | str, force: bool, method: str | None
     ) -> Entry:
-        """Route one input to either an existing entry or a fresh generation."""
-        if isinstance(source, str):
-            return await self._locked(match_key(source), source, None, force, method)
-        if source.lexi_word_id is not None:
-            if not force:
-                return await self._read_entry(source.lexi_word_id)
-            async with self._uow() as uow:
-                norm, cambridge_id = await uow.words.norm_and_cambridge(source.lexi_word_id)
-            return await self._locked(match_key(norm), norm, cambridge_id, True, method)
-        if source.cambridge_id is None:
-            raise ValueError("SearchResult has neither lexi_word_id nor cambridge_id")
-        if not force:
-            async with self._uow() as uow:
-                hit = await uow.words.generated_by_cambridge([source.cambridge_id])
-            existing = hit.get(source.cambridge_id)
+        """Route one input to either an existing entry or a fresh generation.
+
+        Identity resolution is shared with the fenced path via :meth:`_anchor`;
+        only the non-force existence shortcuts live here, since a forced run must
+        reach the lock regardless of what already exists.
+        """
+        if not force and isinstance(source, SearchResult):
+            existing = await self._existing_entry(source)
             if existing is not None:
-                return await self._read_entry(existing.word_id)
-        return await self._locked(
-            match_key(source.display), source.display, source.cambridge_id, force, method
-        )
+                return existing
+        key, word, cambridge_id = await self._anchor(source)
+        return await self._locked(key, word, cambridge_id, force, method)
+
+    async def _existing_entry(self, source: SearchResult) -> Entry | None:
+        """An entry already persisted for this input, checked before any provider work.
+
+        An explicit ``lexi_word_id`` wins outright; otherwise the Cambridge
+        reference maps to whichever word was generated from it. ``None`` means
+        nothing is persisted yet — generate.
+        """
+        if source.lexi_word_id is not None:
+            return await self._read_entry(source.lexi_word_id)
+        if source.cambridge_id is None:
+            return None
+        async with self._uow() as uow:
+            hits = await uow.words.generated_by_cambridge([source.cambridge_id])
+        existing = hits.get(source.cambridge_id)
+        if existing is None:
+            return None
+        return await self._read_entry(existing.word_id)
 
     async def _locked(
         self, key: str, word: str, cambridge_id: int | None, force: bool, method: str | None
@@ -160,7 +170,11 @@ class GenerationService:
         return await self._read_entry(entry.word_id, theme_id)
 
     async def _anchor(self, source: SearchResult | str) -> tuple[str, str, int | None]:
-        """The lookup key, lemma, and reference id for one input."""
+        """The lookup key, lemma, and reference id for one input.
+
+        The ONE dispatch over the two input shapes: the locked path and the
+        fenced path both resolve identity here rather than re-implementing it.
+        """
         if isinstance(source, str):
             return match_key(source), source, None
         if source.lexi_word_id is not None:

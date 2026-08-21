@@ -17,6 +17,7 @@ from lexi_ai.contracts.questions import (
     AnswerSubmission,
     Evaluation,
     PrepareDemand,
+    PrepareReport,
     PresentedQuestion,
     QuestionTypeInfo,
 )
@@ -25,7 +26,6 @@ from lexi_ai.domain.ports import QuestionReader
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from lexi_ai.questions.base import PrepareReport
     from lexi_ai.questions.engine import QuestionEngine
     from lexi_ai.read_models import Entry
 
@@ -62,7 +62,7 @@ class QuestionService:
     def question_types(self) -> list[QuestionTypeInfo]:
         return self._engine.question_types()
 
-    async def prepare(self, word_id: int, demands: list[PrepareDemand]) -> "PrepareReport":
+    async def prepare(self, word_id: int, demands: list[PrepareDemand]) -> PrepareReport:
         entry: Entry = await self._load_entry(word_id)
         return await self._engine.prepare(entry, _to_internal_demands(demands))
 

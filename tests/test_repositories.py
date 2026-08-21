@@ -385,12 +385,9 @@ async def test_senses_for_theming_are_ordered_for_stable_prompt_numbering(repo, 
     assert [row.tier for row in senses] == ["core", "common"]
 
 
-async def test_word_id_for_an_unknown_sense_raises(uow):
-    from sqlalchemy.exc import NoResultFound
-
+async def test_word_id_for_an_unknown_sense_is_none(uow):
     async with uow() as work:
-        with pytest.raises(NoResultFound):
-            await work.senses.word_id_for(999)
+        assert await work.senses.word_id_for(999) is None
 
 
 async def test_example_context_reports_a_miss_for_an_unknown_sense(uow):
