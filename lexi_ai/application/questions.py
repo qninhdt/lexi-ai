@@ -31,14 +31,14 @@ if TYPE_CHECKING:
 
 
 def _to_internal_demands(demands: list[PrepareDemand]) -> list:
-    """Map public demands (string sense id) onto the engine's internal form."""
+    """Map the pinned public demand onto the internal one-item preparation form."""
     from lexi_ai.questions.base import QuestionDemand
 
     return [
         QuestionDemand(
-            sense_id=int(demand.sense_id),
+            sense_id=demand.sense_id,
             difficulty_level=demand.difficulty_level,
-            expected_count=demand.expected_count,
+            expected_count=1,
         )
         for demand in demands
     ]
@@ -99,9 +99,9 @@ class QuestionService:
             return None
         # The route/facade argument identifies the persisted question. Do not let a
         # stale or forged body ID relabel an evaluation for that row.
-        if submission.question_id != str(question_id):
+        if submission.question_id != question_id:
             submission = AnswerSubmission(
-                question_id=str(question_id),
+                question_id=question_id,
                 response=submission.response,
             )
         return await self._engine.evaluate(persisted, submission)

@@ -336,19 +336,20 @@ def test_schema_compiles_on_both_dialects():
 
 
 def test_public_presented_question_uses_type_and_render_contracts():
-    from lexi_ai.contracts.questions import PresentedQuestion, TextSpan
+    from lexi_ai.contracts.questions import PresentedQuestion, RenderKind, TextSpan
 
     question = PresentedQuestion(
-        question_id="7",
+        question_id=7,
         type_id="cloze",
         interaction="assessment",
+        render_kind=RenderKind.TEXT_SPAN,
         difficulty_level=2,
         render=TextSpan(stem_with_blank="A ____.", word_bank=("word", "other")),
-        sense_id="2",
-        word_id="1",
+        sense_id=2,
+        word_id=1,
     )
 
-    assert question.question_id == "7"
+    assert question.question_id == 7
     assert question.type_id == "cloze"
     assert isinstance(question.render, TextSpan)
     # No answer key and no storage-shaped leak on the public presentation.

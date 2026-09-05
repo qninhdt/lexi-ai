@@ -120,7 +120,7 @@ async def main():
     sense_id = entry.senses[0].sense_id
     report = await work.prepare_questions(
         entry.word_id,
-        [PrepareDemand(sense_id=str(sense_id), difficulty_level=1, expected_count=1)],
+        [PrepareDemand(sense_id=sense_id, difficulty_level=1)],
     )
     question = await read.retrieve_question(
         sense_id,

@@ -148,7 +148,7 @@ def _demand(level: int, expected_count: int = 1) -> list[QuestionDemand]:
 
 
 def _submit(question: PersistedQuestion, response) -> AnswerSubmission:
-    return AnswerSubmission(question_id=str(question.question_id), response=response)
+    return AnswerSubmission(question_id=question.question_id, response=response)
 
 
 EXPECTED_INFO = {
@@ -422,7 +422,7 @@ async def test_engine_retrieve_presents_answer_free_and_unknown_type_is_typed():
 
     presented = await engine.retrieve(7, 1, frozenset(), "definition_mcq")
     assert isinstance(presented, PresentedQuestion)
-    assert presented.question_id == str(stored.question_id)
+    assert presented.question_id == stored.question_id
     assert isinstance(presented.render, SingleChoice)
     # The answer index is NOT reachable on the presentation.
     assert not hasattr(presented.render, "correct_index")
@@ -444,7 +444,7 @@ async def test_engine_retrieve_exposure_uses_sense_loader_and_evaluate_rejects_i
 
     assert loader.calls == [7]
     assert presented.interaction == "exposure"
-    assert presented.question_id == "exposure:7"
+    assert presented.question_id == 7
     with pytest.raises(NotAssessable):
         await engine.retrieve(7, 0, frozenset(), "flashcard")
     assert loader.calls == [7]

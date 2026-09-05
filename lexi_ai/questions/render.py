@@ -102,26 +102,26 @@ def to_reveal(render_kind: RenderKind, payload: dict) -> Reveal | None:
 def to_presented(pq: PersistedQuestion) -> PresentedQuestion:
     """Project an internal carrier into the answer-free public presentation.
 
-    Ids are stringified. A persisted assessment read always carries an int row id;
-    a non-persisted exposure card (built fresh, no row) is keyed by its sense —
-    there is exactly one exposure card per sense — so it still gets a stable,
-    non-null id. An assessment DRAFT (``question_id`` None) is internal only and
-    must never reach here: presenting it would emit ``str(None)``.
+    Persisted assessments carry their integer row id. Exposure cards are not
+    persisted, so their owning sense id is their stable integer presentation id.
+    An assessment DRAFT (``question_id`` None) is internal only and must never
+    reach here.
     """
     if pq.question_id is not None:
-        question_id = str(pq.question_id)
-    elif pq.interaction == "exposure" and pq.sense_id is not None:
-        question_id = f"exposure:{pq.sense_id}"
-    else:
-        raise ValueError("cannot present a draft question without a persisted id")
+        question_id = pq.question_id
+    if pq.question_id is None:
+        if pq.interaction != "exposure" or pq.sense_id is None:
+            raise ValueError("cannot present a draft question without a persisted id")
+        question_id = pq.sense_id
     return PresentedQuestion(
         question_id=question_id,
         type_id=pq.type_id,
         interaction=pq.interaction,
+        render_kind=pq.render_kind,
         difficulty_level=pq.difficulty_level,
         render=to_render(pq.render_kind, pq.payload),
-        sense_id=str(pq.sense_id) if pq.sense_id is not None else None,
-        word_id=str(pq.word_id) if pq.word_id is not None else None,
+        sense_id=pq.sense_id,
+        word_id=pq.word_id,
     )
 
 

@@ -115,6 +115,11 @@ class DictionaryService:
         async with self._uow() as uow:
             return await uow.entries.sense_views(_bounded(sense_ids, "senses"))
 
+    async def word_id_for(self, sense_id: int) -> int | None:
+        """Return the owning word id for a sense, or ``None`` when it is gone."""
+        async with self._uow() as uow:
+            return await uow.senses.word_id_for(sense_id)
+
     async def status(self, word_id: int) -> str | None:
         """Lifecycle status of a word, or ``None`` when the id is unknown."""
         async with self._uow() as uow:

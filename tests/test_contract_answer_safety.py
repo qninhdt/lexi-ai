@@ -22,6 +22,7 @@ PRESENTATION_ALLOWLIST: dict[type, set[str]] = {
         "question_id",
         "type_id",
         "interaction",
+        "render_kind",
         "difficulty_level",
         "render",
         "sense_id",
@@ -110,7 +111,7 @@ async def test_retrieved_question_hides_answer_but_grading_reveals_it():
 
     evaluation = await grade_single_choice(
         persisted,
-        AnswerSubmission(question_id="5", response=ChoiceResponse(selected_index=1)),
+        AnswerSubmission(question_id=5, response=ChoiceResponse(selected_index=1)),
     )
     assert evaluation.correct is True
     assert isinstance(evaluation.reveal, ChoiceReveal)

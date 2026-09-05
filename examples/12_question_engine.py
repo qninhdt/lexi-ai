@@ -91,7 +91,7 @@ async def main() -> None:
 
         # The PUBLIC demand DTO: its sense_id is a string (the internal
         # questions.base.QuestionDemand takes an int and is not exported).
-        demands = [PrepareDemand(str(sense_id), level, 1) for level in range(1, 5)]
+        demands = [PrepareDemand(sense_id, level) for level in range(1, 5)]
         report = await worker.prepare_questions(entry.word_id, demands)
         print("\n=== prepared assessment counts ===")
         for key, count in sorted(report.produced.items()):

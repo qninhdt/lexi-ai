@@ -1310,7 +1310,7 @@ async def test_evaluate_answer_refetches_authoritative_question_by_public_id(eng
     lex._question_engines._repo = repository
     lex._question_engines.worker = question_engine
 
-    submission = AnswerSubmission(question_id="41", response=ChoiceResponse(selected_index=0))
+    submission = AnswerSubmission(question_id=41, response=ChoiceResponse(selected_index=0))
     evaluation = await lex.engine().evaluate_answer(41, submission)
 
     assert evaluation.status == "graded"
@@ -1344,7 +1344,7 @@ async def test_evaluate_answer_uses_authoritative_question_id(engine):
     )
 
     evaluated_submission = question_engine.evaluated[0][1]
-    assert evaluated_submission.question_id == "41"
+    assert evaluated_submission.question_id == 41
 
 
 async def test_evaluate_answer_returns_none_for_unknown_question(engine):

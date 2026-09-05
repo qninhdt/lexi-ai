@@ -73,13 +73,14 @@ RenderContract = SingleChoice | TextSpan | FreeText | Flashcard
 class PresentedQuestion:
     """A question exactly as a learner sees it. Contains no correct answer."""
 
-    question_id: str
+    question_id: int
     type_id: str
     interaction: Interaction
+    render_kind: RenderKind
     difficulty_level: int
     render: RenderContract
-    sense_id: str | None = None
-    word_id: str | None = None
+    sense_id: int | None = None
+    word_id: int | None = None
 
 
 # --- Submission -----------------------------------------------------------
@@ -100,7 +101,7 @@ Response = ChoiceResponse | TextResponse
 
 @dataclass(frozen=True, slots=True)
 class AnswerSubmission:
-    question_id: str
+    question_id: int
     response: Response
 
 
@@ -132,7 +133,7 @@ class Evaluation:
     """Grading outcome. ``reveal`` is the sanctioned answer disclosure; its
     *release* is gated by attempt/terminal state at the delivery layer."""
 
-    question_id: str
+    question_id: int
     status: Literal["graded", "pending"]
     correct: bool | None = None
     score: float | None = None
@@ -160,9 +161,8 @@ class PrepareDemand:
     Replaces the internal ``questions.base.QuestionDemand`` on the public surface.
     """
 
-    sense_id: str
+    sense_id: int
     difficulty_level: int
-    expected_count: int = 1
 
 
 @dataclass(frozen=True, slots=True)

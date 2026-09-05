@@ -98,6 +98,10 @@ class LexiconReader:
         skipped, so a caller tolerating missing senses needs no error handling."""
         return await self._lexicon.dictionary().senses(sense_ids)
 
+    async def word_id_for(self, sense_id: int) -> int | None:
+        """Return a sense's owning word id without loading its lexical content."""
+        return await self._lexicon.dictionary().word_id_for(sense_id)
+
     async def get_status(self, word_id: int) -> str | None:
         """Status of a word (``done`` | ``pending`` | ``error``), or ``None`` when
         no such id exists."""
