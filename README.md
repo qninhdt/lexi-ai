@@ -1,254 +1,231 @@
 # Lexi-AI
 
-A lazy-generation English learner's dictionary library. It synthesizes dictionary
-entries with an LLM **on demand**, anchored to Cambridge and WordNet for
-hallucination control, and caches results in a local database so repeat lookups
-cost zero tokens.
-
-## Features
-
-- **Lazy lookup** — the first lookup of a word spends tokens to synthesize a full
-  entry (senses, examples, CEFR levels, aliases, related words); every lookup
-  after is a free cache hit. Surface variants (case, diacritics, US/UK spelling,
-  `{sb}`/`{sth}` placeholders) fold to one entry via a single normalization key.
-- **Selective anchoring** — senses (definitions + examples) are synthesized from
-  Cambridge + WordNet anchors, never copied, to keep the LLM honest; IPA
-  pronunciation is hard-anchored from Cambridge (per POS); semantic relations are
-  LLM-generated, not anchored.
-- **Pronunciation** — each sense carries per-POS IPA (`ipa_uk` / `ipa_us`),
-  anchored from Cambridge and surfaced on `SenseView`.
-- **Word enrichment** — each entry carries learner-dictionary labels (guideword,
-  grammar, register, connotation, collocations, domain, usage note) and
-  word-reference links (word-family, confused-with, hypernym, hyponym), all emitted
-  in the same LLM call.
-- **Inflection forms** — each sense carries its complete grammatical paradigm
-  (`run` → ran/running/runs; `good` → better/best), emitted per POS by the LLM and
-  surfaced on `SenseView.forms`. Example sentences tag the target word with its
-  inflection (`<t inf="past">glistened</t>`) for display highlighting and cloze
-  blanking; `parse_marked_example`/`strip_markup` read the tags.
-- **Topic tags & semantic search** — browse words by open-vocabulary topic tags,
-  or rank senses by meaning with local embeddings and a vector index (optional
-  extras). Vectors live outside the primary database and are reconciled by
-  `backfill_embeddings`. Generation never fails over a missing vector, but
-  `semantic_search` raises if the encoder or index is broken rather than
-  answering "no match".
-- **Themes** — restyle an entry's definitions and examples in a named voice
-  ("Harry Potter", "humorous") authored via `create_theme`. Themed content
-  overlays the neutral entry (the canonical `match_key` invariant is untouched)
-  and is generated once after the neutral content, then cached — the app picks
-  one active theme like a light/dark-mode switch.
-- **Cached assets** — reference-addressed cache for derived content: **translation**
-  (real, LLM-backed) and **text-to-speech** (real, OpenAI-compatible). Identity is
-  the source reference `(source_kind, source_id, kind, params)`, plus a stored
-  `content_hash` verified on read — so a regenerated or reused source yields a clean
-  miss (never stale content), and a repeat call spends zero tokens.
-- **Question engine** — prepare, retrieve, and evaluate persisted vocabulary
-  questions through five registered types. Plugin identity (`type_id`) is separate
-   from the UI contract (`render_kind`); level 0 is exposure and levels 1–4 are
-  assessments. Preparation is best-effort, retrieval is exact and never generates,
-  and evaluation reports `graded` or `pending`.
-- **Portable storage** — one schema runs on both SQLite and Postgres (portable
-  column types only, no JSONB/ARRAY/native enum).
+An on-demand English learner's dictionary **Python library**. Search the read-only
+Cambridge SQLite snapshot for available entries, generate one selected Word into a
+separate database, and reuse stored content on later reads. The public import is
+`from lexi_ai import Lexicon`. The previous implementation is archived under
+`archive/v1/`; there are no compatibility imports or aliases.
 
 ## Install
 
-This project uses [uv](https://docs.astral.sh/uv/) for environment and dependency
-management.
+The active package requires **Python 3.14+**. Development and CI pin **CPython
+3.14.7** in `.python-version`; Python alpha/beta/release-candidate builds are not
+selected. Runtime/dev dependencies are resolved in `uv.lock`, and the build
+backend uses `uv_build` 0.12.21 or a compatible 0.12 patch.
 
 ```bash
-uv sync                      # create .venv and install runtime + dev deps
-uv sync --extra embeddings --extra lancedb   # optional: semantic search
+uv python install 3.14.7
+uv sync --locked            # PostgreSQL/SQLite drivers, provider SDKs and dev tools
 ```
 
-### Semantic search is opt-in
+Use uv **0.12.21+** for the current Python download catalog. If an older local uv
+cannot download the pinned interpreter, run
+`uv tool run --from uv==0.12.21 uv python install 3.14.7` without replacing the
+system-wide uv binary. This upgrade does not change the system Python or archive.
 
-Everything above works on a plain `uv sync`. Ranking senses by meaning is a
-separate feature, **off by default**, because it costs two heavy optional
-dependencies (an encoder, ~200MB, and a vector index, ~300MB) that most callers
-never want. Turn it on with both halves:
+The Cambridge SQLite snapshot is `data/cambridge.db`, tracked through Git LFS and
+opened read-only. After cloning, install Git LFS and run `git lfs pull` if the file
+was not downloaded automatically. Do not use an LFS pointer as a SQLite database.
+Never run migrations against this snapshot. Generated dictionary DBs remain ignored.
+Production generated dictionaries use PostgreSQL with `pg_trgm`. Apply Alembic migrations using
+`lexi_ai/alembic.ini` from the installed package and a generated-database URL;
+Pass `db_schema="my_schema"` to `Lexicon` for an existing non-default PostgreSQL
+schema, and set Alembic's `db_schema` option to the same name for migrations. For tests,
+`from lexi_ai.schema import Base; await lexicon.db.create_schema(Base.metadata)` creates
+a fresh generated database directly. The migration role needs permission to install
+`pg_trgm` if it is absent. The sole active revision is `20260930_base`, a fresh-schema
+baseline with frozen table definitions and domain index/trigger installation.
+It refuses to bootstrap over existing tables. Previous migration histories are no
+longer supported; **do not run `upgrade head` on an existing older dictionary**.
+Back up first, compare its schema/indexes/triggers with this baseline, and perform any
+required conversion explicitly. Only after verified parity may an operator replace
+the old version stamp (`stamp --purge head`); stamping does not convert tables, repair
+data or install triggers. No database reset, migration or stamping happens automatically.
+SQLite generated databases are lexical-only development/test stores:
+exact/prefix/pattern search is supported, fuzzy suggestions are not.
+The baseline runs online; offline SQL export is not supported.
 
-```bash
-uv sync --extra embeddings --extra lancedb   # encoder + durable index
-export LEXI_VECTOR_BACKEND=lancedb           # default is "none"
-```
-
-While it is off, generation and lexical search behave normally and simply store no
-vectors. `semantic_search()` and `backfill_embeddings()` raise
-`SemanticSearchDisabled` — they never return an empty result, because "the feature
-is off" must not be readable as "this word is not in the dictionary". Selecting a
-backend whose extra is missing fails immediately when the `Lexicon` is built, with
-the install command in the message.
-
-To degrade gracefully, catch the one base class:
+Example one-time migration (pass the URL of the **generated** DB, not
+Cambridge; create a named PostgreSQL schema first if using one):
 
 ```python
-from lexi_ai.domain.errors import SemanticSearchUnavailable
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
+import lexi_ai
+
+cfg = Config(str(Path(lexi_ai.__file__).parent / "alembic.ini"))
+db_url = "postgresql+asyncpg://user:password@localhost/lexicon"
+cfg.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
+# cfg.set_main_option("db_schema", "my_schema")  # optional existing schema
+command.upgrade(cfg, "head")
+```
+
+## Use
+
+See [examples/README.md](examples/README.md) for eight standalone public API examples.
+
+```python
+from lexi_ai import DecisionConfig, Lexicon, LLMConfig
+
+lexicon = Lexicon(
+    "postgresql+asyncpg://user:password@localhost/lexicon",
+    "data/cambridge.db",
+    llm_config=LLMConfig(
+        api_key="your-llm-key", base_url="https://api.openai.com/v1", model="gpt-4o",
+    ),
+    decision_config=DecisionConfig(
+        threshold=0.8, api_key="your-decision-key",
+        base_url="https://api.typesafe.ai", model="jev-latest",
+    ),
+    decision_fallback_model="gpt-4o",
+)
 try:
-    hits = await reader.semantic_search(query)
-except SemanticSearchUnavailable:
-    hits = await reader.search(query)   # fall back to lexical, knowingly
+    matches = await lexicon.search("bank", include_available=True)
+    for hit in matches.available:
+        print(hit.available_id, hit.display)
+    # Only selected, requestable handles trigger generation; reads never generate.
+    available_id = input("Selected Cambridge available_id: ")
+    word = await lexicon.generate(available_id, example_count=3)
+    neutral = await lexicon.get_word(word.id)
+
+    theme = await lexicon.create_theme("pirate", "Pirate", "A nautical speaking voice")
+    themed = await lexicon.generate(available_id, theme=theme.key, example_count=5)
+    questions = await lexicon.generate_questions(
+        themed.senses[0].id, "definition_to_word", 2,
+        distractor_count=3, theme=theme.key,
+    )
+    # Question objects include the answer. Keep them on a trusted server;
+    # present only prompt text and opaque choice IDs to the learner.
+    submitted_option_id = input("Option ID returned by your learner-facing UI: ")
+    grade = await lexicon.grade_answer(questions[0].id, "single_choice", submitted_option_id)
+    links = await lexicon.resolve_relations()  # explicit; never run by get_word()
+    translated = await lexicon.translate_text("bank", "vi")  # same text/language is cached
+finally:
+    await lexicon.close()
 ```
 
-## Usage
+The caller owns retries, concurrency, and learner progress; the library does not
+schedule or batch calls across requests. `theme=None` is neutral. Themed content
+and questions are separate exact namespaces, not overlays or fallback reads.
+Each Sense has one `definition` per namespace; only example counts are configurable
+(the `generate(..., example_count=5)` default is five per Sense). Definition and Example
+remain relational rows, not stored Word JSON. A call that creates both neutral and
+themed content uses its count for both; generate neutral first if different counts
+are needed for the themed namespace. Counts are positive integers, not constructor settings.
+Stored themed content is reused on
+subsequent requests even if the caller changes the desired counts.
 
-```python
-import asyncio
-from lexi_ai import Lexicon
+`DecisionConfig.threshold` is **one configurable inclusive boundary** for decision-model
+yes-probabilities and Choice confidence. Lower-confidence Choices
+fall back through the official System One adapter when a fallback model is set;
+`grade_answer` uses the same threshold for decision-model booleans. Pass credentials,
+base URL and model through `DecisionConfig` / `LLMConfig`. Decision fallback uses
+the LLM key/base URL with the separately selected `decision_fallback_model`.
 
-async def main():
-    # One graph, two facades over it. The reader can only read; the engine is the
-    # only object that can change a row or spend a model call. A read-only process
-    # takes just the reader and cannot generate by accident.
-    #
-    # Build the graph once: it owns the database engine and the process-scoped
-    # locks that make one word generate exactly once.
-    lex = Lexicon.from_settings()   # reads LEXI_* env / .env
-    read, work = lex.reader(), lex.engine()
-    await work.init()
+Grading uses domain-owned JSON-e templates and returns separate diagnostics:
 
-    # Search (free) → generate (spends tokens once) → cached thereafter.
-    results = await read.search("serendipity")
-    entry = await work.generate(results[0])
-    print(entry.display, entry.senses[0].definition)
+See [the implemented Decision design](docs/decision/README.md) for stage gates,
+output contracts, relation direction and fallback behavior.
 
-    # Question engine: inspect capabilities, prepare persisted assessments,
-    # retrieve one exact question, then evaluate a learner submission.
-    from lexi_ai import AnswerSubmission, ChoiceResponse, PrepareDemand
+- Choice/single-word: `task_fit`, `spelling_error`, `sense_id`. Task fit and spelling
+  are independent. Only a fit answer without spelling error searches the top-ranked
+  Word and selects from **all** its Senses; missing mapping does not change correctness.
+  Saved option IDs and exact saved single-word answers avoid provider calls.
+- Definition: `sense_id`, `accuracy`, `coverage`. Resolve the intended owner-Word
+  Sense first, then judge accuracy/coverage; no identified Sense yields null diagnostics.
+- Usage: `used`, `meaning`, `form`, `construction`, `collocation`, `appropriacy`.
+  If unused, diagnostics are null; otherwise judge them separately against the saved
+  meaning anchor.
 
-    question_types = work.question_types()
-    sense_id = entry.senses[0].sense_id
-    report = await work.prepare_questions(
-        entry.word_id,
-        [PrepareDemand(sense_id=sense_id, difficulty_level=1)],
-    )
-    question = await read.retrieve_question(
-        sense_id,
-        difficulty_level=1,
-        excluded_ids=frozenset(),
-        type_id="definition_mcq",
-    )
-    if question is not None:
-        # The presentation has no answer key; grading discloses it in the result.
-        evaluation = await work.evaluate_answer(
-            int(question.question_id),
-            AnswerSubmission(
-                question_id=question.question_id,
-                response=ChoiceResponse(selected_index=0),
-            ),
-        )
-        print(question.type_id, question.render, evaluation.status)
+Relation resolution considers **all** same-POS target Senses and requires both target
+gloss compatibility and directional source-relation validity. Incomplete evidence or
+provider limits return per-edge errors, not truncated inventories or negative decisions.
 
-    # Themes: author a voice once (LLM-expanded if description/tone are omitted,
-    # generated in-line the first time a word is fetched under it), read the overlay.
-    theme = await work.create_theme("Pirate", "narrate like a salty pirate")
-    themed = await work.generate(results[0], theme=theme.key)
-    print(themed.senses[0].definition)                   # restyled definition
+The library and migration runner never read `.env` or environment variables.
+`Lexicon.from_settings()` and `ContentCounts` have been removed; there are no aliases.
+Missing credentials raise an error only when a provider is actually needed, rather
+than falling back to SDK environment configuration. Provider defaults are explicit:
+LLM `gpt-4o` at `https://api.openai.com/v1`, Decision `jev-latest` at
+`https://api.typesafe.ai`. Injected providers remain supported and caller-owned.
+Only examples load `.env`, using the `LLM_*` and `DECISION_*` groups; DB/source/schema,
+threshold and per-generation counts are CLI parameters, not `.env` settings.
 
-    # Cached assets (reference-addressed by sense id): a repeat call is free.
-    print(await work.translate_sense(sense_id, "vi"))     # real, LLM-backed
-    # TTS is real when LEXI_TTS_* is configured (OpenAI-compatible /audio/speech);
-    # unconfigured, the stub raises rather than caching fake audio.
-    clip = await work.tts_sense(sense_id)                # Asset (file_path to the clip)
+Question types: `definition_to_word`, `context_to_word`, `cloze_to_word`,
+`word_to_definition`, `word_to_usage`, `dialogue_completion`,
+`meaning_in_context`. `dialogue_completion` accepts `target_placement="dialogue"`
+or `target_placement="options"`. For `definition_to_word`, `word_to_definition`,
+and `context_to_word`, the correct option is attached from trusted Word/Sense data;
+the model supplies only task content where needed, an explanation, and distractors.
+Every artifact is saved once and supports its documented
+response formats; `retrieve_question` reads only stored artifacts. There is no
+TTS, automatic source generation, hidden learner/mastery state, or compatibility
+with the archived implementation or former package API.
 
-asyncio.run(main())
-```
+Full Word/Sense reads aggregate independent relational children in one statement.
+Generation loads only the selected Sense; grading projects only candidate meanings.
+Question-only dense slots support uniform random retrieval with an indexed maximum
+and indexed slot lookup, without `COUNT(*)` or loading the bank. SQL triggers maintain
+both namespace-wide and type-scoped slots on inserts, deletes, and scope changes.
+Explicit scope ordering lets neutral banks reuse the slot indexes for maximum lookup.
+Sense Linking pages reuse candidates per distinct target/POS; readers transfer neutral target
+evidence once per distinct target. Pattern pages remain bounded to 200 patterns and
+load forms once per distinct Sense in that page. These are query-time projections,
+not persistent caches or materialized documents.
 
-`Lexicon` is the composition root: it wires the object graph and hands out
-`reader()`/`engine()`, but exposes no use case of its own. Build it once per process
-— it owns the database engine and the locks that collapse duplicate generation, so a
-second instance would silently undo both.
+For bounded list reads use `list_questions(..., limit=100, after_id=last_id)` or
+`list_translations(limit=100, after_id=last_id)`. Theme lists retain key ordering:
+`list_themes(limit=100, after_key=last_key)`. Limits are 1–500; omitting `limit`
+preserves the existing list-all behavior. Cursors are exclusive, with no OFFSET.
 
-Configuration is env-driven (prefix `LEXI_`): `LLM_BASE_URL`, `LLM_API_KEY`,
-`LLM_MODEL`, `DB_URL`, `CAMBRIDGE_DB_PATH`. Copy `examples/.env.example` to `.env`
-to get started. `LEXI_LLM_MODEL` overrides the Settings default
-`gpt-4o-mini`.
+`translate_text` validates and removes target-expression tags before sending text
+to the model. Its cache uses the exact unwrapped text and target language: tagged
+and plain versions share a cache entry; whitespace remains significant.
 
-Asset and theme knobs (all `LEXI_`-prefixed):
+## Search
 
-- `ASSET_CACHE_DIR` — where TTS clips are written (default `./lexi-assets`);
-  translation results live in the DB.
-- `VECTOR_BACKEND` — `none` (default/off), `lancedb` (durable, on disk), or `memory`
-  (non-durable, in-process). `VECTOR_PATH` is the LanceDB store directory
-  (default `./lexi-vectors`); `VECTOR_METRIC` defaults to `cosine`.
-- `TRANSLATE_MODEL` — optional per-task model override for translation; falls
-  back to `LLM_MODEL` when empty.
-- `TTS_BASE_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `TTS_FORMAT` — the
-  OpenAI-compatible TTS provider. When a key is set, `TTS_BASE_URL` must be
-  `https://` (or a loopback host) so the key is never sent in cleartext. Leave
-  them unset and TTS falls back to a stub that raises rather than caching fake
-  audio.
+Normalized lemma, alias and Sense-form keys use B-tree exact/prefix indexes and
+three PostgreSQL GIN trigram indexes. Results prioritize exact lemma, alias, form,
+licensed pattern, prefix, then fuzzy suggestions, with one best hit per Word and
+at most 30 results. PostgreSQL filters fuzzy matches with `%` at threshold `0.3`,
+scores with `similarity()`, and deduplicates before limiting results. There is no
+Python fuzzy matching, arbitrary raw-candidate cap, GiST KNN or SQLite fuzzy
+fallback. Queries of 1–2 normalized characters use exact/prefix only.
 
-Failed binary writes can leave an unreferenced file because the content-addressed
-path may be shared by a concurrent writer. Run `await engine.sweep_asset_orphans()`
-from maintenance with its default one-hour grace period; pass
-`min_age_seconds=0` only for a controlled cleanup where no writes are active.
+Trigram similarity is not edit distance or semantic equivalence and can miss
+short-word typos. Pattern matching is a separate bounded, Sense-scoped operation.
+GIN cost depends on candidate selectivity; `LIMIT 30` does not promise that only
+30 index matches are processed. Available Cambridge results remain separate.
 
-### Managing & batch
+`inference/` contains shared model infrastructure, not domain use cases.
+Question/Word generation and schemas stay in `questions/` and `words/`;
+Theme and translation logic stay in `themes/` and `translation/`.
 
-Every resource has get/list/delete alongside create — `get_theme`/`update_theme`/
-`delete_theme`, `delete_entry`/`list_entries`/`list_entries_by_tag`,
-`rename_tag`/`delete_tag`/`merge_tags`, `get_asset`/`list_assets`/`delete_asset`/
-`purge_assets`/`sweep_asset_orphans`. Bulk variants (`generate_many`, `get_many`, `translate_many`,
-`tts_many`, `get_status_many`) run concurrently and return a
-`list[BatchResult]` — one entry per input, in order; a failed item never aborts
-the rest (check `result.ok` / `result.value` / `result.error`). Question work uses
-`prepare_questions`; persisted assessments are selected with `retrieve_question`
-and evaluated with `evaluate_answer`.
+Packaged domain-owned Jinja prompts under `lexi_ai/*/prompts/` declare
+`{# system #}` followed by `{# user #}`. The
+renderer splits those sections before interpolation, keeping reference/user
+content out of the system role.
 
-`add_examples(sense_id, n=3, theme=None)` appends up to `n` fresh example
-sentences to a single sense (neutral, or a themed overlay when `theme=` is set —
-the word must already be themed) and returns the updated `SenseView`; it never
-overwrites existing examples and never re-embeds. `stats()` returns read-only
-dictionary counts (words by status, senses, examples, tags, themes, themed
-words, assets by kind, questions).
-
-### Question types
-
-`question_types()` returns the registered capability descriptors. `type_id`
-selects generation/evaluation behavior; `render_format` selects the UI payload
-contract, so multiple types can share one renderer. Difficulty is explicit:
-level 0 is non-assessable exposure and levels 1–4 are assessments.
-
-| Type ID | Render format | Levels | Mode |
-|---------|---------------|--------|------|
-| `flashcard` | `flashcard` | 0 | exposure |
-| `definition_mcq` | `single_choice` | 1 | assessment |
-| `contextual_mcq` | `single_choice` | 1–2 | assessment |
-| `cloze` | `text_span` | 2–3 | assessment |
-| `use_in_sentence` | `free_text` | 3–4 | assessment |
-
-`prepare_questions(word_id, demands)` best-effort creates persisted assessments
-and returns produced counts by `(sense_id, difficulty_level)`.
-`retrieve_question(...)` performs exact type/level selection, excludes supplied
-question IDs, and never generates or falls back. `retrieve_exposure(sense_id)`
-builds the level-0 flashcard. `evaluate_answer(question_id, answer)` returns an
-`Evaluation` with status `graded` or `pending`; exposure cards are not assessable.
-
-The package currently registers five question types: `flashcard`,
-`definition_mcq`, `contextual_mcq`, `cloze`, and `use_in_sentence`.
-
-## Examples
-
-Runnable end-to-end trials live in [`examples/`](examples/README.md) (they hit a
-live LLM on first run). For instance:
+## Verify
 
 ```bash
-uv run python examples/01_lookup_word.py serendipity
-uv run python examples/12_question_engine.py eloquent
+uv run pytest -q tests
+uv run ruff check lexi_ai tests
+uv run lint-imports
+uv build
 ```
 
-## Development
+`LEXI_TEST_PG_URL` opts into disposable PostgreSQL search, migration and concurrency
+checks. They are skipped without an explicit disposable URL; `LEXI_REQUIRE_PG=1`
+makes its absence an error in CI. See [the technical design](docs/lexi-ai-technical-design.md)
+for the current domain contract. The old code/tests/examples are preserved under `archive/v1/` and are
+excluded from packaging and the active test suite.
 
-```bash
-uv run pytest             # full test suite (no live LLM — fake runnables)
-uv run ruff check .       # lint
-uv run ruff format .      # format
-```
-
-The suite is hermetic: no network, no live LLM calls. See
-[`docs/system-architecture.md`](docs/system-architecture.md) for the design.
-
-## License
-
-[MIT](LICENSE)
+For the reproducible 100,000-Word retrieval probe, set the same disposable URL and
+run `uv run python tests/benchmark_postgres_search.py --source /path/to/cambridge.db
+--output /tmp/opencode/lexi-search-benchmark.json`. The probe creates and removes
+an isolated schema and reports latency, index usage, buffers, and actual query plans;
+it is evidence for this environment, not a production latency SLO.
+See [search verification](docs/search-verification.md) for measured results,
+planner observations, and the limits of the corpus probe.

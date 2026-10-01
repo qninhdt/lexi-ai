@@ -1,183 +1,225 @@
-# Lexi-AI — live API trials
+# Public API examples
 
-Runnable trials that exercise `lexi_ai` end-to-end against a real
-OpenAI-compatible LLM. Each script hits the live API on the **first** creation of a
-word and reads from the local cache afterward.
+Eight independent scripts using `Lexicon`. No shared runner, fake providers,
+automatic migrations, database resets or deletion routines. Run from the repository
+root with Python 3.14+ and installed project dependencies.
 
-## Setup
+These examples have been authored but **not executed against a database or provider**.
+
+## Configuration
+
+Use a separate generated dictionary database whose schema is already initialized.
+The Cambridge snapshot is read-only and must never be the generated database.
+See the root [README](../README.md#install) for setup and existing-database cautions.
+SQLite supports lexical development reads; PostgreSQL is required for fuzzy search.
+
+Copy `examples/.env.example` to `examples/.env` and fill in provider credentials.
+Only two groups of variables are allowed in that file:
+
+```dotenv
+LLM_API_KEY=your-llm-key
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o
+
+DECISION_API_KEY=your-decision-key
+DECISION_BASE_URL=https://api.typesafe.ai
+DECISION_MODEL=jev-latest
+DECISION_FALLBACK_MODEL=gpt-4o
+```
+
+`DECISION_FALLBACK_MODEL` is optional; leave it blank to disable fallback. Fallback
+uses the **LLM key/base URL**, not the Decision credentials. The tiny `_config.py`
+helper belongs only to examples and passes these settings explicitly to `Lexicon`.
+It does not mutate the process environment or expand `${VARIABLE}` strings. Explicit
+`LLM_*` / `DECISION_*` process variables override the example file. Legacy provider
+env names and root/parent `.env` files are not used. `--env-file` selects another
+explicit file; unsupported variables in that file are rejected.
+
+DB/source/schema, threshold, content counts and IDs are parameters, **not `.env`
+settings**. All scripts require `--db-url`; `--cambridge-path` defaults to the project's
+independent `data/cambridge.db` copy. `--db-schema` is optional, `--threshold` defaults to
+0.8. Generation scripts accept `--example-count` (default 3 per Sense). Use a Bash
+array for repeated CLI arguments without creating any database environment settings:
 
 ```bash
-cp examples/.env.example .env          # from the repo root; .env is gitignored
-uv sync                                # install deps (once)
+DB_ARGS=(--db-url 'postgresql+asyncpg://user:password@localhost/lexicon' \
+  --cambridge-path data/cambridge.db --threshold 0.8)
 ```
 
-The trials read all config from `.env` via the `LEXI_` env prefix. Set
-`LEXI_LLM_MODEL` to override the Settings default. Defaults in `.env.example`:
+The generated database must already be initialized; this array does not create it.
+Provider clients are lazy; stored reads, saved option grading
+and exact saved single-word answers make no provider requests. Generation, Theme
+creation, uncached translation, other free-text grading and eligible Sense Linking
+can send data to providers and incur charges. Model judgments are observations, not
+assertions about guaranteed semantic outcomes.
 
-| Var | Meaning |
-|-----|---------|
-| `LEXI_LLM_BASE_URL` | proxy endpoint |
-| `LEXI_LLM_API_KEY` | key |
-| `LEXI_LLM_MODEL` | model id — never hardcoded; see `.env.example` |
-| `LEXI_LLM_TEMPERATURE` | sampling temperature |
-| `LEXI_LLM_REASONING_EFFORT` | `minimal`/`low`/`medium`/`high` (read by `_common.py`) |
-| `LEXI_DB_URL` | generated-dictionary cache (SQLite) |
-| `LEXI_CAMBRIDGE_DB_PATH` | read-only Cambridge source (`./data`) |
-
-Run every script **from the repo root** so `.env` and `./data` resolve.
-
-## Public API (two facades)
-
-A raw string is ambiguous (one string → many Cambridge words, or a typo), so you
-never create an entry from it directly. The flow is **search → pick → generate**,
-and it is split across two facades: `reader()` can only read and never spends
-money, `engine()` is everything that may generate or write.
-
-```python
-lex     = Lexicon.from_settings()          # the only entry point
-results = await lex.reader().search("serendipity")   # FREE — ranked matches
-entry   = await lex.engine().generate(results[0])    # create-or-return the pick
-```
-
-| Method | Facade | Cost | Purpose |
-|--------|--------|------|---------|
-| `search(query) -> list[SearchResult]` | reader | FREE | ranked matches, generated hits folded into suggestions |
-| `semantic_search(query, k) -> list[SemanticHit]` | reader | FREE | rank by meaning; opt-in feature, raises when off |
-| `get_entry(word_id, theme=None) -> Entry` | reader | FREE | one entry, optionally themed |
-| `get_many(...) -> list[Entry]` | reader | FREE | batched reads |
-| `get_status(word_id) -> str \| None` | reader | FREE | `done`/`pending`/`error`/`None` |
-| `generate(result) -> Entry` | engine | may generate | create-or-return the chosen search result |
-| `generate_many(results) -> ...` | engine | may generate | concurrent, order-preserving, dedups |
-| `add_examples(sense_id, n, theme)` | engine | generates | more tagged examples for one sense |
-| `backfill_embeddings(limit=None) -> int` | engine | FREE (local) | reconcile the vector index; raises when the feature is off |
-| `delete_entry(word_id) -> bool` | engine | FREE | remove an entry and forget its vectors |
-
-The demos 01–07 use a `lookup(lex, raw)` helper in `_common.py` that wraps
-"search then generate the top match" to stay short; **08 shows the real two-step
-flow.**
-
-## Trials
-
-| Script | Shows |
-|--------|-------|
-| `01_lookup_word.py [word]` | full lookup; 1st = generate, 2nd = free cache hit |
-| `02_alias_resolution.py [canonical] [variant]` | US/UK variants collapse to one entry (`color`/`colour`) |
-| `03_placeholder_lookup.py "[phrase]"` | idioms normalize to `{sb}`/`{sth}` tokens; variant phrasings share a key |
-| `04_concurrent_lookups.py [word] [n]` | N simultaneous misses generate exactly once (per-key lock) |
-| `05_related_graph.py [word]` | related words persist as `pending` stubs, generated on demand |
-| `06_interactive_repl.py` | type words by hand; watch them cache |
-| `07_inspect_matching.py [word]` | how a string maps to Cambridge + WordNet anchors |
-| `08_resolve_and_pick.py [query]` | the real `search → pick → generate` flow |
-| `09_semantic_search.py` | rank generated senses by **meaning** via local embeddings (`semantic_search`, `backfill_embeddings`) |
-| `10_topic_tags.py` | open-vocabulary **topic tags** per word; browse via `list_tags` / `list_entries_by_tag` |
-| `11_word_enrichment.py [word]` | learner-dictionary **enrichments**: guideword, grammar, register, connotation, collocations + word-family / confused-with links |
-| `12_question_engine.py [word]` | **question engine**: prepare, retrieve, and grade five registered types |
-| `13_resolve_relations.py [source] [target]` | resolve pending sense relations with the WSD judge |
+## 01 — Dictionary
 
 ```bash
-uv run python examples/08_resolve_and_pick.py serendipity
-uv run python examples/01_lookup_word.py serendipity
-uv run python examples/02_alias_resolution.py color colour
-uv run python examples/03_placeholder_lookup.py "look after somebody"
-uv run python examples/04_concurrent_lookups.py ephemeral 5
-uv run python examples/05_related_graph.py happy
-uv run python examples/07_inspect_matching.py happy
-uv run python examples/06_interactive_repl.py
+uv run python examples/01_dictionary.py "${DB_ARGS[@]}" bank
 ```
 
-## Semantic search (example 09)
-
-Ranking generated senses by **meaning** needs sense embeddings, computed locally
-by a `transformers` model (the chat proxy has no embeddings endpoint). Install the
-optional extra once, then run:
+Inspect `words` and `available` separately. Select an `available_id` explicitly;
+do not treat the first match as automatically correct. Set the following shell
+variables to values you actually selected/read, not the literal placeholders:
 
 ```bash
-uv sync --extra embeddings --extra lancedb    # encoder (~200MB) + index (~300MB)
-export LEXI_VECTOR_BACKEND=lancedb            # the feature is off by default
-uv run python examples/09_semantic_search.py  # weights (~90MB) download on first run
+AVAILABLE_ID='selected-available-id'
+uv run python examples/01_dictionary.py "${DB_ARGS[@]}" bank \
+  --available-id "$AVAILABLE_ID" --example-count 3
+WORD_ID='generated-word-id'
+SENSE_ID='chosen-sense-id'
+uv run python examples/01_dictionary.py "${DB_ARGS[@]}" bank --word-id "$WORD_ID"
 ```
 
-Semantic search is **off by default** — example 09 needs `LEXI_VECTOR_BACKEND`
-set and both extras installed. Embeddings stay **best-effort on the write path**:
-with the feature off (or the extra absent) generation still works and simply stores
-no vector. Reading is not best-effort: `semantic_search` raises a
-`SemanticSearchUnavailable` subclass instead of answering `[]` for a search it could
-not run, so an empty list always means "nothing matched". Once enabled,
-`backfill_embeddings()` vectorizes any senses generated earlier. Tune via
-`LEXI_EMBEDDING_*` in `.env`.
+Generation saves/reuses neutral content; subsequent Word/Sense reads do not generate.
+Output includes singular definitions, examples, forms, patterns and relations.
 
-## Topic tags (example 10)
-
-Every generated word gets 1-3 broad **topic tags** the LLM invents (no predefined
-list). Consistency is enforced without embeddings: the full existing tag vocab is
-injected into each prompt for reuse, a deterministic `tag_key` dedups case/plural
-variants (`Cars`/`car`/`CAR` → one tag), and resolve-or-create keeps one row per
-tag. Each tag has a short `name` and a human `title` (set once, first-seen wins).
+## 02 — Themes
 
 ```bash
-uv run python examples/10_topic_tags.py
+uv run python examples/02_themes.py "${DB_ARGS[@]}" "$AVAILABLE_ID" \
+  --theme pirate --name Pirate --concept 'A nautical speaking voice'
+uv run python examples/02_themes.py "${DB_ARGS[@]}" "$AVAILABLE_ID" --theme pirate
+# Optional metadata mutation, not a rewrite of stored content:
+uv run python examples/02_themes.py "${DB_ARGS[@]}" "$AVAILABLE_ID" \
+  --theme pirate --update-name 'Pirate voice'
 ```
 
-Browse is FREE (no LLM): `list_tags()` enumerates every topic with its live member
-count; `list_entries_by_tag("business")` returns the generated words carrying it
-(resolved via `tag_key`, so `"Business"` and `"business"` hit the same tag).
+Creates the Theme only if absent, then generates/reuses its exact Word namespace.
+Neutral and themed content are displayed separately. Missing themed content does
+not fall back to neutral. Existing Theme metadata is reused unless explicitly updated.
+`--example-count 5` requests five examples per newly generated Sense. If neutral and
+themed content are both new in one call, both get that count; generate neutral first
+in example 01 to use a different count for it. Changed counts never rewrite saved content.
 
-## Word enrichment (example 11)
-
-Every generated word carries seven learner-dictionary **enrichments**, emitted in
-the same LLM call as its senses (no extra requests) and anchored to
-Cambridge/WordNet — the model **synthesizes** them, it does not copy the source.
-They split by one test — does the field NAME a lemma or LABEL this sense?
-
-- **word-references** (`word_family`, `confused_with`) NAME a lemma, so they are
-   **normalized** like synonyms: they ride `related[]` → `word_relation` and surface
-  in `entry.links` by `rel_type`, deduped to one real `words` row per lemma
-  (`"Happiness"` and `"happiness"` fold to one).
-- **sense labels** LABEL this sense: `guideword` (homograph disambiguator),
-  `grammar` (0-3 closed-vocab labels), `register`, `connotation` — columns on
-  `senses`; `collocations` — a child table mirroring `examples`.
+## 03 — Questions
 
 ```bash
-uv run python examples/11_word_enrichment.py bank
+uv run python examples/03_questions.py "${DB_ARGS[@]}" "$SENSE_ID" definition_to_word --generate-count 2
+uv run python examples/03_questions.py "${DB_ARGS[@]}" "$SENSE_ID" definition_to_word
+uv run python examples/03_questions.py "${DB_ARGS[@]}" "$SENSE_ID" word_to_definition --generate-count 1
+uv run python examples/03_questions.py "${DB_ARGS[@]}" "$SENSE_ID" word_to_usage --generate-count 1
+uv run python examples/03_questions.py "${DB_ARGS[@]}" "$SENSE_ID" dialogue_completion \
+  --generate-count 1 --target-placement dialogue
+uv run python examples/03_questions.py "${DB_ARGS[@]}" "$SENSE_ID" dialogue_completion \
+  --generate-count 1 --target-placement options
 ```
 
-All fields are best-effort: a sense the model leaves unmarked still persists
-`done`, with empty/`None` enrichments.
+All seven types are supported: `definition_to_word`, `context_to_word`, `cloze_to_word`,
+`word_to_definition`, `word_to_usage`, `dialogue_completion`, `meaning_in_context`.
+Use `--theme pirate` only after generating that Word's themed namespace.
+`--generate-count` appends new artifacts **on every invocation**, not a cache lookup.
+Without it, the script only lists/gets/retrieves saved Questions. `--limit` and
+`--after-id` page the list; random retrieval samples the whole selected bank, not
+only that page. Note the printed Question IDs for examples 04–06.
 
-## Question engine (example 12)
+The generation runtime uses two structured shapes: dictionary-anchored answers for
+Definition to Word, Word to Definition and Context to Word; model-authored answers
+for the remaining types. The public saved Question shape is the same for both.
 
-Turns a done word into vocabulary questions across five registered types and grades
-answers. Each type declares its render kind, interaction, supported levels, and
-evaluation path; the engine dispatches through that registry.
+**Full Question artifacts contain answers and explanations and are server-only.**
+The script displays shuffled choice IDs/content without correctness or explanations.
+For single-word/short-answer learner views, display only the prompt and Question ID,
+not the multiple-choice options. Do not forward full Question objects to learners.
 
-- `flashcard` (exposure) — show the word, definition, and example
-- `definition_mcq` (rule) — "which word means <definition>?"
-- `cloze` (rule) — fill the blank in a real example sentence
-- `contextual_mcq` (llm) — MCQ from a novel context; **persists** for reuse
-- `use_in_sentence` (rule prompt, **llm-graded** by a rubric)
+## 04 — Single-word grading
 
-`contextual_mcq` uses an LLM to generate and persists — a re-run lists it back at
-zero token cost. `use_in_sentence` uses an LLM only for rubric grading; the other
-assessment types are deterministic and ephemeral. Grading dispatches by type:
-MCQs grade by index/value, text spans use normalized forms, and free text is judged
-against a rubric.
+Choose a saved Definition/Context/Cloze to Word Question:
 
 ```bash
-uv run python examples/12_question_engine.py eloquent
+SINGLE_WORD_QUESTION_ID='chosen-question-id'
+uv run python examples/04_grade_single_word.py "${DB_ARGS[@]}" "$SINGLE_WORD_QUESTION_ID" \
+  --answer bank --answer bnka --answer chair
 ```
 
-Distractors are best-effort (semantic neighbours, then shared topic tags), so an
-MCQ degrades to fewer options rather than fabricating a wrong answer.
+Those sample words make sense only for a Question targeting `bank`; adapt them to
+your prompt. The trusted developer demo submits a saved correct option ID, a saved
+distractor ID and the exact saved word, all provider-free. Extra `--answer` samples
+use free-text grading unless they match the normalized saved answer.
+`task_fit`, `spelling_error` and dictionary `sense_id` are independent outputs.
+No combined correctness enum or learner mastery score is constructed.
 
-## Notes
+## 05 — Definition grading
 
-- **Cost:** only the first lookup of a given word spends tokens. Delete the cache
-  to start fresh: `rm -f examples-lexi.db*`.
-- **`search()` is FREE:** it ranks Cambridge and generated matches without an LLM
-  call. Generation happens only after the caller picks a result.
-- **Why `_common.py` rebuilds the generator:** the library's default
-  structured-output method (`json_schema`) is not strictly enforced by this
-  proxy, so `_common.py` uses `method="function_calling"` plus a
-  `reasoning_effort`. Model, key, URL, and temperature still come only from env.
-- **First run downloads nothing** — WordNet + Cambridge data are already local
-  (`~/nltk_data`, `./data`).
+Choose a saved `word_to_definition` Question. For a financial `bank` prompt:
+
+```bash
+DEFINITION_QUESTION_ID='chosen-question-id'
+uv run python examples/05_grade_definition.py "${DB_ARGS[@]}" "$DEFINITION_QUESTION_ID" \
+  --answer 'An institution that holds money and offers financial services.' \
+  --answer 'A place for money.' \
+  --answer 'An institution that stores money but never lends it.' \
+  --answer 'Something somewhere.'
+```
+
+Adapt the samples to the actual Word. The Decision first identifies the intended
+Sense from the owner Word's entire neutral inventory, then judges `accuracy` and
+`coverage`. The identified Sense need not be the original Question Sense. No
+identifiable Sense yields null diagnostics; it is not an accuracy verdict.
+
+## 06 — Usage grading
+
+Choose a saved `word_to_usage` Question. For the financial noun `bank`:
+
+```bash
+USAGE_QUESTION_ID='chosen-question-id'
+uv run python examples/06_grade_usage.py "${DB_ARGS[@]}" "$USAGE_QUESTION_ID" \
+  --answer 'I deposited my savings at the bank.' \
+  --answer 'I deposited my savings at the bnka.' \
+  --answer 'I bank my savings at yesterday.' \
+  --answer 'We sat on the river bank.' \
+  --answer 'We went home.'
+```
+
+Observe `used`, then `meaning`, `form`, `construction`, `collocation`, `appropriacy`.
+When `used=false`, all five diagnostics are null. Evaluation uses the Word/meaning
+anchor saved in the Question, not newly edited dictionary text. Samples intentionally
+include different meanings and errors; no exact model verdict is assumed.
+
+## 07 — Sense Linking
+
+```bash
+uv run python examples/07_sense_linking.py "${DB_ARGS[@]}" "$WORD_ID"
+# Select target handles from the printed Cambridge hits yourself:
+TARGET_AVAILABLE_ID='selected-target-available-id'
+uv run python examples/07_sense_linking.py "${DB_ARGS[@]}" "$WORD_ID" \
+  --target-entry "$TARGET_AVAILABLE_ID" --resolve --batch-size 20
+```
+
+Default behavior is inspection/search only. Repeated `--target-entry` explicitly
+generates selected targets. Generation alone never resolves relations.
+
+**`--resolve` processes a global eligible page, NOT just the supplied Word's edges.**
+`word_id` only selects which source relations to inspect before/after. Use an example
+database when you do not want other pending work processed. There is no hidden loop
+draining the queue and no invented source filter.
+
+Each candidate must satisfy target-gloss compatibility and directional relation
+validity. The operation includes every same-POS candidate, not a capped inventory.
+Per-edge results distinguish `resolved`, `unresolvable`, `error`, `noop`; stored
+`resolution_state` is `pending`, `resolved` or `unresolvable`. Failed edges stay
+pending; unavailable targets are deferred, not negative decisions. Concurrent edits
+can prevent applying stale evidence without erasing independent successful links.
+
+## 08 — Translation
+
+```bash
+uv run python examples/08_translation.py "${DB_ARGS[@]}" \
+  --text 'I went to the bank.' \
+  --tagged 'I went to the <t inf="base">bank</t>.' --language vi
+# Optional additional cache misses:
+uv run python examples/08_translation.py "${DB_ARGS[@]}" \
+  --text 'I went to the bank.' --whitespace-variant --other-language fr
+```
+
+The script translates twice to demonstrate reuse, optionally translates valid tagged
+text, and lists a bounded page of saved translations. Tagged/plain inputs share a
+cache entry only when their exact unwrapped text and language match. Whitespace
+remains significant; different target languages have separate keys. Equal translated
+wording is not proof of cache identity. `--translation-id` reads a saved record;
+`--after-id` pages the cache list. No deletion/purge is performed.
+
+Every script uses the variable `lexicon` and closes it in `finally`. Exceptions are left visible rather
+than disguised as successful negative semantic results. Retries, concurrency and
+learner progress belong to the consuming application.

@@ -1,0 +1,79 @@
+"""Phrase-overlap data-prep.
+
+Cambridge stores many multi-word units twice: as an inline ``phrase_title`` on a host word's sense
+AND (often) as a standalone ``words`` row. This prep classifies every distinct ``phrase_title`` by
+``match_key``:
+
+- overlap  (a standalone ``words`` row shares the key): link the host word to that unit as
+  ``part_of_phrasal_family`` — do not regenerate it.
+- orphan   (no standalone row): seed a ``pending`` stub so it enters the lazy generation queue.
+  Orphans are invisible to the candidate scan (which reads Cambridge ``words`` only), so this is
+  the only way they get generated.
+
+Generation itself stays lazy; this only seeds queue/link state, and is idempotent.
+"""
+
+from dataclasses import dataclass
+
+from lexi_ai.providers.references.cambridge import CambridgeSource
+from lexi_ai.text import match_key
+
+
+@dataclass
+class PhraseOverlapReport:
+    total: int = 0
+    overlap: int = 0
+    orphan: int = 0
+    stubs_seeded: int = 0
+    links_queued: int = 0
+
+
+class PhraseOverlapPrep:
+    def __init__(self, cambridge: CambridgeSource, uow_factory):
+        self._cambridge = cambridge
+        self._uow_factory = uow_factory
+
+    async def run(self, batch_size: int = 500) -> PhraseOverlapReport:
+        standalone = await self._cambridge.standalone_keys()
+        phrase_rows = await self._cambridge.phrase_titles()
+
+        report = PhraseOverlapReport()
+        # Dedup by match_key across phrase_titles (folding may merge variants).
+        seen: set[str] = set()
+        batch: list[tuple[str, str | None, str | None, bool]] = []
+
+        for phrase_title, host, host_type in phrase_rows:
+            key = match_key(phrase_title)
+            if key in seen:
+                continue
+            seen.add(key)
+            is_overlap = key in standalone
+            report.total += 1
+            if is_overlap:
+                report.overlap += 1
+                report.links_queued += 1
+            else:
+                report.orphan += 1
+                report.stubs_seeded += 1
+            batch.append((phrase_title, host, host_type, is_overlap))
+
+            if len(batch) >= batch_size:
+                await self._flush_batch(batch)
+                batch.clear()
+
+        if batch:
+            await self._flush_batch(batch)
+
+        return report
+
+    async def _flush_batch(self, batch: list[tuple[str, str | None, str | None, bool]]) -> None:
+        """Seed one batch of phrase units in a single transaction."""
+        async with self._uow_factory() as uow:
+            for phrase_title, host, host_type, is_overlap in batch:
+                await uow.words.seed_phrase_unit(
+                    phrase_title=phrase_title,
+                    host_display=host,
+                    entry_type=host_type,
+                    is_overlap=is_overlap,
+                )
+            await uow.commit()

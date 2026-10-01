@@ -1,0 +1,118 @@
+"""Conformance: the correct answer is never reachable on a presentation type.
+
+Uses a POSITIVE per-variant field allowlist (not just a name blocklist) so a
+renamed answer field cannot slip through, plus a name-heuristic as a second net.
+Also asserts the internal ``GradingSpec`` family never reaches the package root,
+which is the surface a consumer imports from.
+"""
+
+import dataclasses
+import importlib
+import typing
+
+from lexi_ai.questions import types as q
+
+# Every field a presentation type is ALLOWED to expose. Anything else fails.
+PRESENTATION_ALLOWLIST: dict[type, set[str]] = {
+ q.SingleChoice: {"stem", "options"},
+ q.TextSpan: {"stem_with_blank", "word_bank"},
+ q.FreeText: {"prompt"},
+ q.Flashcard: {"word", "definition", "pos", "example", "ipa_uk", "ipa_us"},
+ q.PresentedQuestion: {
+  "question_id",
+  "type_id",
+  "interaction",
+  "render_kind",
+  "difficulty_level",
+  "render",
+  "sense_id",
+  "word_id",
+ },
+}
+
+# Substrings that betray an answer key leaking onto a presentation type.
+_BANNED = ("correct", "answer", "rubric", "target", "is_correct", "accepted_forms", "reveal")
+
+
+def test_presentation_types_only_expose_allowlisted_fields():
+ for cls, allowed in PRESENTATION_ALLOWLIST.items():
+  names = {f.name for f in dataclasses.fields(cls)}
+  extra = names - allowed
+  assert not extra, f"{cls.__name__} exposes unexpected field(s): {sorted(extra)}"
+
+
+def test_every_render_contract_variant_is_allowlisted():
+ # A future render variant added to the union MUST get an allowlist entry,
+ # forcing an answer-safety review instead of silently going untested.
+ for variant in typing.get_args(q.RenderContract):
+  assert variant in PRESENTATION_ALLOWLIST, (
+   f"RenderContract variant {variant.__name__} has no allowlist entry — "
+   f"add one and confirm it exposes no answer"
+  )
+
+
+def test_no_grading_field_names_on_presentation_types():
+ for cls in PRESENTATION_ALLOWLIST:
+  for f in dataclasses.fields(cls):
+   low = f.name.lower()
+   assert not any(b in low for b in _BANNED), (
+    f"{cls.__name__}.{f.name} looks like a grading field on a presentation type"
+   )
+
+
+def test_grading_spec_never_reaches_the_package_root():
+ """The grading half is importable, but not from where a consumer starts.
+
+ Presentation and grading share a module because they are one contract seen
+ from two sides. The boundary that matters is the package root: a consumer
+ doing ``from lexi_ai import ...`` must never receive a grading type.
+ """
+ root = importlib.import_module("lexi_ai")
+ for name in ("GradingSpec", "ChoiceGrading", "SpanGrading", "RubricGrading"):
+  assert name not in root.__all__, f"{name} must NOT be exported from lexi_ai"
+ assert hasattr(importlib.import_module("lexi_ai.questions.types"), "GradingSpec")
+
+
+async def test_retrieved_question_hides_answer_but_grading_reveals_it():
+ # End-to-end: the projected presentation exposes no answer key; the sanctioned
+ # answer is disclosed ONLY through the typed ``Evaluation.reveal`` after grading.
+ from lexi_ai.questions.render import to_presented
+ from lexi_ai.questions.scoring import grade_single_choice
+ from lexi_ai.questions.types import (
+  AnswerSubmission,
+  ChoiceResponse,
+  ChoiceReveal,
+  PersistedQuestion,
+  SingleChoice,
+ )
+
+ persisted = PersistedQuestion(
+  question_id=5,
+  word_id=3,
+  sense_id=7,
+  type_id="definition_mcq",
+  render_kind=q.RenderKind.SINGLE_CHOICE,
+  difficulty_level=1,
+  interaction="assessment",
+  payload={
+   "stem": "Which word means fluent?",
+   "options": ["taciturn", "eloquent"],
+   "correct_index": 1,
+  },
+ )
+
+ presented = to_presented(persisted)
+ assert isinstance(presented.render, SingleChoice)
+ # The correct index is not a field on the presentation or its render contract.
+ assert not hasattr(presented, "payload")
+ render_fields = {f.name for f in dataclasses.fields(presented.render)}
+ assert "correct_index" not in render_fields
+
+ evaluation = await grade_single_choice(
+  persisted,
+  AnswerSubmission(question_id=5, response=ChoiceResponse(selected_index=1)),
+ )
+ assert evaluation.correct is True
+ assert isinstance(evaluation.reveal, ChoiceReveal)
+ assert evaluation.reveal.correct_index == 1
+ assert evaluation.reveal.correct_option == "eloquent"

@@ -1,1 +1,1 @@
-"""Lexi domain migration revisions."""
+"""Single fresh-database generated-dictionary baseline revision."""

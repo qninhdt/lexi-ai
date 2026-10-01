@@ -103,20 +103,22 @@ external/
 worktrees/
 
 # --- lexi-ai (Python) ---
-# Cambridge source DB (~142MB, read-only reference data — never commit)
-/data
+# Only the Cambridge reference snapshot is tracked, through Git LFS.
+/data/*
 /data-shm
 /data-wal
 # Generated dictionary DBs (runtime output — never commit; e.g. lexi.db, examples-lexi.db)
 *.db
 *.db-shm
 *.db-wal
+!/data/cambridge.db
 # Derived runtime stores: TTS clips and the LanceDB sense-vector index
 /lexi-assets/
 /lexi-vectors/
 # uv / virtualenv
 .venv/
-.python-version
+# Track the project's runtime pin so local development and CI agree.
+!/.python-version
 # pytest / tooling caches
 .pytest_cache/
 .ruff_cache/

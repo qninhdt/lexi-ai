@@ -1,0 +1,39 @@
+{
+  "state": {
+    "question": {
+      "$eval": "question"
+    },
+    "answer": {
+      "$eval": "answer"
+    }
+  },
+
+  "questions": {
+    "matched_sense": {
+      "type": "choice",
+
+      "instructions": "Which listed meaning of `answer` best matches the meaning that `answer` expresses in `question`? Choose `no_candidate` if none of the listed meanings fits.",
+
+      "criteria": {
+        "$reduce": {
+          "$eval": "matched_word.senses"
+        },
+
+        "initial": {
+          "no_candidate": "None of the listed meanings matches the meaning expressed by the answer in the question."
+        },
+
+        "each(acc, sense)": {
+          "$merge": [
+            {
+              "$eval": "acc"
+            },
+            {
+              "sense_${sense.id}": "${matched_word.lemma} - ${sense.pos} - ${sense.definition}"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

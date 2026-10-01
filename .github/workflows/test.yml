@@ -15,10 +15,11 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
+          version: "0.12.21"
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.14.7
       - name: Sync dev deps
-        run: uv sync
+        run: uv sync --locked
       - name: Ruff lint
         run: uv run ruff check lexi_ai tests examples
       - name: Ruff format
@@ -29,7 +30,7 @@ jobs:
         run: uv run lint-imports
 
   test:
-    # Hermetic tier: SQLite + the in-memory vector index (forced in conftest).
+    # Hermetic tier: lexical-only SQLite with fake providers.
     # No network, no service containers, no LLM — providers are faked at the port.
     runs-on: ubuntu-latest
     steps:
@@ -38,12 +39,11 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
+          version: "0.12.21"
       - name: Set up Python
-        run: uv python install 3.12
-      # No --extra: this tier must pass on a base install. The dev group brings
-      # lancedb, so the LanceDB adapter's contract tests run here too.
+        run: uv python install 3.14.7
       - name: Sync dev deps
-        run: uv sync
+        run: uv sync --locked
       - name: Assert tests collected (no silent gap)
         run: |
           uv run pytest --collect-only -q >/dev/null \
@@ -52,9 +52,7 @@ jobs:
         run: uv run pytest -q
 
   test-postgres:
-    # The opt-in dual-DB tier. SQLite silently tolerates NUL bytes, ignores
-    # VARCHAR(n) limits and accepts naive datetimes; Postgres does not. Those
-    # defects are only reachable with a real server.
+    # PostgreSQL-only search, migration and Sense Linking concurrency acceptance.
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -75,10 +73,11 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
+          version: "0.12.21"
       - name: Set up Python
-        run: uv python install 3.12
-      - name: Sync dev deps with the asyncpg driver
-        run: uv sync --extra postgres
+        run: uv python install 3.14.7
+      - name: Sync dev deps
+        run: uv sync --locked
       - name: Run the full suite against Postgres
         env:
           LEXI_TEST_PG_URL: postgresql+asyncpg://lexi:lexi@localhost:5432/lexi_test
@@ -114,23 +113,22 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
+          version: "0.12.21"
       - name: Set up Python
-        run: uv python install 3.12
-      - name: Sync dev deps with the asyncpg driver
-        run: uv sync --extra postgres
+        run: uv python install 3.14.7
+      - name: Sync dev deps
+        run: uv sync --locked
+      - name: Create the generated dictionary namespace
+        env:
+          PGPASSWORD: lexi
+        run: psql -h localhost -U lexi -d lexi_test -c 'CREATE SCHEMA lexi'
       - name: Upgrade a fresh database to head
-        run: uv run alembic -c lexi_ai/migrations/alembic.ini upgrade head
+        run: uv run alembic -c lexi_ai/alembic.ini upgrade head
       - name: Assert the ORM matches head (no un-migrated model change)
-        run: uv run alembic -c lexi_ai/migrations/alembic.ini check
+        run: uv run alembic -c lexi_ai/alembic.ini check
       # pycil's deploy gate runs the upgrade unattended, so a migration that
       # cannot be undone is a one-way door in production.
       - name: Assert the downgrade path works
         run: |
-          uv run alembic -c lexi_ai/migrations/alembic.ini downgrade base
-          uv run alembic -c lexi_ai/migrations/alembic.ini upgrade head
-      # Consumers embed the dictionary in their own schema; rendering offline SQL
-      # catches a migration that only works against the default namespace.
-      - name: Render offline SQL for a non-default schema
-        run: |
-          uv run alembic -c lexi_ai/migrations/alembic.ini \
-            -x schema=dictionary upgrade head --sql >/dev/null
+          uv run alembic -c lexi_ai/alembic.ini downgrade base
+          uv run alembic -c lexi_ai/alembic.ini upgrade head

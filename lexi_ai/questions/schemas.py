@@ -1,89 +1,188 @@
-"""Pydantic schemas for the questions subsystem.
+"""Question generation schemas and domain validation."""
 
-Two kinds live here:
+import re
 
-* **LLM structured-output** — ``GeneratedMCQ`` is the response schema the one llm
-  plugin (``contextual_mcq``) passes to ``StructuredLLM.parse``, mirroring
-  ``generation/schemas.py`` (bounded fields, injectable, retried). ``Judgment``
-  (added with the scorers) is the llm-judge output for rubric grading.
-* **Payload validators** — one model per type validates the ``payload`` dict a
-  plugin builds BEFORE it is persisted, so a bad index or empty option can never
-  reach the persistence boundary. The validated model is dumped to the stored
-  flat payload; the answer-free presentation and the internal grading spec are
-  projected from it by :mod:`lexi_ai.questions.render`.
-"""
+from pydantic import BaseModel, ConfigDict, Field
 
-from pydantic import BaseModel, Field, model_validator
-
-# --- LLM structured output ------------------------------------------------
+from lexi_ai.errors import InvalidOutputError
+from lexi_ai.models import Sense, Word
+from lexi_ai.text import answer_key, parse_marked_example
+from lexi_ai.vocab import QUESTION_TYPES
 
 
-class GeneratedMCQ(BaseModel):
-    """Structured output for the llm contextual-MCQ generator."""
+class Strict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-    stem: str = Field(
-        max_length=512,
-        description="Novel sentence/context with the target sense implied.",
+
+class GeneratedOption(Strict):
+    content: str = Field(description="One answer or confusable wrong answer")
+    explanation: str = Field(description="Brief English justification for this option")
+
+
+class DialogueTurn(Strict):
+    speaker: str = Field(description="One-word human name, never A/B/C")
+    text: str | None = Field(description="Null only for the one missing reply")
+
+
+class AnchoredQuestion(Strict):
+    content: str = Field(description="Only the prompt content; preserve fixed content if supplied")
+    correct_explanation: str = Field(description="Explain why the supplied fixed answer fits")
+    distractors: list[GeneratedOption] = Field(
+        description="Requested K wrong choices, hardest first; exclude the supplied fixed answer"
     )
-    distractors: list[str] = Field(
-        min_length=2,
-        max_length=3,
-        description="Plausible wrong options.",
+
+
+class AnchoredQuestionBatch(Strict):
+    questions: list[AnchoredQuestion]
+
+
+ANCHORED_QUESTION_TYPES = frozenset({"definition_to_word", "word_to_definition", "context_to_word"})
+
+
+class GeneratedQuestion(Strict):
+    content: str | list[DialogueTurn] = Field(
+        description="Only the prompt content; no UI instruction"
+    )
+    correct: GeneratedOption
+    distractors: list[GeneratedOption] = Field(
+        description="Requested K wrong choices, hardest first; no correct duplicate"
     )
 
 
-class Judgment(BaseModel):
-    """Structured output for the llm rubric judge (free-text grading)."""
-
-    correct: bool = Field(description="Does the answer satisfy the rubric?")
-    score: float = Field(ge=0.0, le=1.0, description="0.0..1.0 quality/partial credit.")
-    feedback: str = Field(max_length=512, description="Short learner-facing feedback.")
+class QuestionBatch(Strict):
+    questions: list[GeneratedQuestion]
 
 
-# --- payload validators (one per render format) ---------------------------
+_INSTRUCTION = re.compile(
+    r"^(?:choose|select|fill in|what is|which option|write the correct)\b", re.I
+)
+_NAME = re.compile(r"[A-Za-z][a-z]+(?:-[A-Za-z][a-z]+)?\Z")
 
 
-class FlashcardPayload(BaseModel):
-    """Deterministic level-0 exposure card built from authoritative sense data."""
+def validate_batch(
+    batch: QuestionBatch,
+    kind: str,
+    count: int,
+    distractor_count: int,
+    *,
+    target_placement: str | None = None,
+) -> None:
+    if kind not in QUESTION_TYPES or len(batch.questions) != count:
+        raise InvalidOutputError("Question batch has an unexpected type or size")
+    for question in batch.questions:
+        if len(question.distractors) != distractor_count:
+            raise InvalidOutputError("Question distractor bank is incomplete")
+        options = [question.correct, *question.distractors]
+        if any(not option.content.strip() or not option.explanation.strip() for option in options):
+            raise InvalidOutputError("empty Question option or explanation")
+        if len({answer_key(parse_marked_example(o.content)[0]) for o in options}) != len(options):
+            raise InvalidOutputError("correct or distractor option repeated")
+        content = question.content
+        if kind == "dialogue_completion":
+            if target_placement not in {"dialogue", "options"}:
+                raise InvalidOutputError("invalid dialogue target placement")
+            if (
+                not isinstance(content, list)
+                or len(content) < 2
+                or sum(turn.text is None for turn in content) != 1
+                or any(
+                    not _NAME.fullmatch(turn.speaker) or turn.speaker in {"A", "B", "C"}
+                    for turn in content
+                )
+                or any(turn.text is not None and not turn.text.strip() for turn in content)
+            ):
+                raise InvalidOutputError("dialogue must have named turns and one missing reply")
+            texts = [turn.text for turn in content if turn.text is not None]
+            marked = [bool(parse_marked_example(text)[1]) for text in texts]
+            if target_placement == "dialogue" and not any(marked):
+                raise InvalidOutputError("dialogue does not mark the target")
+            if target_placement == "options":
+                if any(marked):
+                    raise InvalidOutputError(
+                        "dialogue must hide the target when placement is options"
+                    )
+                if any(not parse_marked_example(option.content)[1] for option in options):
+                    raise InvalidOutputError("every option must mark the target")
+            if any("_" in text for text in texts):
+                raise InvalidOutputError("dialogue must use null rather than a blank")
+            continue
+        if not isinstance(content, str) or not content.strip() or _INSTRUCTION.match(content):
+            raise InvalidOutputError("invalid learner-facing Question content")
+        if kind == "cloze_to_word" and content.count("_") != 1:
+            raise InvalidOutputError("cloze requires exactly one full-answer blank")
+        spans = parse_marked_example(content)[1]
+        if kind in {"word_to_definition", "word_to_usage", "meaning_in_context"}:
+            if not spans:
+                raise InvalidOutputError("target surface is not marked")
 
-    word: str = Field(min_length=1, max_length=128)
-    pos: str | None = Field(default=None, max_length=32)
-    definition: str = Field(min_length=1, max_length=2048)
-    example: str | None = Field(default=None, max_length=512)
-    ipa_uk: str | None = Field(default=None, max_length=128)
-    ipa_us: str | None = Field(default=None, max_length=128)
+
+def _components(surface: str) -> tuple[str, ...]:
+    """Keep fixed components ordered, excluding citation slots, not their literal counterparts."""
+    return tuple(answer_key(re.sub(r"\{[^{}]+\}", " ", surface)).split())
 
 
-class MCQPayload(BaseModel):
-    """Payload for single-choice formats (``definition_mcq``, ``contextual_mcq``)."""
-
-    stem: str = Field(min_length=1, max_length=512)
-    options: list[str] = Field(min_length=2)
-    correct_index: int = Field(ge=0)
-
-    @model_validator(mode="after")
-    def _index_in_range(self) -> "MCQPayload":
-        if self.correct_index >= len(self.options):
-            raise ValueError("correct_index out of range for options")
-        return self
+def _target_sequences(word: Word, sense: Sense) -> set[tuple[str, ...]]:
+    sequences = {_components(surface) for surface in [word.lemma, *word.aliases]}
+    base = _components(word.lemma)
+    for form in sense.forms:
+        components = _components(form.surface)
+        sequences.add(
+            components if len(base) == 1 or len(components) > 1 else components + base[1:]
+        )
+    return sequences
 
 
-class ClozePayload(BaseModel):
-    """Payload for the ``cloze`` text-span format.
+def _validate_marked_target(text: str, sequences: set[tuple[str, ...]], *, required: bool):
+    _, spans = parse_marked_example(text)
+    if not spans:
+        if required:
+            raise InvalidOutputError("target expression is not marked")
+        return
+    tokens = tuple(token for span in spans for token in answer_key(span.surface).split())
+    # Multiple occurrences are allowed, but each must preserve all fixed components in order.
+    positions = {0}
+    for start in range(len(tokens)):
+        if start in positions:
+            for sequence in sequences:
+                if sequence and tokens[start : start + len(sequence)] == sequence:
+                    positions.add(start + len(sequence))
+    if len(tokens) not in positions:
+        raise InvalidOutputError("tags do not mark a complete licensed target expression")
 
-    ``accepted_forms`` are extra surfaces the grader folds equal to the answer
-    (the sense's inflected forms), so a learner typing ``ran`` for ``run`` scores
-    right without touching ``match_key``. Empty when the sense has no forms."""
 
-    stem_with_blank: str = Field(min_length=1, max_length=512)
-    answer_norm: str = Field(min_length=1, max_length=128)
-    accepted_forms: list[str] = Field(default_factory=list)
-    word_bank: list[str] = Field(default_factory=list)
+def _reveals_target(text: str, sequences: set[tuple[str, ...]]) -> bool:
+    text = answer_key(text)
+    return any(
+        re.search(r"(?<!\w)" + r"\s+".join(map(re.escape, sequence)) + r"(?!\w)", text)
+        for sequence in sequences
+        if sequence
+    )
 
 
-class UseInSentencePayload(BaseModel):
-    """Payload for the ``use_in_sentence`` free-text format."""
-
-    prompt: str = Field(min_length=1, max_length=512)
-    target_norm: str = Field(min_length=1, max_length=128)
-    rubric: str = Field(min_length=1, max_length=512)
+def validate_targets(
+    question: GeneratedQuestion,
+    kind: str,
+    word: Word,
+    sense: Sense,
+    *,
+    target_placement: str | None,
+) -> None:
+    sequences = _target_sequences(word, sense)
+    if kind == "dialogue_completion":
+        for turn in question.content:
+            if turn.text is None:
+                continue
+            if target_placement == "options" and _reveals_target(turn.text, sequences):
+                raise InvalidOutputError("dialogue reveals the target when placement is options")
+            _validate_marked_target(turn.text, sequences, required=False)
+        for option in [question.correct, *question.distractors]:
+            _validate_marked_target(
+                option.content, sequences, required=target_placement == "options"
+            )
+    if kind == "word_to_definition":
+        valid = {answer_key(sense.definition.content)} if sense.definition is not None else set()
+        if any(answer_key(option.content) in valid for option in question.distractors):
+            raise InvalidOutputError("distractor repeats a trusted definition")
+    if kind in {"definition_to_word", "context_to_word"}:
+        if any(_components(option.content) in sequences for option in question.distractors):
+            raise InvalidOutputError("distractor repeats a licensed target expression")

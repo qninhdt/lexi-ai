@@ -1,57 +1,39 @@
 [project]
 name = "lexi-ai"
 version = "0.1.0"
-description = "Lazy LLM dictionary library: synthesizes an English learner's dictionary with an LLM, anchored to Cambridge + WordNet."
+description = "On-demand English learner's dictionary with selected Cambridge-backed generation."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 authors = [
     { name = "qninhdt", email = "qndt123@gmail.com" }
 ]
 dependencies = [
-    "sqlalchemy[asyncio]>=2.0",
-    "aiosqlite>=0.20",
-    "openai>=1.92",
-    "pydantic>=2",
-    "pydantic-settings>=2",
-    "nltk>=3.9",
+    "sqlalchemy[asyncio]>=2.1.1",
+    "aiosqlite>=0.22.1",
+    "asyncpg>=0.31.0",
     "jinja2>=3.1.6",
-]
-
-[project.optional-dependencies]
-# Local sense embeddings for semantic_search. Heavy (~200MB CPU); opt-in via
-# `uv sync --extra embeddings`. Lazy-imported in lexi_ai.embeddings only.
-embeddings = [
-    "torch>=2.2",
-    "transformers>=4.40",
-]
-# Async Postgres driver for the opt-in dual-DB test tier. The default suite is
-# SQLite-only and hermetic; install with `uv sync --extra postgres` and set
-# LEXI_TEST_PG_URL to a disposable database to exercise the Postgres-only
-# defect class (NUL rejection, VARCHAR(n) length, tz-aware datetime binding).
-postgres = [
-    "asyncpg>=0.29",
-]
-# Durable vector index for semantic_search (LEXI_VECTOR_BACKEND=lancedb). Embedded
-# and file-based — no server. Lazy-imported, so the base install stays lightweight.
-lancedb = [
-    "lancedb>=0.24",
+    "json-e>=4.8.0,<5",
+    "openai>=3.22.1",
+    "pydantic>=2.13.5",
+    "nltk>=3.10.3",
+    "alembic>=1.20.0,<2",
+    "typesafe-sdk>=0.7.2",
+    "system-one-adapter[openai]>=0.2.1",
 ]
 
 [dependency-groups]
 dev = [
-    "alembic==1.18.5",
-    "pytest>=8",
-    "pytest-asyncio>=0.26",
-    "ruff>=0.9",
-    "import-linter>=2.0",
-    # The default durable vector backend. Here (not just in the extra) so the
-    # LanceDB adapter's contract tests actually run rather than skipping.
-    "lancedb>=0.24",
+    "httpx>=0.28.1,<1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.9",
+    "import-linter>=2.15",
+    "python-dotenv>=1.2.1,<2",
 ]
 
 [build-system]
-requires = ["uv_build>=0.10.7,<0.11.0"]
+requires = ["uv_build>=0.12.21,<0.13.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
@@ -63,125 +45,53 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.ruff]
+extend-exclude = ["archive"]
 line-length = 100
-target-version = "py310"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
 
-# Boundary enforcement. The public contract surface must stay dependency-free so
-# it can never drag ORM/infrastructure across a consumer boundary. Stricter
-# contracts (no deep-internal imports from consumers, no answer on the wire) are
-# added in later phases once the producers and pycil ACL are rewritten.
 [tool.importlinter]
 root_package = "lexi_ai"
 include_external_packages = true
-# A name imported under `if TYPE_CHECKING:` is not an edge at runtime: it exists so
-# a Protocol can be annotated, and it is erased before anything executes. Counting
-# it as a dependency would force the layered contracts to reject exactly the
-# type-only imports that let `domain/ports.py` describe its own boundary.
-#
-# This is set globally and deliberately: with it, a contract that passes means the
-# import graph is clean at runtime, which is the claim these contracts are meant
-# to make. Type-level coupling is a design question (see the note on
-# `domain/ports.py` and `generation.schemas`), not something a forbidden-import
-# rule should decide.
 exclude_type_checking_imports = true
 
 [[tool.importlinter.contracts]]
-name = "contracts package is dependency-free (no domain/app/infra/orm)"
+name = "pure contracts cannot import persistence or provider transports"
 type = "forbidden"
-source_modules = ["lexi_ai.contracts"]
+source_modules = ["lexi_ai.models", "lexi_ai.text", "lexi_ai.vocab", "lexi_ai.config"]
 forbidden_modules = [
-    "lexi_ai.domain",
-    "lexi_ai.application",
-    "lexi_ai.infrastructure",
-    "lexi_ai.persistence",
-    "lexi_ai.api",
-    "lexi_ai.facades",
     "lexi_ai.db",
-    "lexi_ai.models",
+    "lexi_ai.schema",
+    "lexi_ai.inference.llm",
+    "lexi_ai.inference.decision",
+    "lexi_ai.questions",
     "sqlalchemy",
 ]
 
 [[tool.importlinter.contracts]]
-name = "domain must not import infrastructure, ORM, or runtime wiring"
+name = "shared inference infrastructure cannot depend on domain tasks or persistence"
 type = "forbidden"
-source_modules = ["lexi_ai.domain"]
-# The root modules below are the addition. This contract passed while
-# `domain/asset_identity.py` imported `config`, `db` and a private name out of
-# `normalize`, because it named only packages and every one of those is a loose
-# module at the root — outside the scope of every contract in this file.
-#
-# `config` is the one that mattered: reading runtime settings inside the identity
-# rules made an asset's on-disk path depend on the configuration of whichever
-# process computed it, so two differently-configured processes derived two paths
-# for one logical asset. The defaults moved to `constants` and the import is gone.
-#
-# `constants` and `normalize` are deliberately NOT forbidden. Both are pure and
-# import nothing from `lexi_ai` at all, so a domain module depending on them is
-# not a layering violation — forbidding them would force a copy of the closed
-# vocabularies, which is the drift these modules exist to prevent.
+source_modules = ["lexi_ai.inference"]
 forbidden_modules = [
-    "lexi_ai.infrastructure",
-    "lexi_ai.persistence",
-    "lexi_ai.api",
-    "lexi_ai.models",
-    "lexi_ai.config",
     "lexi_ai.db",
-    "lexi_ai.vectors",
-    "lexi_ai.read_models",
-    "lexi_ai.llm",
-    "lexi_ai.embeddings",
-    "sqlalchemy",
+    "lexi_ai.schema",
+    "lexi_ai.questions",
+    "lexi_ai.words",
+    "lexi_ai.themes",
+    "lexi_ai.translation",
+    "lexi_ai.relations",
+    "lexi_ai.api",
 ]
 
-
-# The application layer talks to persistence through ports only. It used to issue
-# its own selects against the ORM, a second persistence path that duplicated
-# repository logic and made every read a potential source of drift.
 [[tool.importlinter.contracts]]
-name = "application layer must not touch the ORM or SQL directly"
+name = "database infrastructure cannot depend on dictionary domains or schema"
 type = "forbidden"
-# Indirect is expected and fine: the application reaches the ORM THROUGH the unit
-# of work, which is the point. Only a direct import is a second persistence path.
-allow_indirect_imports = true
-source_modules = ["lexi_ai.application", "lexi_ai.api"]
+source_modules = ["lexi_ai.db"]
 forbidden_modules = [
-    "lexi_ai.infrastructure.db.models",
+    "lexi_ai.schema", "lexi_ai.models", "lexi_ai.words", "lexi_ai.questions",
+    "lexi_ai.themes", "lexi_ai.translation", "lexi_ai.relations", "lexi_ai.inference",
+    "lexi_ai.api",
 ]
-
-# The whole-package version of the contract above. That one enumerated
-# `infrastructure.db.models` and a few siblings, so it passed while
-# `application/generation_writer.py` imported the concrete `SqlAlchemyUnitOfWork`
-# and `application/themes.py` imported a mapper — two real edges it could not see.
-#
-# Enumerating modules is exactly how this repo's earlier contracts rotted. A
-# package-level `forbidden` cannot go stale the same way: a new module under
-# `infrastructure` is covered the moment it exists.
-#
-# `allow_indirect_imports` is deliberately NOT set here. The application layer
-# reaches persistence THROUGH the ports, so the indirect path is the design; what
-# must never return is a direct import naming a concrete implementation.
-[[tool.importlinter.contracts]]
-name = "application depends on ports, never on infrastructure"
-type = "forbidden"
-allow_indirect_imports = true
-source_modules = ["lexi_ai.application"]
-forbidden_modules = ["lexi_ai.infrastructure"]
-
-[[tool.importlinter.contracts]]
-# The assets and questions subsystems keep their logic and lose their ORM.
-#
-# Both used to hold a `repository.py` importing `infrastructure.db.models`
-# directly, so two packages outside `infrastructure/` knew the table definitions —
-# and no contract said otherwise, because the existing ones name `application` and
-# `domain` and these are neither. The repositories moved to
-# `infrastructure/db/repositories/`; what remains here is scoring, rendering,
-# dedup, distractors, translate and tts, none of which should see a table again.
-name = "assets and questions hold no ORM of their own"
-type = "forbidden"
-allow_indirect_imports = true
-source_modules = ["lexi_ai.assets", "lexi_ai.questions"]
-forbidden_modules = ["lexi_ai.infrastructure.db.models", "sqlalchemy"]

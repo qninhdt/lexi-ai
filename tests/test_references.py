@@ -1,94 +1,95 @@
-"""Tests for the reference loader (Phase 3).
-
-Run against the real Cambridge ``./data`` SQLite file and the installed WordNet
-corpus. Skipped automatically if ``./data`` is absent.
-"""
-
-import os
+import hashlib
 import sqlite3
 
 import pytest
 
-from lexi_ai.references.cambridge import CambridgeSource
-from lexi_ai.references.loader import ReferenceLoader
-from lexi_ai.references.wordnet import WordNetSource
-
-CAMBRIDGE_PATH = os.environ.get("LEXI_CAMBRIDGE_DB_PATH", "./data")
-
-pytestmark = pytest.mark.skipif(
-    not os.path.exists(CAMBRIDGE_PATH),
-    reason="Cambridge ./data not present",
-)
+from lexi_ai.errors import InvalidHandleError
+from lexi_ai.references.cambridge import Cambridge, decode_available_id, encode_available_id
+from lexi_ai.references.wordnet import lookup
 
 
 @pytest.fixture
-def loader():
-    return ReferenceLoader(CambridgeSource(CAMBRIDGE_PATH), WordNetSource())
+def source(tmp_path):
+    path = tmp_path / "cambridge.sqlite"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            "CREATE TABLE words(id INTEGER PRIMARY KEY, word TEXT, display_form TEXT, "
+            "entry_type TEXT, status TEXT);"
+            "CREATE TABLE entries(id INTEGER PRIMARY KEY, word_id INTEGER, pos TEXT, "
+            "entry_order INTEGER, pronunciation_uk TEXT, pronunciation_us TEXT);"
+            "CREATE TABLE senses(id INTEGER PRIMARY KEY, entry_id INTEGER, definition TEXT, "
+            "cefr_level TEXT, phrase_title TEXT, sense_order INTEGER);"
+            "CREATE TABLE examples(id INTEGER PRIMARY KEY, sense_id INTEGER, example TEXT, "
+            "example_order INTEGER);"
+            "CREATE TABLE word_alternatives(word_id INTEGER, alternative_word TEXT, "
+            "alternative_type TEXT);"
+            "INSERT INTO words VALUES(1,'bank','bank','word','done');"
+            "INSERT INTO words VALUES(2,'bank','bank','word','done');"
+            "INSERT INTO words VALUES(3,'empty','empty','word','done');"
+            "INSERT INTO words VALUES(4,'pending','pending','word','pending');"
+            "INSERT INTO entries VALUES(11,1,'noun',0,NULL,NULL);"
+            "INSERT INTO entries VALUES(12,2,'verb',0,NULL,NULL);"
+            "INSERT INTO senses VALUES(101,11,'financial institution','B1',NULL,0);"
+            "INSERT INTO senses VALUES(102,12,'tilt an aircraft','C1',NULL,0);"
+            "INSERT INTO examples VALUES(1,101,'Go to the bank.',0);"
+        )
+    return path
 
 
-async def test_bundle_book_has_both_sources(loader):
-    bundle = await loader.bundle("book")
-    assert bundle.has_cambridge
-    assert bundle.cambridge_word_id is not None
-    assert len(bundle.cambridge_senses) > 0
-    # book has strong WordNet coverage.
-    assert bundle.has_wordnet
-    # Sanity: a sense carries a definition and at least some examples exist.
-    assert all(s.definition for s in bundle.cambridge_senses)
+async def test_fetch_by_id_is_exact_and_read_only(source):
+    before = hashlib.sha256(source.read_bytes()).hexdigest()
+    cambridge = Cambridge(source)
+    assert (await cambridge.fetch_by_id(1)).senses[0].definition == "financial institution"
+    assert (await cambridge.fetch_by_id(2)).senses[0].pos == "verb"
+    assert (await cambridge.fetch_by_id(500)) is None
+    assert (await cambridge.from_handle(encode_available_id(1))).senses[0].examples == [
+        "Go to the bank."
+    ]
+    with pytest.raises(InvalidHandleError):
+        await cambridge.from_handle(encode_available_id(3))
+    with pytest.raises(InvalidHandleError):
+        decode_available_id("entry_!!!")
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before
 
 
-async def test_bundle_book_cefr_present(loader):
-    bundle = await loader.bundle("book")
-    cefr_values = {s.cefr_level for s in bundle.cambridge_senses if s.cefr_level}
-    assert cefr_values, "expected at least one Cambridge cefr_level for 'book'"
+async def test_search_preserves_distinct_eligible_ids(source):
+    found = await Cambridge(source).search("bank")
+    assert [item.id for item in found] == [1, 2]
+    assert await Cambridge(source).search("empty") == []
+    assert await Cambridge(source).search("pending") == []
+    assert await lookup("not/a/citation") == []
 
 
-async def test_bundle_expression_empty_wordnet_no_crash(loader):
-    # An expression with no WordNet synset must not crash; WordNet may be empty.
-    bundle = await loader.bundle("act on behalf of")
-    # Whether or not Cambridge has it, the call must return a bundle.
-    assert bundle is not None
-    # WordNet has no 'act_on_behalf_of' synset.
-    assert bundle.wordnet_synsets == [] or not bundle.has_cambridge
+async def test_cambridge_fetch_aggregates_examples_once_with_stable_order(source, monkeypatch):
+    with sqlite3.connect(source) as connection:
+        connection.executemany(
+            "INSERT INTO senses VALUES(?,11,?,'A2',NULL,?)",
+            [(200 + i, f"meaning{i}", i + 1) for i in range(95)],
+        )
+        connection.executemany(
+            "INSERT INTO examples VALUES(?,?,?,?)",
+            [
+                (2000 + i * 3 + j, 200 + i, f"example{i}-{j}", 2 - j)
+                for i in range(95)
+                for j in range(3)
+            ],
+        )
+        connection.execute("INSERT INTO word_alternatives VALUES(1,'banks','plural')")
+    before = hashlib.sha256(source.read_bytes()).hexdigest()
+    cambridge = Cambridge(source)
+    connect = cambridge._connect
+    statements = []
 
+    def traced():
+        connection = connect()
+        connection.set_trace_callback(statements.append)
+        return connection
 
-async def test_wordnet_direct_lookup_counts():
-    wn = WordNetSource()
-    assert len(await wn.lookup("book")) == 15
-    assert len(await wn.lookup("make up")) == 9
-    assert await wn.lookup("act on behalf of") == []
-
-
-async def test_cambridge_read_only(loader):
-    # Attempting to write through a mode=ro connection must raise.
-    src = CambridgeSource(CAMBRIDGE_PATH)
-    assert "mode=ro&immutable=1" in src._uri
-    conn = sqlite3.connect(src._uri, uri=True)
-    try:
-        with pytest.raises(sqlite3.OperationalError):
-            conn.execute("CREATE TABLE _should_fail (x INTEGER)")
-    finally:
-        conn.close()
-
-
-async def test_candidates_excludes_done_keys(loader):
-    src = CambridgeSource(CAMBRIDGE_PATH)
-    from lexi_ai.normalize import match_key
-
-    # Pretend "book" is already generated; it must not appear as a candidate.
-    done = {match_key("book")}
-    seen = []
-    count = 0
-    async for surface, _etype in src.candidates(done):
-        seen.append(match_key(surface))
-        count += 1
-        if count >= 500:
-            break
-    assert match_key("book") not in seen
-
-
-async def test_wordnet_pos_mapping():
-    wn = WordNetSource()
-    noun_only = await wn.lookup("book", pos="noun")
-    assert noun_only
-    assert all(s.pos == "noun" for s in noun_only)
+    monkeypatch.setattr(cambridge, "_connect", traced)
+    entry = await cambridge.fetch_by_id(1)
+    assert len(entry.senses) == 96
+    assert len(statements) == 1
+    assert entry.senses[1].examples == ["example0-2", "example0-1", "example0-0"]
+    assert entry.senses[-1].definition == "meaning94"
+    assert entry.alternatives == [("banks", "plural")]
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before
