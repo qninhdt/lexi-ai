@@ -112,9 +112,6 @@ worktrees/
 *.db-shm
 *.db-wal
 !/data/cambridge.db
-# Derived runtime stores: TTS clips and the LanceDB sense-vector index
-/lexi-assets/
-/lexi-vectors/
 # uv / virtualenv
 .venv/
 # Track the project's runtime pin so local development and CI agree.
@@ -125,3 +122,7 @@ worktrees/
 *.egg-info/
 # Stray ClaudeKit tooling artifact (not part of this project)
 /release-manifest.json
+
+# Local benchmark credentials and provider-run artifacts
+/benchmarks/*.local.json
+/benchmark-results/

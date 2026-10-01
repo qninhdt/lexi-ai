@@ -3,10 +3,18 @@
 Importing this package does not initialize clients or database connections.
 """
 
-from .inference.config import DecisionConfig, LLMConfig
+from .inference.config import DecisionConfig, DecisionMode, LLMConfig
+from .inference.llm import StructuredLLM
 from .models import TokenUsage
 
-__all__ = ["DecisionConfig", "LLMConfig", "Lexicon", "TokenUsage"]
+__all__ = [
+    "DecisionConfig",
+    "DecisionMode",
+    "LLMConfig",
+    "Lexicon",
+    "StructuredLLM",
+    "TokenUsage",
+]
 
 
 def __getattr__(name: str):

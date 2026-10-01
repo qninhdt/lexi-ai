@@ -11,7 +11,7 @@ from typesafe_sdk import Choice, Noul
 
 from lexi_ai import schema as row
 from lexi_ai.errors import InvalidOutputError, InvalidResourceError, MissingProviderError
-from lexi_ai.inference.config import DecisionConfig
+from lexi_ai.inference.config import DecisionConfig, DecisionMode
 from lexi_ai.models import DefinitionGrade, Option, Question, SingleWordGrade, UsageGrade
 from lexi_ai.questions.grade import grade_answer
 from lexi_ai.questions.storage import append
@@ -212,6 +212,26 @@ async def test_definition_resolves_intent_then_grades_only_selected_meaning(bank
     }
     assert set(model.calls[1][1]) == {"accuracy", "coverage"}
     assert set(asdict(result)) == {"sense_id", "accuracy", "coverage"}
+
+
+@pytest.mark.parametrize("mode", [DecisionMode.DECISION_ONLY, DecisionMode.LLM_ONLY])
+async def test_explicit_mode_is_forwarded_to_each_grading_stage(bank, mode):
+    db, (single, definition, usage) = bank
+
+    class RoutedDecision(Decision):
+        async def decide(self, state, questions, *, mode):
+            assert mode == selected_mode
+            return await super().decide(state, questions)
+
+    selected_mode = mode
+    model = RoutedDecision(choices={"defined_meaning": "sense_1"})
+    for question, fmt, answer in (
+        (single, "single_word", "lender"),
+        (definition, "short_answer", "A financial institution"),
+        (usage, "short_answer", "The bank opens early."),
+    ):
+        await grade_answer(db, model, question.id, fmt, answer, config=CONFIG, mode=mode)
+    assert len(model.calls) == 6
 
 
 async def test_unidentified_definition_stops_before_diagnostic_query(bank):

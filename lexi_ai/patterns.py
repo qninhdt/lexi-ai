@@ -8,6 +8,7 @@ from .text import answer_key, validate_lemma
 from .vocab import SLOTS
 
 _TOKEN = re.compile(r"\{[^{}]+\}")
+_SLASH_ALTERNATIVE = re.compile(r"\b[a-z]+/[a-z]+\b", re.IGNORECASE)
 _WORD = r"[^\W_]+(?:['’-][^\W_]+)*"
 _BOUNDS = {
     "{sb}": (1, 4),
@@ -37,7 +38,7 @@ def validate_pattern(pattern: str) -> str:
     pattern = validate_lemma(pattern)
     if any(match.group() not in SLOTS for match in _TOKEN.finditer(pattern)):
         raise ValueError("unknown pattern slot")
-    if "/" in pattern and re.search(r"\b[a-z]+/[a-z]+\b", pattern, re.I):
+    if "/" in pattern and _SLASH_ALTERNATIVE.search(pattern):
         raise ValueError("expand lexical alternatives into separate patterns")
     return pattern
 

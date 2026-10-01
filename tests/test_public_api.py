@@ -1,8 +1,11 @@
+from types import SimpleNamespace
+
 import pytest
+from test_decision import DecisionTransport
 from test_prompting import prompt_context
 
-from lexi_ai import DecisionConfig, Lexicon, LLMConfig
-from lexi_ai.errors import InvalidResourceError
+from lexi_ai import DecisionConfig, DecisionMode, Lexicon, LLMConfig
+from lexi_ai.errors import InvalidResourceError, MissingProviderError
 
 
 class LLM:
@@ -43,7 +46,6 @@ async def test_selected_search_generate_read_and_close(tmp_path, source):
     ai = Lexicon(
         f"sqlite+aiosqlite:///{tmp_path / 'generated.db'}",
         str(source),
-        decision_config=DecisionConfig(0.8),
         llm=llm,
     )
     try:
@@ -132,7 +134,7 @@ async def test_close_only_owned_providers_once(monkeypatch, tmp_path, source):
 
     monkeypatch.setattr("lexi_ai.api.OpenAIStructuredLLM", lambda config: llm)
     monkeypatch.setattr("lexi_ai.api.DecisionModel", lambda *args, **kwargs: decision)
-    owned = Lexicon(url, str(source), **options)
+    owned = Lexicon(url, str(source), llm_config=LLMConfig(api_key="fake-key"), **options)
     assert owned._llm() is llm and owned._decision_model() is decision
     await owned.close()
     await owned.close()
@@ -196,11 +198,73 @@ async def test_generate_rejects_invalid_count_before_io(tmp_path, source, count)
         f"sqlite+aiosqlite:///{tmp_path / 'unused.db'}",
         str(source),
         decision_config=DecisionConfig(0.8),
+        llm_config=LLMConfig(api_key="fake-key"),
     )
     try:
         with pytest.raises(ValueError, match="positive integer"):
             await lexicon.generate("invalid-handle", example_count=count)
         assert lexicon.llm is None
         assert not (tmp_path / "unused.db").exists()
+    finally:
+        await lexicon.close()
+
+
+@pytest.mark.parametrize("llm_config", [None, LLMConfig(), LLMConfig(api_key=" ")])
+def test_lexicon_requires_llm_without_opening_storage(tmp_path, source, llm_config):
+    with pytest.raises(MissingProviderError, match="requires an LLM"):
+        Lexicon(
+            f"sqlite+aiosqlite:///{tmp_path / 'unused.db'}",
+            str(source),
+            llm_config=llm_config,
+        )
+    assert not (tmp_path / "unused.db").exists()
+
+
+async def test_decision_is_optional_and_decision_only_fails_explicitly(tmp_path, source):
+    lexicon = Lexicon(
+        f"sqlite+aiosqlite:///{tmp_path / 'unused.db'}",
+        str(source),
+        llm_config=LLMConfig(api_key="fake-key"),
+    )
+    try:
+        assert lexicon.decision_config.api_key is None
+        decision = lexicon._decision_model()
+        assert decision.config.threshold == 0.8
+        assert decision.llm_config is lexicon.llm_config
+        assert decision.primary is None
+        with pytest.raises(MissingProviderError, match="decision_only"):
+            await lexicon.grade_answer(1, "single_word", "answer", mode=DecisionMode.DECISION_ONLY)
+        with pytest.raises(MissingProviderError, match="decision_only"):
+            await lexicon.resolve_relations(mode=DecisionMode.DECISION_ONLY)
+        assert not (tmp_path / "unused.db").exists()
+    finally:
+        await lexicon.close()
+
+
+async def test_public_grading_defaults_to_llm_without_jev(tmp_path, source, monkeypatch):
+    lexicon = Lexicon(
+        f"sqlite+aiosqlite:///{tmp_path / 'unused.db'}",
+        str(source),
+        llm_config=LLMConfig(api_key="fake-key"),
+    )
+    fallback = DecisionTransport(probability=0.1)
+    lexicon._decision_model().fallback = fallback
+
+    async def question(*args):
+        return SimpleNamespace(
+            content="A financial institution",
+            question_type="definition_to_word",
+            correct=SimpleNamespace(content="bank"),
+            supports=lambda fmt: fmt == "single_word",
+        )
+
+    monkeypatch.setattr("lexi_ai.questions.grade.get_question", question)
+    try:
+        grade, usage = await lexicon.grade_answer(1, "single_word", "tree", with_usage=True)
+        assert grade.task_fit is False and grade.spelling_error is False
+        assert grade.sense_id is None
+        assert len(fallback.calls) == 1
+        assert lexicon.decision_model.primary is None
+        assert len(usage) == 1 and usage[0].input_tokens is None
     finally:
         await lexicon.close()

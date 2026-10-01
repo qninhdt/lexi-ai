@@ -1,9 +1,10 @@
 """The Python library entry point; this is not an HTTP API or scheduler."""
 
 from .db.session import Database
-from .inference.config import DecisionConfig, LLMConfig
+from .errors import MissingProviderError
+from .inference.config import DecisionConfig, DecisionMode, LLMConfig
 from .inference.decision import DecisionModel
-from .inference.llm import OpenAIStructuredLLM
+from .inference.llm import OpenAIStructuredLLM, StructuredLLM
 from .inference.usage import UsageRecorder
 from .questions import storage as question_rows
 from .questions.generate import generate_questions
@@ -37,20 +38,26 @@ class Lexicon:
         db_url: str,
         cambridge_path: str,
         *,
-        decision_config: DecisionConfig,
+        decision_config: DecisionConfig | None = None,
         db_schema: str | None = None,
-        llm=None,
-        decision_model=None,
+        llm: StructuredLLM | None = None,
+        decision_model: DecisionModel | None = None,
         llm_config: LLMConfig | None = None,
         decision_fallback_model: str | None = None,
     ):
+        if llm is None and (
+            llm_config is None or not llm_config.api_key or not llm_config.api_key.strip()
+        ):
+            raise MissingProviderError(
+                "Lexicon requires an LLM configuration with credentials or llm"
+            )
         self.db = Database(db_url, schema=db_schema)
         self.cambridge = Cambridge(cambridge_path)
         self.llm = llm
         self.decision_model = decision_model
         self.llm_config = llm_config or LLMConfig()
         self.decision_fallback_model = decision_fallback_model
-        self.decision_config = decision_config
+        self.decision_config = decision_config or DecisionConfig(0.8)
         self._owned_llm = False
         self._owned_decision = False
         self._closed = False
@@ -65,7 +72,14 @@ class Lexicon:
             self._owned_llm = True
         return self.llm
 
-    def _decision_model(self):
+    def _decision_model(self, mode=DecisionMode.LLM_FALLBACK):
+        mode = DecisionMode(mode)
+        if (
+            mode == DecisionMode.DECISION_ONLY
+            and (self.decision_model is None or self._owned_decision)
+            and not (self.decision_config.api_key and self.decision_config.api_key.strip())
+        ):
+            raise MissingProviderError("decision_only requires a configured decision provider")
         if self.decision_model is None:
             self.decision_model = DecisionModel(
                 self.decision_config,
@@ -196,21 +210,34 @@ class Lexicon:
         return await question_rows.remove(self.db, question_id)
 
     async def grade_answer(
-        self, question_id: int, fmt: str, answer: str, *, with_usage: bool = False
+        self,
+        question_id: int,
+        fmt: str,
+        answer: str,
+        *,
+        mode: DecisionMode = DecisionMode.LLM_FALLBACK,
+        with_usage: bool = False,
     ):
         self._open()
         with UsageRecorder(with_usage) as usage:
-            model = None if fmt == "single_choice" else usage.wrap(self._decision_model())
+            decision = self._decision_model(mode)
+            model = None if fmt == "single_choice" else usage.wrap(decision)
             grade = await grade_answer(
-                self.db, model, question_id, fmt, answer, config=self.decision_config
+                self.db, model, question_id, fmt, answer, config=self.decision_config, mode=mode
             )
             return usage.finish(grade)
 
-    async def resolve_relations(self, batch_size: int = 20, *, with_usage: bool = False):
+    async def resolve_relations(
+        self,
+        batch_size: int = 20,
+        *,
+        mode: DecisionMode = DecisionMode.LLM_FALLBACK,
+        with_usage: bool = False,
+    ):
         self._open()
         with UsageRecorder(with_usage) as usage:
             results = await resolve_relations(
-                self.db, usage.wrap(self._decision_model()), batch_size
+                self.db, usage.wrap(self._decision_model(mode)), batch_size, mode=mode
             )
             return usage.finish(results)
 

@@ -1,6 +1,14 @@
 """Configuration for model-backed inference operations."""
 
+import math
 from dataclasses import dataclass, field
+from enum import StrEnum
+
+
+class DecisionMode(StrEnum):
+    LLM_FALLBACK = "llm_fallback"
+    DECISION_ONLY = "decision_only"
+    LLM_ONLY = "llm_only"
 
 
 @dataclass(frozen=True)
@@ -29,8 +37,18 @@ class LLMConfig:
     timeout: float = 30.0
     max_completion_tokens: int = 4096
     reasoning_effort: str | None = None
+    structured_outputs: bool = True
+    temperature: float | None = None
 
     def __post_init__(self) -> None:
+        if type(self.structured_outputs) is not bool:
+            raise TypeError("structured_outputs must be a boolean")
+        if self.temperature is not None and (
+            type(self.temperature) not in (int, float)
+            or not math.isfinite(self.temperature)
+            or not 0 <= self.temperature <= 2
+        ):
+            raise ValueError("temperature must be a finite number in [0, 2] or None")
         if not self.model or not 1 <= self.timeout <= 120:
             raise ValueError("invalid model or timeout")
         if not self.model.strip() or not self.base_url.strip():

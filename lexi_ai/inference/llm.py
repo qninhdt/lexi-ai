@@ -1,8 +1,9 @@
-"""One bounded native structured-output transport; no tools or application retries."""
+"""Native structured output or prompted JSON; no tools or application retries."""
 
+import json
 from typing import Protocol, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ..config import MAX_TEXT_LENGTH
 from ..errors import InvalidOutputError, MissingProviderError
@@ -11,6 +12,20 @@ from .config import LLMConfig
 from .usage import UsageRecorder, openai_usage
 
 Output = TypeVar("Output", bound=BaseModel)
+
+
+def _parse_text[Output: BaseModel](content, schema: type[Output]) -> Output:
+    if not isinstance(content, str) or not content.strip():
+        raise InvalidOutputError("LLM text response was empty")
+    text = content.strip()
+    # Accept one fenced JSON document, not prose or a guessed JSON substring.
+    lines = text.splitlines()
+    if len(lines) >= 3 and lines[0].lower() in ("```", "```json") and lines[-1] == "```":
+        text = "\n".join(lines[1:-1])
+    try:
+        return schema.model_validate_json(text)
+    except ValidationError as error:
+        raise InvalidOutputError("LLM text response does not match the required schema") from error
 
 
 class StructuredLLM(Protocol):
@@ -65,15 +80,28 @@ class OpenAIStructuredLLM:
             kwargs = {}
             if self.config.reasoning_effort is not None:
                 kwargs["reasoning_effort"] = self.config.reasoning_effort
+            if self.config.temperature is not None:
+                kwargs["temperature"] = self.config.temperature
+            messages = [
+                {"role": "system", "content": instruction},
+                {"role": "user", "content": data},
+            ]
+            if not self.config.structured_outputs:
+                messages[0]["content"] += (
+                    "\n\nReturn only one JSON document matching this schema, "
+                    "without prose or Markdown fences:\n"
+                    + json.dumps(schema.model_json_schema(), ensure_ascii=False)
+                )
             client = self._get_client()
             try:
-                response = await client.chat.completions.parse(
+                if self.config.structured_outputs:
+                    request = client.chat.completions.parse
+                    kwargs["response_format"] = schema
+                else:
+                    request = client.chat.completions.create
+                response = await request(
                     model=model or self.config.model,
-                    messages=[
-                        {"role": "system", "content": instruction},
-                        {"role": "user", "content": data},
-                    ],
-                    response_format=schema,
+                    messages=messages,
                     max_completion_tokens=self.config.max_completion_tokens,
                     timeout=self.config.timeout,
                     **kwargs,
@@ -86,6 +114,10 @@ class OpenAIStructuredLLM:
                 usage.records.append(openai_usage(response))
             if not response.choices or response.choices[0].message.refusal:
                 raise InvalidOutputError("structured request was refused or empty")
+            if not self.config.structured_outputs:
+                if response.choices[0].finish_reason not in ("stop", None):
+                    raise InvalidOutputError("LLM text response did not complete")
+                return usage.finish(_parse_text(response.choices[0].message.content, schema))
             parsed = response.choices[0].message.parsed
             if parsed is None:
                 raise InvalidOutputError("structured response was empty")

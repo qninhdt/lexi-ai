@@ -13,13 +13,16 @@ The Cambridge snapshot is read-only and must never be the generated database.
 See the root [README](../README.md#install) for setup and existing-database cautions.
 SQLite supports lexical development reads; PostgreSQL is required for fuzzy search.
 
-Copy `examples/.env.example` to `examples/.env` and fill in provider credentials.
+Copy root `.env.example` to root `.env` and fill in provider credentials.
+Examples and benchmarks read this same file.
 Only two groups of variables are allowed in that file:
 
 ```dotenv
 LLM_API_KEY=your-llm-key
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o
+LLM_STRUCTURED_OUTPUTS=true
+LLM_TEMPERATURE=
 
 DECISION_API_KEY=your-decision-key
 DECISION_BASE_URL=https://api.typesafe.ai
@@ -27,13 +30,21 @@ DECISION_MODEL=jev-latest
 DECISION_FALLBACK_MODEL=gpt-4o
 ```
 
-`DECISION_FALLBACK_MODEL` is optional; leave it blank to disable fallback. Fallback
+The LLM key/model/URL are required. The Decision group is optional: leave its key blank
+or omit that group to use the LLM directly for grading/Sense Linking.
+`DECISION_FALLBACK_MODEL` is optional; blank uses `LLM_MODEL`. Fallback
 uses the **LLM key/base URL**, not the Decision credentials. The tiny `_config.py`
-helper belongs only to examples and passes these settings explicitly to `Lexicon`.
+helper is shared with benchmarks and passes these settings explicitly to `Lexicon`.
 It does not mutate the process environment or expand `${VARIABLE}` strings. Explicit
-`LLM_*` / `DECISION_*` process variables override the example file. Legacy provider
-env names and root/parent `.env` files are not used. `--env-file` selects another
+`LLM_*` / `DECISION_*` process variables override the root file. Legacy provider
+env names and automatic parent-file discovery are not used. `--env-file` selects another
 explicit file; unsupported variables in that file are rejected.
+Model IDs and base URLs must be configured there; scripts do not supply hardcoded defaults.
+Set `LLM_STRUCTURED_OUTPUTS=false` for providers without native structured output.
+The schema is included in the prompt and returned JSON text is validated locally.
+This also applies to `llm_only` and Decision's LLM fallback; Jev requests are unchanged.
+`LLM_TEMPERATURE` accepts a number from 0 to 2; blank omits the parameter and uses the provider
+default. Providers/models that reject explicit temperature should leave it blank.
 
 DB/source/schema, threshold, content counts and IDs are parameters, **not `.env`
 settings**. All scripts require `--db-url`; `--cambridge-path` defaults to the project's

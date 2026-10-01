@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 
 from lexi_ai.errors import MissingProviderError
+from lexi_ai.inference.config import DecisionMode
 from lexi_ai.inference.prompting import render_decision
 from lexi_ai.vocab import POS_TAGS
 
@@ -17,8 +18,12 @@ class Resolution:
     error: str | None = None
 
 
-async def resolve_relations(db, decision_model, batch_size: int = 20) -> list[Resolution]:
+async def resolve_relations(
+    db, decision_model, batch_size: int = 20, *, mode: DecisionMode = DecisionMode.LLM_FALLBACK
+) -> list[Resolution]:
     """Caller coordinates overlapping calls; work runs independently within this one call."""
+    mode = DecisionMode(mode)
+    options = {} if mode == DecisionMode.LLM_FALLBACK else {"mode": mode}
     if type(batch_size) is not int or batch_size < 1:
         raise ValueError("batch size must be positive")
     links = await pending_relations(db, min(batch_size, 50))
@@ -48,7 +53,8 @@ async def resolve_relations(db, decision_model, batch_size: int = 20) -> list[Re
                             {"index": i, "pos": c.pos, "definition": c.definition}
                             for i, c in enumerate(link.candidates, 1)
                         ],
-                    )
+                    ),
+                    **options,
                 )
                 choice = result.choices["matched_sense"].choice
                 if choice != "no_candidate":

@@ -1,0 +1,1 @@
+{"id":"definition-2-example-01","task":"grade_word_to_definition_2","input":{"word":{"lemma":"bank"},"selectedSense":{"definition":"An organization where people can keep and borrow money."},"answer":"An organization where people keep money and obtain loans."},"expected":{"accuracy":"accurate","coverage":"sufficient"},"example":true}

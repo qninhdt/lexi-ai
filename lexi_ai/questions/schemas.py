@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from lexi_ai.errors import InvalidOutputError
 from lexi_ai.models import Sense, Word
-from lexi_ai.text import answer_key, parse_marked_example
+from lexi_ai.text import answer_key, parse_marked_example, strip_markup
 from lexi_ai.vocab import QUESTION_TYPES
 
 
@@ -75,7 +75,7 @@ def validate_batch(
         options = [question.correct, *question.distractors]
         if any(not option.content.strip() or not option.explanation.strip() for option in options):
             raise InvalidOutputError("empty Question option or explanation")
-        if len({answer_key(parse_marked_example(o.content)[0]) for o in options}) != len(options):
+        if len({answer_key(strip_markup(o.content)) for o in options}) != len(options):
             raise InvalidOutputError("correct or distractor option repeated")
         content = question.content
         if kind == "dialogue_completion":

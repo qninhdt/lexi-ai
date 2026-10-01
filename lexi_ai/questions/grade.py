@@ -6,7 +6,7 @@ from lexi_ai.errors import (
     InvalidResourceError,
     MissingProviderError,
 )
-from lexi_ai.inference.config import DecisionConfig
+from lexi_ai.inference.config import DecisionConfig, DecisionMode
 from lexi_ai.inference.prompting import render_decision
 from lexi_ai.models import DefinitionGrade, SingleWordGrade, UsageGrade
 from lexi_ai.text import answer_key, parse_marked_example
@@ -28,14 +28,15 @@ def _selected_sense(response, name, senses):
     return by_key[choice]
 
 
-async def _single_word(db, model, question, answer, config):
+async def _single_word(db, model, question, answer, config, options):
     response = await model.decide(
         *render_decision(
             _PROMPTS + "grade_single_word_1.json",
             question=question.content,
             question_type=question.question_type,
             answer=answer,
-        )
+        ),
+        **options,
     )
     task_fit = config.accepts(response.nouls["task_fit"].noul)
     spelling_error = config.accepts(response.nouls["spelling_error"].noul)
@@ -54,13 +55,14 @@ async def _single_word(db, model, question, answer, config):
             question=question.content,
             answer=answer,
             matched_word=matched_word,
-        )
+        ),
+        **options,
     )
     sense = _selected_sense(response, "matched_sense", matched_word["senses"])
     return SingleWordGrade(True, False, sense["id"] if sense else None)
 
 
-async def _definition(db, model, question, answer):
+async def _definition(db, model, question, answer, options):
     word = await meaning_inventory(db, owner_of=question.sense_id)
     if word is None or not word["senses"]:
         raise InvalidResourceError("Question's Word has no published meaning inventory")
@@ -69,7 +71,8 @@ async def _definition(db, model, question, answer):
             _PROMPTS + "grade_word_to_definition_1.json",
             word=word,
             answer=answer,
-        )
+        ),
+        **options,
     )
     sense = _selected_sense(response, "defined_meaning", word["senses"])
     if sense is None:
@@ -80,7 +83,8 @@ async def _definition(db, model, question, answer):
             word=word,
             selectedSense=sense,
             answer=answer,
-        )
+        ),
+        **options,
     )
     return DefinitionGrade(
         sense["id"],
@@ -89,7 +93,7 @@ async def _definition(db, model, question, answer):
     )
 
 
-async def _usage(model, question, answer, config):
+async def _usage(model, question, answer, config, options):
     # Use the saved Word/meaning, not newly edited dictionary wording.
     tagged, separator, meaning = question.content.partition("</t> — ")
     if not separator or not meaning:
@@ -103,7 +107,8 @@ async def _usage(model, question, answer, config):
             _PROMPTS + "grade_word_to_usage_1.json",
             word=word,
             answer=answer,
-        )
+        ),
+        **options,
     )
     if not config.accepts(response.nouls["used"].noul):
         return UsageGrade(False, None, None, None, None, None)
@@ -113,7 +118,8 @@ async def _usage(model, question, answer, config):
             word=word,
             meaning=meaning,
             answer=answer,
-        )
+        ),
+        **options,
     )
     return UsageGrade(
         True,
@@ -125,7 +131,19 @@ async def _usage(model, question, answer, config):
     )
 
 
-async def grade_answer(db, decision_model, question_id, fmt, answer, *, config: DecisionConfig):
+async def grade_answer(
+    db,
+    decision_model,
+    question_id,
+    fmt,
+    answer,
+    *,
+    config: DecisionConfig,
+    mode: DecisionMode = DecisionMode.LLM_FALLBACK,
+):
+    mode = DecisionMode(mode)
+    # Preserve the original injected-provider signature on default calls.
+    options = {} if mode == DecisionMode.LLM_FALLBACK else {"mode": mode}
     if not isinstance(answer, str) or not answer.strip() or len(answer) > MAX_TEXT_LENGTH:
         raise InvalidResourceError("invalid answer")
     question = await get_question(db, question_id)
@@ -142,7 +160,7 @@ async def grade_answer(db, decision_model, question_id, fmt, answer, *, config: 
     if decision_model is None:
         raise MissingProviderError("free-text grading requires a decision provider")
     if fmt == "single_word":
-        return await _single_word(db, decision_model, question, answer, config)
+        return await _single_word(db, decision_model, question, answer, config, options)
     if question.question_type == "word_to_definition":
-        return await _definition(db, decision_model, question, answer)
-    return await _usage(decision_model, question, answer, config)
+        return await _definition(db, decision_model, question, answer, options)
+    return await _usage(decision_model, question, answer, config, options)

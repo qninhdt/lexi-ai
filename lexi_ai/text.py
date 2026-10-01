@@ -12,6 +12,7 @@ _SPACES = re.compile(r"\s+")
 _BRACES = re.compile(r"\{[^{}]*\}")
 _TAG = re.compile(r'<t inf="([a-z0-9_]+)">([^<>]+)</t>')
 _ANY_TAG = re.compile(r"</?t\b", re.IGNORECASE)
+_ETC_OR_PAREN = re.compile(r"(?:\b[Ee][Tt][Cc]\.?(?:\s|$)|[()])")
 
 
 def validate_lemma(lemma: str) -> str:
@@ -26,7 +27,7 @@ def validate_lemma(lemma: str) -> str:
             raise ValueError("malformed slot")
         if any(match.group() not in SLOTS for match in _BRACES.finditer(lemma)):
             raise ValueError("unknown slot")
-    if re.search(r"(?:\b[Ee][Tt][Cc]\.?(?:\s|$)|[()])", lemma):
+    if _ETC_OR_PAREN.search(lemma):
         raise ValueError("citation contains alternative/optional notation")
     return _SPACES.sub(" ", unicodedata.normalize("NFKC", lemma)).strip()
 

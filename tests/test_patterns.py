@@ -1,7 +1,13 @@
 import pytest
 
 from lexi_ai.patterns import matches_pattern, validate_pattern
-from lexi_ai.text import content_hash, match_key, parse_marked_example, validate_lemma
+from lexi_ai.text import (
+    content_hash,
+    match_key,
+    parse_marked_example,
+    strip_markup,
+    validate_lemma,
+)
 
 
 def test_identity_preserves_lexical_difference():
@@ -29,6 +35,7 @@ def test_licensed_patterns_are_anchored_and_bounded():
 
 def test_markup_and_exact_text_hash():
     assert parse_marked_example('She <t inf="past">took</t> it off.')[1][0].surface == "took"
+    assert strip_markup('She <t inf="past">took</t> it off.') == "She took it off."
     assert content_hash(" a ") != content_hash("a")
     for invalid in ('<t inf="wrong">foo</t>', '<t inf="base">foo', "<t>foo</t>"):
         with pytest.raises(ValueError):

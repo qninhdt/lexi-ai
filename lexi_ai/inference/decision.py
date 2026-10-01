@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul
 
 from ..errors import InvalidOutputError, MissingProviderError
-from .config import DecisionConfig, LLMConfig
+from .config import DecisionConfig, DecisionMode, LLMConfig
 from .usage import UsageRecorder, decision_usage
 
 
@@ -41,9 +41,10 @@ class DecisionModel:
             self._own_primary = True
         return self.primary
 
-    def _fallback(self):
+    def _fallback(self, *, mode: DecisionMode = DecisionMode.LLM_FALLBACK):
         if self.fallback is None:
-            if not self.fallback_model:
+            model = self.fallback_model or self.llm_config.model
+            if not model:
                 raise MissingProviderError("LLM decision fallback model not configured")
             if not self.llm_config.api_key or not self.llm_config.api_key.strip():
                 raise MissingProviderError("LLM decision fallback credentials not configured")
@@ -51,13 +52,25 @@ class DecisionModel:
             from system_one_adapter.providers.openai import AsyncOpenAIProvider
 
             # An explicit provider prevents the adapter from reading SDK environment defaults.
-            provider = AsyncOpenAIProvider(
-                self.fallback_model,
+            options = {}
+            if not self.llm_config.structured_outputs:
+                # The adapter's Responses text path still requires JSON mode.
+                # Chat Completions supports prompted text without JSON enforcement.
+                options["api"] = "chat_completions"
+            provider_type = AsyncOpenAIProvider
+            if self.llm_config.temperature is not None:
+                from .adapter_provider import TemperatureOpenAIProvider
+
+                provider_type = TemperatureOpenAIProvider
+                options["temperature"] = self.llm_config.temperature
+            provider = provider_type(
+                model,
                 api_key=self.llm_config.api_key,
                 base_url=self.llm_config.base_url,
+                **options,
             )
             self.fallback = AsyncSystemOneAdapterClient(
-                structured_outputs=True,
+                structured_outputs=self.llm_config.structured_outputs,
                 llm_answer_mode="discrete",
                 n_retry_malformed_structure=0,
                 model=provider,
@@ -71,10 +84,12 @@ class DecisionModel:
         state: dict,
         questions: Mapping[str, Noul | Choice],
         *,
+        mode: DecisionMode = DecisionMode.LLM_FALLBACK,
         with_usage: bool = False,
     ):
-        """At most one fallback, with identical questions and validated outputs."""
+        """Choose Decision, LLM, or the default Decision-to-LLM fallback path."""
         with UsageRecorder(with_usage) as usage:
+            mode = DecisionMode(mode)
 
             async def request(client):
                 try:
@@ -87,12 +102,22 @@ class DecisionModel:
                     usage.records.extend(decision_usage(response))
                 return response
 
-            response = await request(self._primary())
+            use_llm = mode == DecisionMode.LLM_ONLY or (
+                mode == DecisionMode.LLM_FALLBACK
+                and self.primary is None
+                and not (self.config.api_key and self.config.api_key.strip())
+            )
+            client = self._fallback(mode=mode) if use_llm else self._primary()
+            response = await request(client)
             self._validate(response, questions)
-            if any(
-                not self.config.accepts(response.choices[name].confidence)
-                for name, question in questions.items()
-                if isinstance(question, Choice)
+            if (
+                mode == DecisionMode.LLM_FALLBACK
+                and not use_llm
+                and any(
+                    not self.config.accepts(response.choices[name].confidence)
+                    for name, question in questions.items()
+                    if isinstance(question, Choice)
+                )
             ):
                 response = await request(self._fallback())
                 self._validate(response, questions)

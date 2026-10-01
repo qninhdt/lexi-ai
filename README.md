@@ -119,15 +119,16 @@ subsequent requests even if the caller changes the desired counts.
 
 `DecisionConfig.threshold` is **one configurable inclusive boundary** for decision-model
 yes-probabilities and Choice confidence. Lower-confidence Choices
-fall back through the official System One adapter when a fallback model is set;
+fall back through the official System One adapter;
 `grade_answer` uses the same threshold for decision-model booleans. Pass credentials,
 base URL and model through `DecisionConfig` / `LLMConfig`. Decision fallback uses
-the LLM key/base URL with the separately selected `decision_fallback_model`.
+the LLM key/base URL and `LLMConfig.model`, unless `decision_fallback_model` overrides it.
+`Lexicon` requires LLM credentials or an injected LLM. `decision_config` is optional;
+without a Decision key or injected Decision provider, the default mode uses the LLM directly.
+`decision_only` requires a configured Decision provider and raises an error if absent.
+The default grading threshold without `decision_config` is 0.8.
 
 Grading uses domain-owned JSON-e templates and returns separate diagnostics:
-
-See [the implemented Decision design](docs/decision/README.md) for stage gates,
-output contracts, relation direction and fallback behavior.
 
 - Choice/single-word: `task_fit`, `spelling_error`, `sense_id`. Task fit and spelling
   are independent. Only a fit answer without spelling error searches the top-ranked
@@ -145,12 +146,23 @@ provider limits return per-edge errors, not truncated inventories or negative de
 
 The library and migration runner never read `.env` or environment variables.
 `Lexicon.from_settings()` and `ContentCounts` have been removed; there are no aliases.
-Missing credentials raise an error only when a provider is actually needed, rather
-than falling back to SDK environment configuration. Provider defaults are explicit:
+LLM configuration is required at construction; clients and network requests remain lazy.
+Credentials never fall back to SDK environment configuration. Provider defaults are explicit:
 LLM `gpt-4o` at `https://api.openai.com/v1`, Decision `jev-latest` at
 `https://api.typesafe.ai`. Injected providers remain supported and caller-owned.
-Only examples load `.env`, using the `LLM_*` and `DECISION_*` groups; DB/source/schema,
+Examples and benchmarks share the root `.env` (copy `.env.example`), using the
+`LLM_*` and `DECISION_*` groups; DB/source/schema,
 threshold and per-generation counts are CLI parameters, not `.env` settings.
+
+`LLMConfig(structured_outputs=False)` supports providers without native JSON schema output:
+the schema goes in the prompt, and Lexi parses and validates the returned JSON text locally.
+The default is `True`. Examples/benchmarks use `LLM_STRUCTURED_OUTPUTS=true|false` in root `.env`;
+an `llm_only` benchmark profile can override it with `"structured_outputs": false`.
+This applies to normal LLM tasks, `llm_only`, and Decision's LLM fallback, not Jev requests.
+Malformed output raises an error without corrective retries or automatic mode switching.
+`LLMConfig(temperature=0)` sets the LLM sampling temperature, including Decision's LLM adapter.
+The default `None` omits this parameter. Examples/benchmarks read `LLM_TEMPERATURE` from root `.env`;
+an `llm_only` benchmark profile may override it with `"temperature": 0` (or `null` to omit).
 
 ### Token usage (opt-in)
 
@@ -262,8 +274,7 @@ uv build
 
 `LEXI_TEST_PG_URL` opts into disposable PostgreSQL search, migration and concurrency
 checks. They are skipped without an explicit disposable URL; `LEXI_REQUIRE_PG=1`
-makes its absence an error in CI. See [the technical design](docs/lexi-ai-technical-design.md)
-for the current domain contract. The old code/tests/examples are preserved under `archive/v1/` and are
+makes its absence an error in CI. The old code/tests/examples are preserved under `archive/v1/` and are
 excluded from packaging and the active test suite.
 
 For the reproducible 100,000-Word retrieval probe, set the same disposable URL and
@@ -271,5 +282,3 @@ run `uv run python tests/benchmark_postgres_search.py --source /path/to/cambridg
 --output /tmp/opencode/lexi-search-benchmark.json`. The probe creates and removes
 an isolated schema and reports latency, index usage, buffers, and actual query plans;
 it is evidence for this environment, not a production latency SLO.
-See [search verification](docs/search-verification.md) for measured results,
-planner observations, and the limits of the corpus probe.

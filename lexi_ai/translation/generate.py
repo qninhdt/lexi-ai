@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from lexi_ai.errors import InvalidOutputError, InvalidResourceError, MissingProviderError
 from lexi_ai.inference.prompting import render_prompt
-from lexi_ai.text import content_hash, parse_marked_example
+from lexi_ai.text import content_hash, strip_markup
 
 from . import storage as translations
 
@@ -30,7 +30,7 @@ async def translate_text(db, llm, content: str, target_language: str) -> str:
     if not isinstance(target_language, str) or not _LANGUAGE.fullmatch(target_language):
         raise InvalidResourceError("invalid target language")
     try:
-        translatable, _ = parse_marked_example(content)
+        translatable = strip_markup(content)
         fingerprint = content_hash(translatable)
     except ValueError as exc:
         raise InvalidResourceError("invalid translation text or target expression markup") from exc
