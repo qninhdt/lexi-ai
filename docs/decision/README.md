@@ -110,6 +110,14 @@ The runtime does not read `.env` or environment variables; references to older e
 names in the preserved supplied designs are historical, not configuration APIs.
 Fallback uses `LLMConfig` credentials/base URL and the separate fallback model ID.
 
+Opt-in `with_usage=True` on `grade_answer`, `resolve_relations` or `DecisionModel.decide`
+returns `(normal_result, list[TokenUsage])`. Primary and fallback usage are retained,
+grouped by actual response model ID, including all staged requests. Unknown counts
+remain `None`; the TypeSafe SDK currently exposes input/output but no cache breakdown.
+Relation errors/noops do not discard already reported inference costs. Transport
+failures without metadata and hidden SDK retries cannot be reliably billed from
+these counters alone; consumer pricing remains outside the library.
+
 User/source strings are context data, never evaluated again as JSON-e templates.
 Only static parsed templates are cached; no decision or dictionary snapshot cache
 is introduced. Numeric lexicon IDs remain unchanged.

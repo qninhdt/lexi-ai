@@ -4,6 +4,7 @@ from .db.session import Database
 from .inference.config import DecisionConfig, LLMConfig
 from .inference.decision import DecisionModel
 from .inference.llm import OpenAIStructuredLLM
+from .inference.usage import UsageRecorder
 from .questions import storage as question_rows
 from .questions.generate import generate_questions
 from .questions.grade import grade_answer
@@ -79,7 +80,12 @@ class Lexicon:
         return await search(self.db, self.cambridge, query, include_available)
 
     async def generate(
-        self, available_id: str, theme: str | None = None, *, example_count: int = 5
+        self,
+        available_id: str,
+        theme: str | None = None,
+        *,
+        example_count: int = 5,
+        with_usage: bool = False,
     ):
         """Generate/reuse a selected entry, neutral first.
 
@@ -88,14 +94,19 @@ class Lexicon:
         serializes overlapping requests on the same Word.
         """
         self._open()
-        if type(example_count) is not int or example_count < 1:
-            raise ValueError("example count must be a positive integer")
-        word_id = await generate_word(
-            self.db, self.cambridge, self._llm(), available_id, example_count, theme_key=theme
-        )
-        if theme is not None:
-            return await ensure_word_theme(self.db, self._llm(), word_id, theme, example_count)
-        return await get_word(self.db, word_id)
+        with UsageRecorder(with_usage) as usage:
+            if type(example_count) is not int or example_count < 1:
+                raise ValueError("example count must be a positive integer")
+            llm = usage.wrap(self._llm())
+            word_id = await generate_word(
+                self.db, self.cambridge, llm, available_id, example_count, theme_key=theme
+            )
+            word = (
+                await ensure_word_theme(self.db, llm, word_id, theme, example_count)
+                if theme is not None
+                else await get_word(self.db, word_id)
+            )
+            return usage.finish(word)
 
     async def get_word(self, word_id: int, theme: str | None = None):
         self._open()
@@ -105,9 +116,11 @@ class Lexicon:
         self._open()
         return await get_senses(self.db, ids)
 
-    async def create_theme(self, key: str, name: str, concept: str):
+    async def create_theme(self, key: str, name: str, concept: str, *, with_usage: bool = False):
         self._open()
-        return await create_theme(self.db, self._llm(), key, name, concept)
+        with UsageRecorder(with_usage) as usage:
+            theme = await create_theme(self.db, usage.wrap(self._llm()), key, name, concept)
+            return usage.finish(theme)
 
     async def get_theme(self, key: str):
         self._open()
@@ -134,18 +147,21 @@ class Lexicon:
         distractor_count: int,
         theme: str | None = None,
         target_placement: str | None = None,
+        with_usage: bool = False,
     ):
         self._open()
-        return await generate_questions(
-            self.db,
-            self._llm(),
-            sense_id,
-            question_type,
-            count,
-            distractor_count=distractor_count,
-            theme_key=theme,
-            target_placement=target_placement,
-        )
+        with UsageRecorder(with_usage) as usage:
+            questions = await generate_questions(
+                self.db,
+                usage.wrap(self._llm()),
+                sense_id,
+                question_type,
+                count,
+                distractor_count=distractor_count,
+                theme_key=theme,
+                target_placement=target_placement,
+            )
+            return usage.finish(questions)
 
     async def get_question(self, question_id: int):
         self._open()
@@ -179,28 +195,30 @@ class Lexicon:
         self._open()
         return await question_rows.remove(self.db, question_id)
 
-    async def grade_answer(self, question_id: int, fmt: str, answer: str):
+    async def grade_answer(
+        self, question_id: int, fmt: str, answer: str, *, with_usage: bool = False
+    ):
         self._open()
-        if fmt == "single_choice":
-            return await grade_answer(
-                self.db, None, question_id, fmt, answer, config=self.decision_config
+        with UsageRecorder(with_usage) as usage:
+            model = None if fmt == "single_choice" else usage.wrap(self._decision_model())
+            grade = await grade_answer(
+                self.db, model, question_id, fmt, answer, config=self.decision_config
             )
-        return await grade_answer(
-            self.db,
-            self._decision_model(),
-            question_id,
-            fmt,
-            answer,
-            config=self.decision_config,
-        )
+            return usage.finish(grade)
 
-    async def resolve_relations(self, batch_size: int = 20):
+    async def resolve_relations(self, batch_size: int = 20, *, with_usage: bool = False):
         self._open()
-        return await resolve_relations(self.db, self._decision_model(), batch_size)
+        with UsageRecorder(with_usage) as usage:
+            results = await resolve_relations(
+                self.db, usage.wrap(self._decision_model()), batch_size
+            )
+            return usage.finish(results)
 
-    async def translate_text(self, content: str, target_language: str):
+    async def translate_text(self, content: str, target_language: str, *, with_usage: bool = False):
         self._open()
-        return await translate_text(self.db, self._llm(), content, target_language)
+        with UsageRecorder(with_usage) as usage:
+            text = await translate_text(self.db, usage.wrap(self._llm()), content, target_language)
+            return usage.finish(text)
 
     async def get_translation(self, identifier: int):
         self._open()

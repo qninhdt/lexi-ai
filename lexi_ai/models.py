@@ -6,6 +6,17 @@ from .vocab import ALLOWED_PAIRS
 
 
 @dataclass(frozen=True)
+class TokenUsage:
+    """Provider-reported counts; input includes cached tokens, None means unreported."""
+
+    model_id: str | None
+    input_tokens: int | None
+    cache_read_tokens: int | None
+    cache_write_tokens: int | None
+    output_tokens: int | None
+
+
+@dataclass(frozen=True)
 class Definition:
     id: int
     content: str

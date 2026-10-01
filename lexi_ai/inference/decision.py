@@ -7,6 +7,7 @@ from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul
 
 from ..errors import InvalidOutputError, MissingProviderError
 from .config import DecisionConfig, LLMConfig
+from .usage import UsageRecorder, decision_usage
 
 
 class DecisionModel:
@@ -69,18 +70,33 @@ class DecisionModel:
         self,
         state: dict,
         questions: Mapping[str, Noul | Choice],
+        *,
+        with_usage: bool = False,
     ):
         """At most one fallback, with identical questions and validated outputs."""
-        response = await self._primary().system_one(state=state, questions=questions)
-        self._validate(response, questions)
-        if any(
-            not self.config.accepts(response.choices[name].confidence)
-            for name, question in questions.items()
-            if isinstance(question, Choice)
-        ):
-            response = await self._fallback().system_one(state=state, questions=questions)
+        with UsageRecorder(with_usage) as usage:
+
+            async def request(client):
+                try:
+                    response = await client.system_one(state=state, questions=questions)
+                except Exception as error:
+                    if with_usage:
+                        usage.records.extend(decision_usage(error))
+                    raise
+                if with_usage:
+                    usage.records.extend(decision_usage(response))
+                return response
+
+            response = await request(self._primary())
             self._validate(response, questions)
-        return response
+            if any(
+                not self.config.accepts(response.choices[name].confidence)
+                for name, question in questions.items()
+                if isinstance(question, Choice)
+            ):
+                response = await request(self._fallback())
+                self._validate(response, questions)
+            return usage.finish(response)
 
     @staticmethod
     def _validate(response, questions):

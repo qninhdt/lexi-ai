@@ -74,6 +74,14 @@ loads `.env`; examples alone parse `LLM_*` and `DECISION_*`. DB/source/schema an
 threshold are passed as CLI parameters there. There is no `from_settings()` or
 constructor-level content-count configuration.
 
+AI public methods optionally return `(value, list[TokenUsage])` with
+`with_usage=True`. Shared inference owns normalization and request-local collection,
+not pricing or persistence. The opt-in provider adapter preserves domain return
+values while collecting each staged/parallel request and fallback; concurrent
+operations have independent collectors. Counts are grouped by actual response model,
+and missing metadata remains `None`. Provider-free paths return an empty list.
+Default calls do not inspect usage metadata or change their return types.
+
 PostgreSQL handles lexical fuzzy retrieval and scoring through three GIN
 `pg_trgm` indexes (lemma, alias, Sense form); B-tree pattern indexes handle
 prefixes. Fuzzy `%` filtering uses a transaction-local threshold of 0.3 and

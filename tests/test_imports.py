@@ -10,7 +10,7 @@ def test_public_values_do_not_eagerly_import_providers_or_orm():
     code = """
 import sys
 import lexi_ai
-from lexi_ai import DecisionConfig, LLMConfig
+from lexi_ai import DecisionConfig, LLMConfig, TokenUsage
 from lexi_ai.models import Word, Question
 assert 'lexi_ai_v2' not in sys.modules
 assert 'sqlalchemy' not in sys.modules
@@ -18,6 +18,7 @@ assert 'openai' not in sys.modules
 assert 'typesafe_sdk' not in sys.modules
 assert LLMConfig().model == 'gpt-4o'
 assert DecisionConfig(0.8).accepts(0.8)
+assert TokenUsage('actual', 1, 0, None, 2).input_tokens == 1
 """
     subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, text=True)
 

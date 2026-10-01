@@ -28,7 +28,7 @@ def test_wheel_import_and_resources_from_isolated_install(tmp_path):
     code = """
 import importlib.util
 from pathlib import Path
-from lexi_ai import DecisionConfig, Lexicon, LLMConfig
+from lexi_ai import DecisionConfig, Lexicon, LLMConfig, TokenUsage
 import lexi_ai
 assert importlib.util.find_spec('lexi_ai_v2') is None
 assert not hasattr(lexi_ai, 'LexiAI')
@@ -38,6 +38,7 @@ assert not hasattr(lexi_ai, 'ContentCounts')
 assert not hasattr(Lexicon, 'from_settings')
 assert LLMConfig().base_url == 'https://api.openai.com/v1'
 assert DecisionConfig(0.8).accepts(0.8)
+assert TokenUsage('actual', 1, 0, None, 2).cache_write_tokens is None
 assert Lexicon.__module__ == 'lexi_ai.api'
 root = Path(lexi_ai.__file__).parent
 assert (root / 'alembic.ini').is_file()

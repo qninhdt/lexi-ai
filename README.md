@@ -152,6 +152,50 @@ LLM `gpt-4o` at `https://api.openai.com/v1`, Decision `jev-latest` at
 Only examples load `.env`, using the `LLM_*` and `DECISION_*` groups; DB/source/schema,
 threshold and per-generation counts are CLI parameters, not `.env` settings.
 
+### Token usage (opt-in)
+
+AI operations normally return exactly the same values as before. Add `with_usage=True`
+to receive a tuple, not a result wrapper:
+
+```python
+word, usage = await lexicon.generate(available_id, example_count=3, with_usage=True)
+grade, usage = await lexicon.grade_answer(question_id, "short_answer", answer, with_usage=True)
+for item in usage:
+    print(item.model_id, item.input_tokens, item.cache_read_tokens,
+          item.cache_write_tokens, item.output_tokens)
+```
+
+Supported on `generate`, `create_theme`, `generate_questions`, `grade_answer`,
+`resolve_relations`, `translate_text`, and directly on `OpenAIStructuredLLM.complete`
+and `DecisionModel.decide`. `usage` is a `list[TokenUsage]`, summed by actual response
+model ID across all requests within that operation, including staged grading,
+neutral/themed generation, parallel relations and Decision fallback. No global
+`last_usage` state is used; simultaneous calls cannot mix each other's accounting.
+Saved answers, stored generation and translation-cache hits return `usage=[]`.
+
+`TokenUsage` has `model_id`, `input_tokens`, `cache_read_tokens`,
+`cache_write_tokens`, `output_tokens`. **Unknown metadata is `None`, never invented
+as zero**; model ID is also `None` if no provider response identifies it. If one
+request omits a count, the aggregate for that model/count remains unknown.
+For OpenAI, `input_tokens` is the full prompt count **including cache reads**, so
+do not add cached input again. OpenAI cache reads come from cached-token details;
+cache writes are unknown unless explicitly reported. The current TypeSafe SDK
+reports input/output but not cache breakdown. An alias in configuration is not
+substituted for an unreported actual model ID.
+
+Exceptions preserve their original type; in usage mode, `.usage` carries reported
+counts collected before failure. Relation pages include counts for failed/noop
+edges as well as successful ones. Hidden SDK retries/transport failures with no
+returned metadata cannot be reconstructed; this is reported accounting, **not a
+guaranteed complete provider invoice**, and the library calculates no prices.
+The official fallback adapter's available attempt traces/cumulative counts are
+included without double-counting the final attempt.
+
+Injected providers retain their original protocol for default calls. To opt in,
+their `complete` / `decide` must accept `with_usage=True` and return
+`(normal_value, list[TokenUsage])`; on failure they should attach available counts
+as `error.usage`. Only the opt-in adapter is used, with no extra AI requests.
+
 Question types: `definition_to_word`, `context_to_word`, `cloze_to_word`,
 `word_to_definition`, `word_to_usage`, `dialogue_completion`,
 `meaning_in_context`. `dialogue_completion` accepts `target_placement="dialogue"`

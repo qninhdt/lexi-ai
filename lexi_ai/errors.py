@@ -1,8 +1,17 @@
 """Errors at the consumer boundary."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .models import TokenUsage
+
 
 class LexiconError(Exception):
     """Base error for an unsuccessful dictionary operation."""
+
+    usage: list[TokenUsage] | None = None
 
 
 class InvalidHandleError(LexiconError):

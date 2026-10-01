@@ -223,3 +223,20 @@ wording is not proof of cache identity. `--translation-id` reads a saved record;
 Every script uses the variable `lexicon` and closes it in `finally`. Exceptions are left visible rather
 than disguised as successful negative semantic results. Retries, concurrency and
 learner progress belong to the consuming application.
+
+## Optional accounting in consumer code
+
+The example scripts keep the default return values. In your own integration:
+
+```python
+word, usage = await lexicon.generate(available_id, example_count=3, with_usage=True)
+grade, usage = await lexicon.grade_answer(question_id, "short_answer", answer, with_usage=True)
+translation, usage = await lexicon.translate_text("bank", "vi", with_usage=True)
+```
+
+`usage` contains `TokenUsage` objects aggregated by actual model ID. Each exposes
+`input_tokens`, `cache_read_tokens`, `cache_write_tokens`, `output_tokens`.
+Provider-free operations return `[]`; unreported metadata is `None`, not zero.
+Input tokens include cached input, so do not double-charge cache reads. Different
+Decision/fallback models have separate records. See the root README for failure
+accounting and SDK reporting limitations. No pricing or billing records are saved.
