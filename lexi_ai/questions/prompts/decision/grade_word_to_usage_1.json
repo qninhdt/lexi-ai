@@ -1,0 +1,19 @@
+{
+  "state": {
+    "word": "${word.lemma}",
+    "answer": {
+      "$eval": "answer"
+    }
+  },
+
+  "questions": {
+    "used": {
+      "type": "noul",
+      "instructions": "Does `answer` actually attempt to use `word` or one of its licensed forms? Count clear spelling or form errors as use when the intended target expression is still identifiable. Do not count synonyms or different lexical expressions.",
+      "criteria": {
+        "true": "The target lexical expression is recognizably used or attempted.",
+        "false": "The target lexical expression is not used."
+      }
+    }
+  }
+}

@@ -1,246 +1,183 @@
 # Lexi-AI
 
-A lazy-generation English learner's dictionary library. It synthesizes dictionary
-entries with an LLM **on demand**, anchored to Cambridge and WordNet for
-hallucination control, and caches results in a local database so repeat lookups
-cost zero tokens.
+An async Python library for building English vocabulary-learning applications.
+Generate learner-friendly dictionary content from selected reference entries,
+create exercises, grade answers, and reuse saved content across requests.
 
 ## Features
 
-- **Lazy lookup** — the first lookup of a word spends tokens to synthesize a full
-  entry (senses, examples, CEFR levels, aliases, related words); every lookup
-  after is a free cache hit. Surface variants (case, diacritics, US/UK spelling,
-  `{sb}`/`{sth}` placeholders) fold to one entry via a single normalization key.
-- **Selective anchoring** — senses (definitions + examples) are synthesized from
-  Cambridge + WordNet anchors, never copied, to keep the LLM honest; IPA
-  pronunciation is hard-anchored from Cambridge (per POS); semantic relations are
-  LLM-generated, not anchored.
-- **Pronunciation** — each sense carries per-POS IPA (`ipa_uk` / `ipa_us`),
-  anchored from Cambridge and surfaced on `SenseView`.
-- **Word enrichment** — each entry carries learner-dictionary labels (guideword,
-  grammar, register, connotation, collocations, domain, usage note) and
-  word-reference links (word-family, confused-with, hypernym, hyponym), all emitted
-  in the same LLM call.
-- **Inflection forms** — each sense carries its complete grammatical paradigm
-  (`run` → ran/running/runs; `good` → better/best), emitted per POS by the LLM and
-  surfaced on `SenseView.forms`. Example sentences tag the target word with its
-  inflection (`<t inf="past">glistened</t>`) for display highlighting and cloze
-  blanking; `parse_marked_example`/`strip_markup` read the tags.
-- **Topic tags & semantic search** — browse words by open-vocabulary topic tags,
-  or rank senses by meaning with local embeddings and a vector index (optional
-  extras). Vectors live outside the primary database and are reconciled by
-  `backfill_embeddings`. Generation never fails over a missing vector, but
-  `semantic_search` raises if the encoder or index is broken rather than
-  answering "no match".
-- **Themes** — restyle an entry's definitions and examples in a named voice
-  ("Harry Potter", "humorous") authored via `create_theme`. Themed content
-  overlays the neutral entry (the canonical `match_key` invariant is untouched)
-  and is generated once after the neutral content, then cached — the app picks
-  one active theme like a light/dark-mode switch.
-- **Cached assets** — reference-addressed cache for derived content: **translation**
-  (real, LLM-backed) and **text-to-speech** (real, OpenAI-compatible). Identity is
-  the source reference `(source_kind, source_id, kind, params)`, plus a stored
-  `content_hash` verified on read — so a regenerated or reused source yields a clean
-  miss (never stale content), and a repeat call spends zero tokens.
-- **Question engine** — prepare, retrieve, and evaluate persisted vocabulary
-  questions through five registered types. Plugin identity (`type_id`) is separate
-  from the UI contract (`render_format`); level 0 is exposure and levels 1–4 are
-  assessments. Preparation is best-effort, retrieval is exact and never generates,
-  and evaluation reports `graded` or `pending`.
-- **Portable storage** — one schema runs on both SQLite and Postgres (portable
-  column types only, no JSONB/ARRAY/native enum).
+- **Dictionary:** definitions, examples, pronunciation, inflections, usage patterns,
+  collocations, and semantic relations organized by Word and Sense.
+- **Search:** lemma, alias, inflection, and expression matching, with PostgreSQL
+  fuzzy suggestions.
+- **Exercises:** seven question types with saved answers and explanations.
+- **Grading:** separate diagnostics for word choice, definitions, and usage.
+- **Themes:** alternative wording and example contexts for the same lexical meanings.
+- **Translation:** text translation with a persistent cache.
 
-## Install
+## Installation
 
-This project uses [uv](https://docs.astral.sh/uv/) for environment and dependency
-management.
+Requires **Python 3.14+**, an OpenAI-compatible LLM provider, and a generated-content
+database. PostgreSQL with `pg_trgm` supports the full search functionality; SQLite
+is suitable for local development without fuzzy search.
+
+Install from a local checkout:
 
 ```bash
-uv sync                      # create .venv and install runtime + dev deps
-uv sync --extra embeddings --extra lancedb   # optional: semantic search
+python -m pip install .
+git lfs pull
 ```
 
-### Semantic search is opt-in
+The project-owned reference dataset is `data/cambridge.db`, distributed through
+Git LFS and opened read-only. It uses a Cambridge-compatible SQLite schema and is
+separate from the database storing generated content. The wheel does not bundle it.
 
-Everything above works on a plain `uv sync`. Ranking senses by meaning is a
-separate feature, **off by default**, because it costs two heavy optional
-dependencies (an encoder, ~200MB, and a vector index, ~300MB) that most callers
-never want. Turn it on with both halves:
+### Database setup
+
+For a **new PostgreSQL dictionary database**, apply the packaged migrations once:
 
 ```bash
-uv sync --extra embeddings --extra lancedb   # encoder + durable index
-export LEXI_VECTOR_BACKEND=lancedb           # default is "none"
+python -m lexi_ai.migrations upgrade \
+  'postgresql+asyncpg://user:password@localhost/lexicon'
 ```
 
-While it is off, generation and lexical search behave normally and simply store no
-vectors. `semantic_search()` and `backfill_embeddings()` raise
-`SemanticSearchDisabled` — they never return an empty result, because "the feature
-is off" must not be readable as "this word is not in the dictionary". Selecting a
-backend whose extra is missing fails immediately when the `Lexicon` is built, with
-the install command in the message.
+PostgreSQL uses the `lexi` schema by default. The database role needs permission to
+create that schema and install `pg_trgm`. For a custom schema, pass `--db-schema`
+to the migration CLI and the same `db_schema` to `Lexicon`.
+The initial baseline requires an empty generated-content schema.
+Never migrate the reference dataset. Constructing `Lexicon` does not run migrations.
 
-To degrade gracefully, catch the one base class:
+## Quickstart
 
-```python
-from lexi_ai.domain.errors import SemanticSearchUnavailable
-
-try:
-    hits = await reader.semantic_search(query)
-except SemanticSearchUnavailable:
-    hits = await reader.search(query)   # fall back to lexical, knowingly
-```
-
-## Usage
+Set `LLM_API_KEY` in your application's environment, then run:
 
 ```python
 import asyncio
-from lexi_ai import Lexicon
+import os
+
+from lexi_ai import Lexicon, LLMConfig
+
 
 async def main():
-    # One graph, two facades over it. The reader can only read; the engine is the
-    # only object that can change a row or spend a model call. A read-only process
-    # takes just the reader and cannot generate by accident.
-    #
-    # Build the graph once: it owns the database engine and the process-scoped
-    # locks that make one word generate exactly once.
-    lex = Lexicon.from_settings()   # reads LEXI_* env / .env
-    read, work = lex.reader(), lex.engine()
-    await work.init()
-
-    # Search (free) → generate (spends tokens once) → cached thereafter.
-    results = await read.search("serendipity")
-    entry = await work.generate(results[0])
-    print(entry.display, entry.senses[0].definition)
-
-    # Question engine: inspect capabilities, prepare persisted assessments,
-    # retrieve one exact question, then evaluate by durable question id.
-    from lexi_ai import PrepareDemand
-
-    question_types = work.question_types()
-    sense_id = entry.senses[0].sense_id
-    report = await work.prepare_questions(
-        entry.word_id,
-        [PrepareDemand(sense_id=str(sense_id), difficulty_level=1, expected_count=1)],
+    lexicon = Lexicon(
+        db_url="postgresql+asyncpg://user:password@localhost/lexicon",
+        db_schema="lexi",
+        cambridge_path="data/cambridge.db",
+        llm_config=LLMConfig(
+            api_key=os.environ["LLM_API_KEY"],
+            base_url="https://api.openai.com/v1",
+            model="gpt-4o",
+        ),
     )
-    question = await read.retrieve_question(
-        sense_id,
-        difficulty_level=1,
-        excluded_ids=frozenset(),
-        type_id="definition_mcq",
-    )
-    if question is not None:
-        # Grading a rubric type needs the judge, so it goes through the engine.
-        evaluation = await work.evaluate_answer(
-            question.question_id, question.payload["correct_index"]
+    try:
+        matches = await lexicon.search("bank", include_available=True)
+        for hit in matches.available:
+            print(hit.available_id, hit.display)
+
+        # Select an entry from the available results, not an arbitrary identifier.
+        if not matches.available:
+            print("Stored matches:", matches.words)
+            return
+        available_id = input("Selected available_id: ").strip()
+        word = await lexicon.generate(available_id, target="bank", example_count=3)
+        for sense in word.senses:
+            print(sense.pos, sense.definition.content)
+
+        questions = await lexicon.generate_questions(
+            word.senses[0].id,
+            "definition_to_word",
+            count=2,
+            distractor_count=3,
         )
-        print(question.type_id, question.render_format, evaluation.status)
+        grade = await lexicon.grade_answer(questions[0].id, "single_word", "bank")
+        print(grade)
+        print(await lexicon.translate_text("I went to the bank.", "vi"))
+    finally:
+        await lexicon.close()
 
-    # Themes: author a voice once (LLM-expanded if description/tone are omitted,
-    # generated in-line the first time a word is fetched under it), read the overlay.
-    theme = await work.create_theme("Pirate", "narrate like a salty pirate")
-    themed = await work.generate(results[0], theme=theme.key)
-    print(themed.senses[0].definition)                   # restyled definition
-
-    # Cached assets (reference-addressed by sense id): a repeat call is free.
-    print(await work.translate_sense(sense_id, "vi"))     # real, LLM-backed
-    # TTS is real when LEXI_TTS_* is configured (OpenAI-compatible /audio/speech);
-    # unconfigured, the stub raises rather than caching fake audio.
-    clip = await work.tts_sense(sense_id)                # Asset (file_path to the clip)
 
 asyncio.run(main())
 ```
 
-`Lexicon` is the composition root: it wires the object graph and hands out
-`reader()`/`engine()`, but exposes no use case of its own. Build it once per process
-— it owns the database engine and the locks that collapse duplicate generation, so a
-second instance would silently undo both.
+Generation reuses an already-generated selected entry. Stored reads never generate
+content, while each `generate_questions()` call appends new questions.
 
-Configuration is env-driven (prefix `LEXI_`): `LLM_BASE_URL`, `LLM_API_KEY`,
-`LLM_MODEL`, `DB_URL`, `CAMBRIDGE_DB_PATH`. Copy `examples/.env.example` to `.env`
-to get started. The model is **never hardcoded** — it comes only from
-`LEXI_LLM_MODEL`.
+**Question objects contain answers and explanations.** Keep them on your server;
+send learners only the prompt and, for multiple choice, shuffled option IDs and text.
 
-Asset and theme knobs (all `LEXI_`-prefixed):
+## Questions and grading
 
-- `ASSET_CACHE_DIR` — where TTS clips are written (default `./lexi-assets`);
-  translation results live in the DB.
-- `VECTOR_BACKEND` — `lancedb` (default; durable, on disk) or `memory`
-  (non-durable, in-process). `VECTOR_PATH` is the LanceDB store directory
-  (default `./lexi-vectors`); `VECTOR_METRIC` defaults to `cosine`.
-- `TRANSLATE_MODEL` — optional per-task model override for translation; falls
-  back to `LLM_MODEL` when empty.
-- `TTS_BASE_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `TTS_FORMAT` — the
-  OpenAI-compatible TTS provider. When a key is set, `TTS_BASE_URL` must be
-  `https://` (or a loopback host) so the key is never sent in cleartext. Leave
-  them unset and TTS falls back to a stub that raises rather than caching fake
-  audio.
+| Question type | Response formats |
+| --- | --- |
+| `definition_to_word` | `single_choice`, `single_word` |
+| `context_to_word` | `single_choice`, `single_word` |
+| `cloze_to_word` | `single_choice`, `single_word` |
+| `word_to_definition` | `single_choice`, `short_answer` |
+| `word_to_usage` | `single_choice`, `short_answer` |
+| `dialogue_completion` | `single_choice` |
+| `meaning_in_context` | `single_choice` |
 
-### Managing & batch
+`grade_answer()` returns task-specific diagnostics:
 
-Every resource has get/list/delete alongside create — `get_theme`/`update_theme`/
-`delete_theme`, `delete_entry`/`list_entries`/`list_entries_by_tag`,
-`rename_tag`/`delete_tag`/`merge_tags`, `get_asset`/`list_assets`/`delete_asset`/
-`purge_assets`. Bulk variants (`generate_many`, `get_many`, `translate_many`,
-`tts_many`, `get_status_many`) run concurrently and return a
-`list[BatchResult]` — one entry per input, in order; a failed item never aborts
-the rest (check `result.ok` / `result.value` / `result.error`). Question work uses
-`prepare_questions`; persisted assessments are selected with `retrieve_question`
-and evaluated with `evaluate_answer`.
+- **Word choice:** `task_fit`, `spelling_error`, `sense_id`.
+- **Definition:** `sense_id`, `accuracy`, `coverage`.
+- **Usage:** `used`, `meaning`, `form`, `construction`, `collocation`, `appropriacy`.
 
-`add_examples(sense_id, n=3, theme=None)` appends up to `n` fresh example
-sentences to a single sense (neutral, or a themed overlay when `theme=` is set —
-the word must already be themed) and returns the updated `SenseView`; it never
-overwrites existing examples and never re-embeds. `stats()` returns read-only
-dictionary counts (words by status, senses, examples, tags, themes, themed
-words, assets by kind, questions).
+Saved option IDs and normalized exact saved word answers are graded locally.
+Other answers use model inference. Diagnostics may be `None` when an earlier
+stage cannot identify a meaning or detect target use. Model judgments are not
+guaranteed correctness or learner-mastery scores.
 
-### Question types
+## Configuration
 
-`question_types()` returns the registered capability descriptors. `type_id`
-selects generation/evaluation behavior; `render_format` selects the UI payload
-contract, so multiple types can share one renderer. Difficulty is explicit:
-level 0 is non-assessable exposure and levels 1–4 are assessments.
+Pass configuration explicitly; the library does not load `.env` files.
+`LLMConfig` supports provider URL/model, timeout, output-token limit, temperature,
+reasoning effort, and bounded retries. Set `structured_outputs=False` for prompted
+JSON output with local repair and schema validation.
 
-| Type ID | Render format | Levels | Mode |
-|---------|---------------|--------|------|
-| `flashcard` | `flashcard` | 0 | exposure |
-| `definition_mcq` | `single_choice` | 1 | assessment |
-| `contextual_mcq` | `single_choice` | 1–2 | assessment |
-| `cloze` | `text_span` | 2–3 | assessment |
-| `use_in_sentence` | `free_text` | 3–4 | assessment |
+Grading and Sense Linking use the LLM by default. To use a native decision model,
+pass a `DecisionConfig` with credentials, URL, model, and confidence threshold.
+Both operations accept these modes:
 
-`prepare_questions(word_id, demands)` best-effort creates persisted assessments
-and returns produced counts by `(sense_id, difficulty_level)`.
-`retrieve_question(...)` performs exact type/level selection, excludes supplied
-question IDs, and never generates or falls back. `retrieve_exposure(sense_id)`
-builds the level-0 flashcard. `evaluate_answer(question_id, answer)` returns an
-`Evaluation` with status `graded` or `pending`; exposure cards are not assessable.
+| Mode | Behavior |
+| --- | --- |
+| `llm_fallback` | Use the decision provider if configured; low-confidence Choices use the LLM. Without a decision provider, use the LLM directly. |
+| `decision_only` | Use only the configured decision provider. |
+| `llm_only` | Use only the LLM. |
 
-The existing `matching`, `listening`, `spelling`, `pronunciation_mcq`, and
-`collocation_fill` plugin files are intentionally unregistered while they await
-migration to this contract in a follow-up.
+Add `with_usage=True` to AI operations to receive `(result, list[TokenUsage])`.
+Usage is aggregated by reported model ID; cache hits return an empty list and
+unreported token counts remain `None`.
 
-## Examples
+## Integration
 
-Runnable end-to-end trials live in [`examples/`](examples/README.md) (they hit a
-live LLM on first run). For instance:
+`Lexicon` exposes Word/Sense reads, Theme management, question generation/retrieval,
+grading, relation resolution, and translation-cache management. Lists support
+cursor pagination. See the [runnable examples](examples/README.md) for each workflow.
 
-```bash
-uv run python examples/01_lookup_word.py serendipity
-uv run python examples/12_question_engine.py eloquent
-```
+Themes use separate content namespaces: `theme=None` selects neutral content;
+requesting a Theme never silently substitutes neutral content. Translation caches
+use the exact unwrapped input text and target language.
+
+The application owns scheduling and coordination of overlapping operations.
+`resolve_relations()` explicitly processes a global page of eligible links; Word
+generation does not resolve them automatically. If you supply an SQLAlchemy
+`AsyncSession` instead of `db_url`, you own its transaction and lifecycle.
 
 ## Development
 
 ```bash
-uv run pytest             # full test suite (no live LLM — fake runnables)
-uv run ruff check .       # lint
-uv run ruff format .      # format
+uv sync --locked
+uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
+uv run lint-imports
+uv build
 ```
 
-The suite is hermetic: no network, no live LLM calls. See
-[`docs/system-architecture.md`](docs/system-architecture.md) for the design.
+PostgreSQL tests require `LEXI_TEST_PG_URL` pointing to a **disposable** database.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) covers this project's code and project-owned reference dataset.
+Third-party dependencies retain their own licenses.

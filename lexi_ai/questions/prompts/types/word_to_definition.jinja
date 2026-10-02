@@ -1,0 +1,28 @@
+## Word to Definition
+
+### Question Construction
+
+- Present the exact `word` wrapped as `<t inf="base">word</t>` as the entire question content; substitute only the supplied word text.
+- Use the supplied definition of the selected Sense as the semantic authority for distractors and explanations.
+- Treat the selected Sense as the generation target, but consider the complete meaning inventory of the displayed Word when determining option validity.
+- Do not add contextual information that artificially restricts the displayed Word to one Sense unless it is explicitly part of the supplied fixed content.
+
+### Distractor Construction
+
+- Generate distractors as clear, learner-facing English definitions, not words, usage examples, grammatical descriptions, or explanations.
+- Ensure every distractor is incorrect for ALL established Senses of the displayed Word, not merely different from the selected Sense.
+- Never use another valid definition or paraphrase of the displayed Word as a distractor, even when it belongs to a different Sense.
+- Favor plausible semantic confusions involving neighboring concepts, lexical associations, differences in scope, function, manner, intensity, or implications.
+- Construct distractors around meaningful semantic distinctions rather than arbitrary changes to otherwise valid definitions.
+- Consider established meanings of easily confused lexical items when they provide useful distractor material.
+- Reject descriptions that remain valid under a reasonable interpretation of any known Sense, including overly broad definitions that encompass the target meaning.
+- Avoid definitions that differ from the correct option only through trivial wording changes, misleading negation, or unnecessarily obscure language.
+- Keep options comparable in abstraction, semantic specificity, grammatical presentation, and linguistic complexity.
+- Avoid distractors that are semantically redundant with one another. Explore different plausible misunderstandings where meaningful distinctions are available.
+
+### Option Explanations
+
+- Explain why the correct definition accurately represents the selected Sense, highlighting its distinguishing semantic characteristics.
+- For each distractor, identify the specific semantic difference that makes its description invalid for the displayed Word.
+- When a distractor describes another established concept, clarify the distinction without falsely attributing that meaning to the target Word.
+- Avoid unsupported claims that a Word never carries a particular meaning when the actual distinction is narrower or context-dependent.

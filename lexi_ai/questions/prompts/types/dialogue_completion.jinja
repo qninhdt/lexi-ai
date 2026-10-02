@@ -1,0 +1,50 @@
+{% set target_placement = target_placement | default("dialogue") %}
+## Dialogue Completion
+
+### Dialogue Construction
+
+- Create a natural, coherent English dialogue between identifiable speakers, with exactly one missing spoken reply represented by `null`.
+- Establish a meaningful conversational situation in which understanding or appropriately applying the selected Sense is necessary to complete the exchange.
+- Provide sufficient conversational context to identify the speakers' intentions, relevant circumstances, and expected direction of the missing reply.
+- Maintain consistency in speaker identities, roles, turn order, shared knowledge, and references throughout the dialogue.
+- Account for relevant pragmatic factors, such as speaker intention, interpersonal relationships, politeness, register, and conversational expectations.
+- Use natural spoken English appropriate to the participants and situation. Avoid artificial exchanges constructed solely to accommodate the target expression.
+- Keep the dialogue focused. Include additional turns only when they provide useful context for interpreting or completing the exchange.
+- Represent the missing reply exclusively as `null`; do not introduce additional blanks or missing turns.
+- Do not disclose the missing reply elsewhere in the dialogue.
+- Do not treat mere lexical overlap with the conversation as evidence that a response is appropriate.
+- Preserve the selected Sense and ensure the dialogue tests meaningful vocabulary knowledge rather than general conversational common sense alone.
+
+### Response Construction
+
+- Generate the correct option as a natural spoken reply that appropriately continues the dialogue and satisfies the selected learning objective.
+- Generate distractors as plausible conversational replies reflecting meaningful semantic, contextual, or pragmatic misunderstandings.
+- Favor distractors that appear reasonable in isolation but fail an important requirement established by the conversation.
+- Distinguish incorrect interpretation, inappropriate communicative intention, speaker-role confusion, and misuse of the target expression where applicable.
+- Avoid obviously irrelevant, incoherent, or absurd replies that can be eliminated without understanding the dialogue.
+- Ensure exactly one saved option is appropriate under the established conversational context.
+- Keep options comparable in conversational register, fluency, and level of detail. Do not reveal the correct answer through superficial differences.
+- Explain why the correct reply appropriately continues the exchange and identify the specific misunderstanding or usage problem behind each distractor.
+
+{% if target_placement == "dialogue" %}
+### Target in Dialogue
+
+- Include the complete target expression in at least one visible spoken turn, accurately using the selected Sense and applying Target Expression Tagging.
+- Make the missing reply depend on interpreting the target expression and responding appropriately to the speaker's communicative intention.
+- Construct distractors around plausible misunderstandings of the target's meaning, implications, or role in the conversation.
+- Do not make the correct response identifiable through superficial repetition of the target expression.
+- Answer options are not required to contain the target; prioritize natural conversational responses.
+
+{% elif target_placement == "options" %}
+### Target in Options
+
+- Establish a dialogue that naturally creates an opportunity to use the selected target expression in the missing reply.
+- Convey the intended meaning through the visible conversation without explicitly using the target expression or its aliases.
+- Include the complete target expression or a licensed inflected form in EVERY option, preserving its lexical identity and fixed components.
+- Apply Target Expression Tagging consistently to the target in both correct and incorrect options. Tagging identifies the lexical target, not correctness.
+- Make the correct reply use the target in its selected Sense while appropriately addressing the preceding conversation and speaker intention.
+- Construct distractors around inappropriate semantic application, conversational intention, speaker roles, or grammatical and collocational misuse of the target.
+- Keep grammatical errors directly related to the target's usage. Do not introduce unrelated language mistakes merely to make an option incorrect.
+- Do not make the correct option identifiable through the presence, absence, or highlighting of the target expression.
+
+{% endif %}

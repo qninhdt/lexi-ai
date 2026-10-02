@@ -1,80 +1,43 @@
-"""Lexi-AI: lazy LLM dictionary library.
+"""On-demand learner dictionary.
 
-Synthesizes an English learner's dictionary with an LLM, anchored to Cambridge
-and WordNet for hallucination control. See ``plans/`` for the design.
+Importing this package does not initialize clients or database connections.
 """
 
-from lexi_ai.api import Lexicon
-from lexi_ai.contracts.questions import (
-    AnswerSubmission,
-    ChoiceResponse,
-    ChoiceReveal,
-    Evaluation,
-    Flashcard,
-    FreeText,
-    PrepareDemand,
-    PresentedQuestion,
-    QuestionTypeInfo,
-    RenderContract,
-    RenderKind,
-    Response,
-    Reveal,
-    RubricReveal,
-    SingleChoice,
-    SpanReveal,
-    TextResponse,
-    TextSpan,
-)
-from lexi_ai.facades import LexiconEngine, LexiconReader
-from lexi_ai.markup import parse_marked_example, strip_markup
-from lexi_ai.normalize import match_key, render
-from lexi_ai.questions.base import PrepareReport
-from lexi_ai.read_models import (
-    Asset,
-    BatchResult,
-    Entry,
-    SearchResult,
-    SemanticHit,
-    TagCount,
-    Theme,
-    TopicView,
-)
+import importlib
+
+from .inference.config import DecisionConfig, DecisionMode, LLMConfig
+from .inference.llm import StructuredLLM
+from .models import TokenUsage
 
 __all__ = [
+    "DecisionConfig",
+    "DecisionMode",
+    "LEXI_SCHEMA",
+    "LLMConfig",
     "Lexicon",
-    "LexiconEngine",
-    "LexiconReader",
-    # Answer-safe question contract surface.
-    "AnswerSubmission",
-    "ChoiceResponse",
-    "ChoiceReveal",
-    "Evaluation",
-    "Flashcard",
-    "FreeText",
-    "PrepareDemand",
-    "PrepareReport",
-    "PresentedQuestion",
-    "QuestionTypeInfo",
-    "RenderContract",
-    "RenderKind",
-    "Response",
-    "Reveal",
-    "RubricReveal",
-    "SingleChoice",
-    "SpanReveal",
-    "TextResponse",
-    "TextSpan",
-    # Dictionary read models.
-    "Asset",
-    "BatchResult",
-    "Entry",
-    "SearchResult",
-    "SemanticHit",
-    "TagCount",
-    "Theme",
-    "TopicView",
-    "match_key",
-    "render",
-    "parse_marked_example",
-    "strip_markup",
+    "SENSE_PRIMARY_KEY",
+    "Sense",
+    "StructuredLLM",
+    "TokenUsage",
+    "metadata",
+    "migrations",
 ]
+
+
+def __getattr__(name: str):
+    if name == "Lexicon":
+        from .api import Lexicon
+
+        globals()["Lexicon"] = Lexicon
+        return Lexicon
+    if name in {"LEXI_SCHEMA", "SENSE_PRIMARY_KEY", "Sense", "metadata"}:
+        from . import contract
+
+        for k in ("LEXI_SCHEMA", "SENSE_PRIMARY_KEY", "Sense", "metadata"):
+            globals()[k] = getattr(contract, k)
+        return globals()[name]
+    if name == "migrations":
+        mod = importlib.import_module(".migrations", __name__)
+        globals()["migrations"] = mod
+        return mod
+    raise AttributeError(name)

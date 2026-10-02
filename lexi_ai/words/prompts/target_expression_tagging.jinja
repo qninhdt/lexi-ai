@@ -1,0 +1,19 @@
+## Target Expression Tagging
+
+- In text intended to display or highlight the lexical target, wrap each visible target surface with `<t inf="LABEL">surface</t>`.
+- Tag only occurrences of the intended lexical target, not unrelated words or coincidental matches.
+- Preserve the actual surface form and select its corresponding inflection label:
+  - `base`: base or invariant form.
+  - `past`: simple past.
+  - `past_participle`: past participle.
+  - `present_3sg`: third-person singular present.
+  - `ing`: -ing form.
+  - `plural`: plural noun.
+  - `comparative`: comparative form.
+  - `superlative`: superlative form.
+- Tag each fixed component of a multi-word expression separately, even when separated by other words. Leave variable arguments and intervening text outside the tags.
+- Do not introduce the target solely to satisfy tagging. If the target is intentionally hidden (e.g., a cloze blank), do not tag the placeholder or reveal the missing expression.
+
+Example for "bring up":
+
+"She <t inf="past">brought</t> the issue <t inf="base">up</t> during the meeting."

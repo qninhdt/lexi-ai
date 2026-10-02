@@ -1,0 +1,32 @@
+{
+  "state": {
+    "source": {"word": "${source_word}", "definition": "${source_definition}"},
+    "relation": {
+      "type": "${relation_type}",
+      "rule": {
+        "$switch": {
+          "relation_type == 'synonym'": "The target sense must express essentially the same lexicalized concept as the source sense.",
+          "relation_type == 'antonym'": "The target sense must express an opposing meaning to the source sense on the relevant semantic dimension.",
+          "relation_type == 'hypernym'": "The source sense must denote a kind or type of the target sense.",
+          "relation_type == 'hyponym'": "The target sense must denote a kind or type of the source sense.",
+          "relation_type == 'meronym'": "The target sense must denote a part, member, or substance of what the source sense denotes.",
+          "relation_type == 'holonym'": "What the source sense denotes must be a part, member, or substance of what the target sense denotes."
+        }
+      }
+    },
+    "target": {"word": "${target_word}", "gloss": "${target_gloss}"}
+  },
+  "questions": {
+    "matched_sense": {
+      "type": "choice",
+      "instructions": "Which candidate sense of `target.word` is the intended endpoint of this semantic relation? A candidate must both be compatible with `target.gloss` and satisfy `relation.rule` with the source sense. Treat `target.gloss` as evidence of the intended target meaning, not as authoritative ground truth. Prefer semantic compatibility over wording overlap. Choose `no_candidate` if no candidate satisfies both requirements.",
+      "criteria": {
+        "$reduce": {"$eval": "candidates"},
+        "initial": {"no_candidate": "No candidate sense both represents the intended target meaning and forms the required semantic relation with the source sense."},
+        "each(acc, sense)": {
+          "$merge": [{"$eval": "acc"}, {"candidate_${sense.index}": "${target_word} - ${sense.pos} - ${sense.definition}"}]
+        }
+      }
+    }
+  }
+}

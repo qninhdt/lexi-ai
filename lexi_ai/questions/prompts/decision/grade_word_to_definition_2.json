@@ -1,0 +1,35 @@
+{
+  "state": {
+    "word": "${word.lemma}",
+    "meaning": {
+      "$eval": "selectedSense.definition"
+    },
+    "answer": {
+      "$eval": "answer"
+    }
+  },
+
+  "questions": {
+    "accuracy": {
+      "type": "choice",
+      "instructions": "How accurate is the semantic information stated in `answer` about `meaning`? Judge only whether the claims it makes are correct. Do not lower this rating because relevant information is missing. Ignore spelling, grammar, and wording quality.",
+
+      "criteria": {
+        "accurate": "The material semantic information stated is compatible with the meaning and contains no important misconception.",
+        "mixed": "The answer demonstrates relevant understanding but also contains at least one material false, misleading, or unjustified semantic claim.",
+        "inaccurate": "The central semantic characterization is wrong or incompatible with the meaning."
+      }
+    },
+
+    "coverage": {
+      "type": "choice",
+      "instructions": "How much of the defining semantic information in `meaning` is present in `answer`? Judge only what required meaning is present or missing. Do not lower this rating because information that is present is inaccurate. Accept a sufficiently precise synonym as sufficient.",
+
+      "criteria": {
+        "sufficient": "Enough defining semantic information is present to identify and understand the meaning without an important semantic gap.",
+        "partial": "The answer communicates genuine relevant meaning but omits an important distinction or defining component, leaving it too broad, vague, or incomplete.",
+        "minimal": "The answer provides little usable defining information, such as only a weak association, extremely general category, isolated example, or vacuous restatement."
+      }
+    }
+  }
+}

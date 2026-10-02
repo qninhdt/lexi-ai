@@ -1,136 +1,102 @@
-"""Tests for style themes (Phase 1: foundation).
+from sqlalchemy import select
+from test_prompting import prompt_context
 
-Covers the ``theme_key`` normalizer (dedup folding, NO singularization, NUL
-safety, empty), the ``Theme`` schema compile, and repository/API resolve-or-
-create (dedup, first-seen wins, empty-key raises, list). In-memory SQLite +
-StaticPool, mirroring ``test_tags.py``.
-"""
-
-import pytest
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import StaticPool
-
-from lexi_ai.api import Lexicon
-from lexi_ai.db import create_session_factory, init_models
-from lexi_ai.normalize import theme_key
-from tests.support.persistence_driver import PersistenceDriver
-
-# --- theme_key normalizer (pure) -----------------------------------------
+from lexi_ai.db.session import Database
+from lexi_ai.schema import Base, Definition, Example, Sense, Word
+from lexi_ai.themes.service import create_theme, delete_theme, ensure_word_theme, update_theme
+from lexi_ai.words.storage import get_word
 
 
-@pytest.mark.parametrize(
-    ("a", "b"),
-    [
-        ("Harry Potter", "harry potter"),
-        ("Harry Potter", " harry  potter "),
-        ("Hárry Potter", "harry potter"),
-        ("HARRY POTTER", "harry potter"),
-    ],
-)
-def test_theme_key_folds_variants(a, b):
-    assert theme_key(a) == theme_key(b)
+class LLM:
+    def __init__(self):
+        self.calls = 0
+
+    async def complete(self, instruction, data, schema):
+        self.calls += 1
+        if schema.__name__ == "ThemeParts":
+            return schema(voice="Captain", diction="nautical")
+        return schema(
+            senses=[
+                {
+                    "definition": "A safe place for coin",
+                    "examples": [
+                        'The <t inf="base">bank</t> was open.',
+                        'I visited the <t inf="base">bank</t>.',
+                    ],
+                }
+            ]
+        )
 
 
-def test_theme_key_does_not_singularize():
-    # Unlike tag_key, a theme name is a proper voice: "witches" must NOT fold to
-    # "witch" (that would corrupt the name and merge two distinct themes).
-    assert theme_key("The Witches") == "the witches"
-    assert theme_key("Cars") == "cars"
+async def test_crud_delete_and_generate_reuse(tmp_path):
+    db = Database(f"sqlite+aiosqlite:///{tmp_path / 'dictionary.db'}")
+    llm = LLM()
+    try:
+        await db.create_schema(Base.metadata)
+        async with db.transaction() as session:
+            word = Word(lemma="bank", match_key="bank", entry_type="word", generation_state="done")
+            session.add(word)
+            await session.flush()
+            sense = Sense(word_id=word.id, pos="noun", tier="core")
+            session.add(sense)
+            await session.flush()
+            session.add_all(
+                [
+                    Definition(sense_id=sense.id, content="A financial institution"),
+                    Example(sense_id=sense.id, content='The <t inf="base">bank</t> opened.'),
+                ]
+            )
+        theme = await create_theme(db, llm, "pirate", "Pirate", "Write like a pirate")
+        assert await get_word(db, word.id, theme.id) is None
+        themed = await ensure_word_theme(db, llm, word.id, "pirate", 2)
+        assert themed.senses[0].definition.content == "A safe place for coin"
+        reused = await ensure_word_theme(db, llm, word.id, "pirate", 3)
+        assert reused.id == word.id
+        assert llm.calls == 2
+        assert (await update_theme(db, "pirate", name="Pirates", voice="Admiral")).key == "pirate"
+        assert (await get_word(db, word.id, theme.id)).senses[0].definition.content == (
+            "A safe place for coin"
+        )
+        assert await delete_theme(db, "pirate")
+        assert (await get_word(db, word.id)).senses[0].definition.content == (
+            "A financial institution"
+        )
+        async with db.transaction() as session:
+            assert len((await session.scalars(select(Definition))).all()) == 1
+    finally:
+        await db.close()
 
 
-def test_theme_key_strips_control_chars():
-    assert theme_key("harry\tpotter") == "harry potter"
-    assert "\x00" not in theme_key("har\x00ry")
+async def test_theme_uses_single_neutral_meaning(tmp_path):
+    db = Database(f"sqlite+aiosqlite:///{tmp_path / 'dictionary.db'}")
+    try:
+        await db.create_schema(Base.metadata)
+        async with db.transaction() as session:
+            word = Word(lemma="bank", match_key="bank", entry_type="word", generation_state="done")
+            session.add(word)
+            await session.flush()
+            sense = Sense(word_id=word.id, pos="noun", tier="core")
+            session.add(sense)
+            await session.flush()
+            session.add_all(
+                [
+                    Definition(sense_id=sense.id, content="A financial institution"),
+                    Example(sense_id=sense.id, content='The <t inf="base">bank</t> opened.'),
+                ]
+            )
+        llm = LLM()
+        await create_theme(db, llm, "pirate", "Pirate", "Speak like a captain")
 
+        class InspectingLLM(LLM):
+            async def complete(self, instruction, data, schema):
+                if schema.__name__ == "ThemedWord":
+                    assert (
+                        prompt_context(data, "neutral_word")["senses"][0]["meaning_anchor"]
+                        == "A financial institution"
+                    )
+                return await super().complete(instruction, data, schema)
 
-@pytest.mark.parametrize("blank", ["", "   ", "\t\n", "\x00"])
-def test_theme_key_empty_on_blank(blank):
-    assert theme_key(blank) == ""
-
-
-# --- schema compiles on both dialects (extends the models guarantee) ------
-
-
-def test_theme_tables_compile_on_both_dialects():
-    from sqlalchemy.dialects import postgresql, sqlite
-    from sqlalchemy.schema import CreateTable
-
-    from lexi_ai.infrastructure.db.models import Base
-
-    names = set(Base.metadata.tables)
-    assert {"themes", "themed_senses", "themed_examples"} <= names
-
-    for dialect in (postgresql.dialect(), sqlite.dialect()):
-        for table in Base.metadata.sorted_tables:
-            ddl = str(CreateTable(table).compile(dialect=dialect))
-            assert "CREATE TABLE" in ddl
-
-
-# --- repository / API resolve-or-create -----------------------------------
-
-
-@pytest.fixture
-async def session_factory():
-    engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def _fk_on(dbapi_conn, _record):
-        cur = dbapi_conn.cursor()
-        cur.execute("PRAGMA foreign_keys=ON")
-        cur.close()
-
-    await init_models(engine)
-    yield create_session_factory(engine)
-    await engine.dispose()
-
-
-@pytest.fixture
-def repo(session_factory):
-    return PersistenceDriver(session_factory)
-
-
-@pytest.fixture
-def lexicon(session_factory):
-    return Lexicon(session_factory, None, None)
-
-
-async def test_create_theme_dedups_by_key(repo):
-    a = await repo.create_theme("Harry Potter", "speak like a wizard")
-    b = await repo.create_theme("  harry  potter  ", "different prompt ignored")
-    assert a.id == b.id
-    assert a.key == b.key == "harry potter"
-    # First-seen name/style_prompt win.
-    assert b.name == "Harry Potter"
-    assert b.style_prompt == "speak like a wizard"
-
-
-async def test_create_theme_empty_key_raises(repo):
-    with pytest.raises(ValueError):
-        await repo.create_theme("   ", "prompt")
-
-
-async def test_list_themes(repo):
-    await repo.create_theme("Zorro", "z")
-    await repo.create_theme("Alpha", "a")
-    themes = await repo.list_themes()
-    # Name-sorted.
-    assert [t.name for t in themes] == ["Alpha", "Zorro"]
-
-
-async def test_api_create_and_list_theme(lexicon):
-    created = await lexicon.engine().create_theme(
-        "Humorous", "be funny", description="funny voice", tone="funny,playful"
-    )
-    assert created.key == "humorous"
-    assert created.name == "Humorous"
-    assert created.style_prompt == "be funny"
-    assert created.description == "funny voice"
-    assert created.tone == "funny,playful"
-
-    listed = await lexicon.reader().list_themes()
-    assert [t.key for t in listed] == ["humorous"]
+        themed = await ensure_word_theme(db, InspectingLLM(), word.id, "pirate", 2)
+        assert themed.senses[0].definition.content == "A safe place for coin"
+    finally:
+        await db.close()

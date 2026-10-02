@@ -1,0 +1,62 @@
+{
+  "state": {
+    "word": "${word.lemma}",
+    "meaning": {
+      "$eval": "meaning"
+    },
+    "answer": {
+      "$eval": "answer"
+    }
+  },
+
+  "questions": {
+    "meaning": {
+      "type": "choice",
+      "instructions": "How accurately does the target expression convey `meaning` in `answer`? Judge only the meaning expressed by the target in context. Ignore its form, syntactic construction, collocational conventionality, and appropriacy.",
+      "criteria": {
+        "correct": "The target clearly expresses the required meaning in context.",
+        "approximate": "The target expresses meaning that is relevant to the required meaning but is incomplete, vague, or semantically imprecise.",
+        "wrong": "The target expresses a different or incompatible meaning."
+      }
+    },
+
+    "form": {
+      "type": "choice",
+      "instructions": "How accurately is the target lexical expression itself formed in `answer`? Judge only spelling, inflection, and required fixed lexical components. Ignore its meaning, syntactic construction, surrounding lexical combinations, and appropriacy.",
+      "criteria": {
+        "correct": "The target expression is correctly formed.",
+        "spelling_error": "The intended target expression is clear but contains an orthographic error.",
+        "form_error": "The intended target expression is clear but its inflectional or fixed lexical form is incorrect for a reason other than spelling."
+      }
+    },
+
+    "construction": {
+      "type": "noul",
+      "instructions": "Is the target expression used in a syntactically licensed construction in `answer`? Judge only target-specific grammatical behavior such as argument structure, complementation, transitivity, and syntactic placement. Ignore spelling, inflectional form errors, unrelated sentence grammar, collocation, and appropriacy.",
+      "criteria": {
+        "true": "The syntactic construction involving the target is licensed.",
+        "false": "The target is used in a syntactic construction it does not license."
+      }
+    },
+
+    "collocation": {
+      "type": "choice",
+      "instructions": "How conventional and acceptable are the lexical combinations involving the target expression in `answer`? Judge only combinations between the target and relevant surrounding lexical items. Ignore grammatical construction, general sentence style, and appropriacy.",
+      "criteria": {
+        "natural": "The target occurs in a conventional, unmarked lexical combination.",
+        "acceptable": "The combination is legitimate English but is less conventional, somewhat unusual, or context-dependent.",
+        "unnatural": "The target is involved in a lexical combination that is not normally acceptable for the intended meaning."
+      }
+    },
+
+    "appropriacy": {
+      "type": "choice",
+      "instructions": "How appropriate is the target expression for the communicative context established by `answer`? Judge only lexical constraints such as register, tone, social use, connotation, and domain. Do not penalize a word merely for being uncommon, and ignore meaning accuracy, form, syntax, and collocation.",
+      "criteria": {
+        "appropriate": "The target fits the context without a notable usage mismatch.",
+        "marked": "The target is usable, but its register, tone, connotation, or domain makes it noticeably marked in this context.",
+        "inappropriate": "The target conflicts with an important lexical usage constraint of the context."
+      }
+    }
+  }
+}

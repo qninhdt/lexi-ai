@@ -1,0 +1,16 @@
+{
+  "state": {"word": "${word.lemma}", "answer": {"$eval": "answer"}},
+  "questions": {
+    "defined_meaning": {
+      "type": "choice",
+      "instructions": "Which listed sense of `word` does `answer` most clearly attempt to define? Select the best-supported intended sense even if the definition is incomplete, vague, or contains some semantic error. Choose `no_candidate` only when there is not enough semantic evidence to identify any listed sense.",
+      "criteria": {
+        "$reduce": {"$eval": "word.senses"},
+        "initial": {"no_candidate": "No listed sense is reasonably identifiable from the answer."},
+        "each(acc, sense)": {
+          "$merge": [{"$eval": "acc"}, {"sense_${sense.id}": "${word.lemma} - ${sense.pos} - ${sense.definition}"}]
+        }
+      }
+    }
+  }
+}

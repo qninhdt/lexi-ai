@@ -1,0 +1,34 @@
+{
+  "state": {"question": {"$eval": "question"}, "answer": {"$eval": "answer"}},
+  "questions": {
+    "task_fit": {
+      "$switch": {
+        "question_type == 'definition_to_word'": {
+          "type": "noul",
+          "instructions": "Does the lexical expression clearly intended by `answer` accurately satisfy the definition in `question`? Accept a different lexical expression if it fully expresses the defined meaning. Ignore only clear spelling errors; do not repair other lexical or grammatical differences.",
+          "criteria": {"true": "The intended lexical expression accurately satisfies the definition.", "false": "The intended lexical expression does not accurately satisfy the definition."}
+        },
+        "question_type == 'context_to_word'": {
+          "type": "noul",
+          "instructions": "Does the lexical expression clearly intended by `answer` naturally and semantically fit the situation in `question`? Accept a different expression if it genuinely fits. Ignore only clear spelling errors; do not otherwise repair or reinterpret the answer.",
+          "criteria": {"true": "The intended lexical expression naturally and accurately fits the situation.", "false": "The intended lexical expression does not naturally and accurately fit the situation."}
+        },
+        "question_type == 'cloze_to_word'": {
+          "type": "noul",
+          "instructions": "Would inserting the lexical expression intended by `answer` into the blank in `question` produce a natural, grammatical completion with the intended meaning and construction? Correct only a clear spelling-only error for this judgment. Do not repair inflection, derivation, particles, word order, or grammar.",
+          "criteria": {"true": "The intended lexical expression produces a valid completion.", "false": "The intended lexical expression does not produce a valid completion."}
+        },
+        "$default": {
+          "type": "noul",
+          "instructions": "Does the lexical expression clearly intended by `answer` correctly satisfy `question`? Accept a different lexical expression when it genuinely satisfies the question. Ignore only clear spelling errors; do not otherwise repair the answer.",
+          "criteria": {"true": "The intended lexical expression correctly satisfies the question.", "false": "The intended lexical expression does not correctly satisfy the question."}
+        }
+      }
+    },
+    "spelling_error": {
+      "type": "noul",
+      "instructions": "Does `answer` contain a clear spelling-only error in an otherwise recognizable intended lexical expression? Judge orthography only. Do not consider whether the intended expression correctly answers `question`. Do not count inflection, derivation, missing or incorrect particles, word order, or grammar as spelling errors.",
+      "criteria": {"true": "A recognizable intended lexical expression contains a clear spelling-only error.", "false": "There is no clear spelling-only error."}
+    }
+  }
+}

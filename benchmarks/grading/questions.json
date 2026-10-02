@@ -1,0 +1,2102 @@
+[
+  {
+    "id": "q001",
+    "target": "bank",
+    "data": {
+      "id": 1,
+      "sense_id": 1,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "A business organization that provides financial services, such as holding deposits, lending money, and exchanging currency, or a building where these services are provided.",
+      "correct": {
+        "id": "d5ea548d038f418e9e3d315b8c557580",
+        "content": "bank",
+        "explanation": "\"bank\" refers to a financial institution licensed to hold deposits and issue loans, or to the physical premises where those commercial services are offered."
+      },
+      "distractors": [
+        {
+          "id": "55c647f92ae54ee7b14b8d4aaa4ba7b4",
+          "content": "exchange",
+          "explanation": "\"exchange\" refers to an organized marketplace or facility where currencies, securities, or commodities are bought and sold, rather than an institution that accepts deposits and issues loans."
+        },
+        {
+          "id": "4d2270c8e9a847e2a6a8e298be0a073f",
+          "content": "treasury",
+          "explanation": "\"treasury\" refers to a government or organizational body responsible for managing funds and revenue, not a commercial business providing retail financial services."
+        },
+        {
+          "id": "c45bf72d7ad94c43bb5e33dabd72e910",
+          "content": "vault",
+          "explanation": "\"vault\" refers to a secure, reinforced room or safe where money and valuables are stored, rather than the entire business organization providing banking services."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q002",
+    "target": "give up",
+    "data": {
+      "id": 3,
+      "sense_id": 126,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "After spending hours tinkering with an old analog camera that jammed, Julian exhausts every diagnostic manual and replaces multiple tiny screws without restoring the shutter mechanism. Recognizing that the repair is beyond his technical ability, he packs his tools away and resigns himself to leaving the camera in pieces.",
+      "correct": {
+        "id": "57fc13c6691d44c3ab90893179cd4ee9",
+        "content": "give up",
+        "explanation": "'Give up' means to stop trying to do, solve, or repair something because it is too difficult or one admits defeat. Julian's decision to pack away his tools and walk away after failing to fix the camera's intricate mechanism precisely illustrates this meaning."
+      },
+      "distractors": [
+        {
+          "id": "6f63c36304f04a95b12855514b108132",
+          "content": "give away",
+          "explanation": "Give away means to hand something to another person without payment or reveal information. Julian stops attempting the repair; he neither transfers the camera nor discloses a secret."
+        },
+        {
+          "id": "cd45f235a26849729ac50acafead1102",
+          "content": "back out",
+          "explanation": "'Back out' means to withdraw from an agreement, contract, or prior commitment made to other people. Julian is attempting a solitary mechanical repair rather than breaking a promise or exiting an arrangement."
+        },
+        {
+          "id": "e247412442d244ccb10327c074ac7245",
+          "content": "call off",
+          "explanation": "'Call off' means to officially cancel a scheduled event, organized operation, or collective activity. It describes canceling an event rather than an individual ceasing effort on an arduous practical task."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q003",
+    "target": "charge",
+    "data": {
+      "id": 2,
+      "sense_id": 16,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "The technician explained that the repair shop would _ us an additional fee for weekend service.",
+      "correct": {
+        "id": "0764c3ee47e44ca784f57aa0bb8cbbc8",
+        "content": "charge",
+        "explanation": "Correct. 'Charge' means to ask an amount of money as the price for a service, taking the provider ('the repair shop') as the subject and using the structure 'charge someone a fee'."
+      },
+      "distractors": [
+        {
+          "id": "db9e44c93cbf4d899bcc2292a5e5f39a",
+          "content": "cost",
+          "explanation": "While 'cost' refers to the price of something, it takes the item or service as its subject (e.g., 'weekend service would cost us'), not the provider or business."
+        },
+        {
+          "id": "8c5184eb69144fd8afc400fcd2fdc3f7",
+          "content": "pay",
+          "explanation": "'Pay' indicates giving money to someone rather than requesting it; the repair shop is requiring money from the customer, not giving them money."
+        },
+        {
+          "id": "d365c889451f42ac969c6c6b4237b1fa",
+          "content": "demand",
+          "explanation": "'Demand' does not fit this grammatical pattern; it cannot take an indirect object directly before the fee ('demand us a fee') and would instead require 'demand a fee from us'."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q004",
+    "target": "break the ice",
+    "data": {
+      "id": 4,
+      "sense_id": 153,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">break the ice</t>",
+      "correct": {
+        "id": "75a6dfc4300c45db89db6122e2a5e32f",
+        "content": "to do or say something that relieves tension or awkwardness, helping people feel more comfortable and willing to talk to one another",
+        "explanation": "This definition accurately captures the idiom's figurative meaning: easing social reserve, hesitation, or awkwardness—often in a new group or unfamiliar setting—so that people feel relaxed and willing to interact."
+      },
+      "distractors": [
+        {
+          "id": "17e0a7f0dd4a4db4a3c0141b13b268a5",
+          "content": "to talk openly about an unresolved disagreement or grievance in order to remove negative feelings between people",
+          "explanation": "This definition describes clearing the air by addressing a grievance. The displayed definition instead concerns helping people overcome social awkwardness and become willing to interact."
+        },
+        {
+          "id": "dae0c7ca05ac43808ce3045a18fb031c",
+          "content": "to conceal one's feelings and refuse to interact with other people",
+          "explanation": "This describes withdrawing from interaction. Breaking the ice helps an interaction begin or makes people more comfortable participating; it does not mean deliberately avoiding it."
+        },
+        {
+          "id": "d1d224076eb047e78ab9e9ad3ccbda36",
+          "content": "to share sensitive or distressing information with someone gently to make the truth easier to accept",
+          "explanation": "This defines the idiom \"break the news.\" While both expressions use \"break\" to describe delicate social communication, \"break the news\" focuses on delivering painful or serious facts, whereas \"break the ice\" focuses on fostering comfortable conversation."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q005",
+    "target": "advice",
+    "data": {
+      "id": 6,
+      "sense_id": 38,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">advice</t> — Suggestions or recommendations offered to someone about what they should do or how they should handle a situation",
+      "correct": {
+        "id": "a8e0048c46f044c38d95dbf254624817",
+        "content": "When Lucas was struggling to choose a college major, he asked his older sister for <t inf=\"base\">advice</t>.",
+        "explanation": "This sentence correctly uses 'advice' as an uncountable noun in the standard pattern 'ask someone for advice', expressing recommendations or guidance about how to handle a situation."
+      },
+      "distractors": [
+        {
+          "id": "d1ddc551c32c49c1b17b6cb3d4184461",
+          "content": "My professor offered me a helpful <t inf=\"base\">advice</t> about which topics to explore for my research paper.",
+          "explanation": "'Advice' is an uncountable noun in English and cannot be preceded by the indefinite article 'a'. The sentence should use 'some helpful advice' or 'a helpful piece of advice'."
+        },
+        {
+          "id": "d91fbd8969454f0d84242c3d1fb8e97b",
+          "content": "The financial planner gave us sound <t inf=\"base\">advice</t> of investing our savings in diverse funds.",
+          "explanation": "The noun 'advice' does not take the preposition 'of' followed by a gerund to describe the recommended action. Standard English requires 'advice on investing' (or 'about investing') or an infinitive such as 'advice to invest'."
+        },
+        {
+          "id": "76c816d915a64f79aa1be66b6f1d0b97",
+          "content": "The career consultant made useful <t inf=\"base\">advice</t> on how to answer difficult interview questions.",
+          "explanation": "The verb 'make' does not collocate with 'advice'. To describe providing recommendations, English uses verbs such as 'give', 'offer', or 'provide' (e.g., 'gave useful advice')."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q006",
+    "target": "in charge of",
+    "data": {
+      "id": 5,
+      "sense_id": 157,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "Responsible for or having control over someone or something.",
+      "correct": {
+        "id": "6b02f49bebff48cda05f66c23d1fb87b",
+        "content": "in charge of",
+        "explanation": "\"In charge of\" means possessing managerial authority, supervision, or primary responsibility for someone or something."
+      },
+      "distractors": [
+        {
+          "id": "3d9d6398dff34321a85c0eedd4a24240",
+          "content": "on behalf of",
+          "explanation": "\"On behalf of\" means acting as a representative or proxy for someone, or for their benefit, rather than exercising authority or control over them."
+        },
+        {
+          "id": "e94c9ea9fd1242e6a7938575c2e6ee61",
+          "content": "in support of",
+          "explanation": "\"In support of\" means providing backing, approval, or assistance to a cause or person, rather than holding command or supervisory responsibility over them."
+        },
+        {
+          "id": "b66c87ba89ce4ee7838cfd1ca9fbfea9",
+          "content": "in place of",
+          "explanation": "\"In place of\" means serving as a substitute or replacement for someone or something, rather than having authority or control over them."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q007",
+    "target": "research",
+    "data": {
+      "id": 7,
+      "sense_id": 40,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "A team of environmental scientists spends several years gathering water samples from dozens of rivers, interviewing local fishery workers, and compiling historical weather records to determine how industrial runoff affects regional aquatic life.",
+      "correct": {
+        "id": "567002386b4a4b918fb0487563a35f31",
+        "content": "research",
+        "explanation": "This multi-year endeavor systematically gathers diverse evidence—field samples, firsthand testimonies, and archival records—to uncover new facts and build a deeper understanding of an environmental issue, which precisely defines <t inf=\"base\">research</t>."
+      },
+      "distractors": [
+        {
+          "id": "f6ffbfd233d44c7da62f09f4a026ab19",
+          "content": "guesswork",
+          "explanation": "Guesswork relies on guesses rather than a systematic investigation of evidence. The scientists collect samples, interviews, and historical records to investigate the environmental question."
+        },
+        {
+          "id": "fd676d388b544398adec4e48d375493a",
+          "content": "memorization",
+          "explanation": "Memorization means learning information so it can be recalled. This team gathers and investigates evidence to discover how runoff affects aquatic life, rather than committing known information to memory."
+        },
+        {
+          "id": "2fb4a9a27fbd41c4b7ab04e779ddf341",
+          "content": "recollection",
+          "explanation": "Recollection means remembering past information or events. The team is carrying out a new evidence-based investigation, not simply recalling what its members already know."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q008",
+    "target": "look after",
+    "data": {
+      "id": 8,
+      "sense_id": 136,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "Because both parents work long hours at the clinic, they hired a nanny to _ their two-year-old daughter during the day.",
+      "correct": {
+        "id": "601cd0ec695c4b4bbe7271360020dab6",
+        "content": "look after",
+        "explanation": "'Look after' means to take care of someone and keep them safe and healthy, which matches the context of hiring a nanny to care for a toddler."
+      },
+      "distractors": [
+        {
+          "id": "7cfa5cc9b70a42ac999a3588bdf09674",
+          "content": "look for",
+          "explanation": "'Look for' means to search for someone or something that is lost or missing, not to provide daily care and supervision."
+        },
+        {
+          "id": "824eeb1bc40d41efb106131fa2719b89",
+          "content": "look at",
+          "explanation": "'Look at' means to direct one's eyes toward someone; simply viewing a child does not express providing care or keeping them safe."
+        },
+        {
+          "id": "6e22050c80734a6fbd26b6563e9b56c9",
+          "content": "take after",
+          "explanation": "'Take after' means to resemble an older relative in appearance or behavior, not to care for or supervise a child."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q009",
+    "target": "run",
+    "data": {
+      "id": 9,
+      "sense_id": 42,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">run</t>",
+      "correct": {
+        "id": "147f1534fb3b41b282b83e6aa7d0f5ee",
+        "content": "To move quickly on foot, faster than walking, by lifting each foot off the ground before the other lands.",
+        "explanation": "This definition accurately describes running, which is a rapid bipedal gait marked by speed and an aerial phase where both feet are momentarily off the ground."
+      },
+      "distractors": [
+        {
+          "id": "5c42d1abd54f42da9c7dd671d3dd6b84",
+          "content": "To advance on foot at a steady pace while keeping at least one foot in contact with the ground at all times.",
+          "explanation": "This describes walking, where continuous contact with the ground is maintained, whereas running involves moving faster with both feet leaving the ground between strides."
+        },
+        {
+          "id": "efab9db30544450197f2cfd765975bca",
+          "content": "To spring upward or forward into the air off the feet in a single bound.",
+          "explanation": "This defines jumping or leaping as an isolated movement off the ground, whereas running is a continuous, rhythmic series of rapid steps."
+        },
+        {
+          "id": "494a7db751ad457683cea50b0b64a5f7",
+          "content": "To move forward along the ground on hands and knees rather than standing upright.",
+          "explanation": "This defines crawling, which relies on movement on hands and knees, unlike running, which is performed upright on foot."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q010",
+    "target": "spill the beans",
+    "data": {
+      "id": 10,
+      "sense_id": 154,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">spill the beans</t> — to reveal secret or confidential information, often prematurely or by accident",
+      "correct": {
+        "id": "0e8cc4e834054b4089fa42a2e483a5fe",
+        "content": "The studio managed to keep the casting decision under wraps for months until an extra <t inf=\"past\">spilled</t> <t inf=\"base\">the</t> <t inf=\"plural\">beans</t> during an online interview.",
+        "explanation": "This sentence correctly uses the idiom to describe disclosing confidential details (an unannounced film role) to the public before an official release."
+      },
+      "distractors": [
+        {
+          "id": "2c984a3e585442d4bb122417d4c355d2",
+          "content": "Whenever Chloe feels overwhelmed by grief, she calls her sister to <t inf=\"base\">spill</t> <t inf=\"base\">the</t> <t inf=\"plural\">beans</t> until she feels comforted.",
+          "explanation": "\"Spill the beans\" refers to revealing secret or confidential facts, not unburdening personal sorrow or emotional vulnerability (which would be described by expressions like \"pour one's heart out\")."
+        },
+        {
+          "id": "81de5c5d057d4e64b075b9f2798d949d",
+          "content": "The two childhood friends spent the entire afternoon at the café <t inf=\"ing\">spilling</t> <t inf=\"base\">the</t> <t inf=\"plural\">beans</t> about everyday topics like the weather and gardening.",
+          "explanation": "\"Spill the beans\" requires the disclosure of hidden or secret information; it cannot refer to casual small talk or chatting about ordinary, mundane subjects."
+        },
+        {
+          "id": "95419825bb4344fe99b3c59b733f1f7b",
+          "content": "While unpacking the grocery crates in the pantry, Liam accidentally dropped a jar and <t inf=\"past\">spilled</t> <t inf=\"base\">the</t> <t inf=\"plural\">beans</t> across the floor.",
+          "explanation": "This sentence uses the words in their literal, physical sense (scattering edible legumes) rather than the idiomatic sense of disclosing secret information."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q011",
+    "target": "thank goodness",
+    "data": {
+      "id": 11,
+      "sense_id": 160,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "Used to express relief or gratitude that something bad has ended, been avoided, or did not happen.",
+      "correct": {
+        "id": "a22985a1c020432bb1bd7e9dc65e6617",
+        "content": "thank goodness",
+        "explanation": "\"Thank goodness\" is an exclamation used to communicate relief or gratitude when an undesirable situation has finished, been averted, or failed to materialize."
+      },
+      "distractors": [
+        {
+          "id": "cdf6a578130b476ab06e65f0a5e1968e",
+          "content": "heaven forbid",
+          "explanation": "\"Heaven forbid\" is used to express a strong wish that an unfortunate situation will not occur in the future, rather than relief that a bad event has already ended or been avoided."
+        },
+        {
+          "id": "dcffe2eb36224505b976ac369a2fdb34",
+          "content": "for goodness' sake",
+          "explanation": "\"For goodness' sake\" is an exclamation used to express impatience, frustration, or exasperation, rather than relief or gratitude."
+        },
+        {
+          "id": "bcb8d804e49c4824948116468da72ecd",
+          "content": "fingers crossed",
+          "explanation": "\"Fingers crossed\" is used to express hope for good luck or a favorable future outcome, not relief that a negative event did not happen or is over."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q012",
+    "target": "raise",
+    "data": {
+      "id": 12,
+      "sense_id": 85,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "During a question-and-answer session, an audience member puts her hand up into the air to catch the speaker's attention and signal that she has a comment.",
+      "correct": {
+        "id": "1d8c37878dd7402c941459b762c72f0f",
+        "content": "raise",
+        "explanation": "'Raise' is a transitive verb meaning to lift or move something to a higher position or level. In this context, it accurately describes the physical action of lifting one's hand upward to attract attention ('raise one's hand')."
+      },
+      "distractors": [
+        {
+          "id": "29e154ca67514216a4d37d798241eaaf",
+          "content": "rise",
+          "explanation": "'Rise' is an intransitive verb meaning to move upward on one's own; because it cannot take a direct object, it cannot describe the action of moving one's hand upward ('raise one's hand', not 'rise one's hand')."
+        },
+        {
+          "id": "0ba9d716cedf43c2b5870adb29d74fa8",
+          "content": "arise",
+          "explanation": "'Arise' is an intransitive verb meaning to emerge, occur, or come to light; it does not describe physically lifting a body part or object to a higher level and cannot take a direct object."
+        },
+        {
+          "id": "4cc0f87030b04faf9bac05f7a02d9db0",
+          "content": "ascend",
+          "explanation": "'Ascend' means to climb or travel upward, such as walking up a staircase or climbing a mountain slope; it is not used transitively to describe lifting a hand or object into the air."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q013",
+    "target": "take off",
+    "data": {
+      "id": 15,
+      "sense_id": 138,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "The passenger plane accelerated down the runway and _ smoothly into the cloudy sky.",
+      "correct": {
+        "id": "f5f6afbe5ecf43608280fcbe3c1cd3ec",
+        "content": "took off",
+        "explanation": "'Took off' correctly describes an aircraft leaving the ground and beginning to fly after accelerating along the runway."
+      },
+      "distractors": [
+        {
+          "id": "286c622b1d8a496caa36b1ed193e8690",
+          "content": "set off",
+          "explanation": "'Set off' means to start a journey, but it does not describe the physical act of an aircraft leaving the ground and becoming airborne."
+        },
+        {
+          "id": "e0d496454605421aac561a9f85b752ee",
+          "content": "took up",
+          "explanation": "'Took up' means to begin a new hobby or occupy time and space; it cannot describe an aircraft rising into the air."
+        },
+        {
+          "id": "250c29d1c3224cf183ddefa20c33644e",
+          "content": "touched down",
+          "explanation": "'Touched down' refers to an aircraft landing on the ground, which directly contradicts accelerating along a runway to climb into the sky."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q014",
+    "target": "borrow",
+    "data": {
+      "id": 13,
+      "sense_id": 101,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">borrow</t>",
+      "correct": {
+        "id": "6893a78b3d9e48ada8b8d2cea79bb794",
+        "content": "To take and use something that belongs to someone else, with the intention of returning it after a period of time.",
+        "explanation": "This accurately defines \"borrow,\" which means to temporarily receive and use something owned by another person with the commitment to give it back."
+      },
+      "distractors": [
+        {
+          "id": "2b8b8776520d4ee1abe39a4abf2766ee",
+          "content": "To give something to someone for a period of time, expecting that they will return it.",
+          "explanation": "This defines \"lend\" rather than \"borrow.\" \"Lend\" focuses on providing or giving an item temporarily, whereas \"borrow\" focuses on receiving or taking it."
+        },
+        {
+          "id": "f5eb90c93c824e25bc8c78b1445b7428",
+          "content": "To take something belonging to another person with the intention of keeping it permanently rather than returning it.",
+          "explanation": "The displayed meaning of borrow includes intending to return the item. Taking it with the intention of keeping it permanently fails that requirement."
+        },
+        {
+          "id": "1601150be53642b0bfb5d3cbdac418f7",
+          "content": "To give something back to the person it belongs to after using it.",
+          "explanation": "This defines \"return\" or \"give back.\" \"Borrow\" refers to taking an item at the beginning of temporary use, not the act of returning it."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q015",
+    "target": "lend",
+    "data": {
+      "id": 14,
+      "sense_id": 105,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">lend</t> — to allow someone to borrow something that belongs to you for a period of time, expecting it to be returned",
+      "correct": {
+        "id": "13ca00020fbb4376837eb9927165c522",
+        "content": "Sarah agreed to <t inf=\"base\">lend</t> her brother some money until he received his next paycheck.",
+        "explanation": "This sentence correctly uses 'lend' to describe allowing someone to temporarily have and use money belonging to the speaker, with the clear expectation that it will be returned later."
+      },
+      "distractors": [
+        {
+          "id": "7eecade4f7684c37a343b1872ad82a17",
+          "content": "Excuse me, could I <t inf=\"base\">lend</t> your pen for a moment to sign this receipt?",
+          "explanation": "This sentence confuses 'lend' with 'borrow.' When asking to temporarily take and use an item that belongs to someone else, the correct verb is 'borrow' ('could I borrow your pen'). 'Lend' means to provide or give something temporarily."
+        },
+        {
+          "id": "de113b9788e545369642e96ca9bfdfa9",
+          "content": "Would you mind <t inf=\"ing\">lending</t> a hand with carrying these heavy grocery boxes inside?",
+          "explanation": "In the common idiom 'lend a hand,' the verb means to provide help or assistance. It does not describe allowing someone to borrow physical property or money with the expectation of return."
+        },
+        {
+          "id": "e25db5fbac0f4a51988483ef99b753d7",
+          "content": "The soft background music <t inf=\"present_3sg\">lends</t> a calm and relaxing atmosphere to the small café.",
+          "explanation": "Here, 'lends' is used in the figurative sense of imparting or contributing a particular quality or mood to a place, rather than allowing a person to borrow property or funds."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q016",
+    "target": "on behalf of",
+    "data": {
+      "id": 16,
+      "sense_id": 158,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "As a representative or spokesperson of someone; acting or speaking for another person or group.",
+      "correct": {
+        "id": "bc3f45f32aba4b17b3b3efaf2c713133",
+        "content": "on behalf of",
+        "explanation": "'On behalf of' means serving as an authorized representative, agent, or spokesperson for another person or group, speaking or acting in their name."
+      },
+      "distractors": [
+        {
+          "id": "d4dc9f3e31dd4962987c9ace997d030c",
+          "content": "in place of",
+          "explanation": "'In place of' means substituting for or replacing someone or something, rather than serving as their authorized representative or spokesperson."
+        },
+        {
+          "id": "3dc9213fab684cb38e4896bfc0f4640f",
+          "content": "in charge of",
+          "explanation": "'In charge of' means having supervisory control, management, or responsibility over someone or something, rather than acting or speaking as their representative."
+        },
+        {
+          "id": "53338313249d4bc4a248b4a3b76d2f26",
+          "content": "on account of",
+          "explanation": "'On account of' expresses causality or reason (meaning 'because of'), rather than representation or acting on another party's behalf."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q017",
+    "target": "once in a blue moon",
+    "data": {
+      "id": 17,
+      "sense_id": 155,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "Arthur prepares every family meal from scratch and takes immense pride in his kitchen routine. Over the past fifteen years, his household has ordered restaurant takeout exactly twice: on one occasion when a winter blizzard cut off their electricity, and on another when their kitchen was undergoing emergency plumbing repairs. Aside from those two isolated incidents, packaged food has never appeared at their doorstep.",
+      "correct": {
+        "id": "5dd7ca5e25e54551ab8da4d9330a0e4e",
+        "content": "once in a blue moon",
+        "explanation": "This idiom means very rarely or almost never. It accurately characterizes Arthur ordering takeout, an event that has occurred only twice in fifteen years under extraordinary circumstances."
+      },
+      "distractors": [
+        {
+          "id": "924a088326254a47854d6901e05a98df",
+          "content": "like clockwork",
+          "explanation": "Like clockwork describes something happening regularly and reliably. Two exceptional takeout orders in fifteen years do not establish a regular, dependable routine."
+        },
+        {
+          "id": "9133e3a71b8f44de9d10bd659dd6c27d",
+          "content": "out of the blue",
+          "explanation": "This idiom shares the word 'blue' and describes unexpected situations, but it means suddenly and without warning, rather than referring to an event that recurs with extreme rarity over time."
+        },
+        {
+          "id": "6db3f6a6b8b84fae9ee9b3b4936977c8",
+          "content": "once and for all",
+          "explanation": "This idiom shares the word 'once', but it means conclusively or permanently so that a situation never needs to be addressed again, rather than describing an action that occurs on very rare occasions."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q018",
+    "target": "sensitive",
+    "data": {
+      "id": 18,
+      "sense_id": 110,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "During community mediation, facilitators must remain calm and deeply _ to the cultural values and emotional concerns of everyone involved.",
+      "correct": {
+        "id": "7ac7bfa07faf4193a8e7b5ec5647ff18",
+        "content": "sensitive",
+        "explanation": "\"Sensitive\" means showing awareness, understanding, and tactful sympathy toward the feelings and needs of others. Paired with \"to,\" it appropriately describes facilitators who are perceptive and empathetic regarding participants' emotional concerns and cultural backgrounds."
+      },
+      "distractors": [
+        {
+          "id": "3a6b173304644bb0a59d4ef2c5522a65",
+          "content": "senseless",
+          "explanation": "Senseless means lacking sense or judgment, or unconscious in another use. It does not express the understanding and tact toward people's concerns required of these facilitators."
+        },
+        {
+          "id": "a2c18c90ec294dc0a2fa2b93bd6e419b",
+          "content": "susceptible",
+          "explanation": "\"Susceptible\" means easily influenced, vulnerable, or prone to being harmed (e.g., \"susceptible to disease\"). Using it here would imply weakness or a lack of resistance rather than thoughtful, understanding awareness."
+        },
+        {
+          "id": "2fa17d426914419b97b2aeca6d647b28",
+          "content": "sentimental",
+          "explanation": "\"Sentimental\" means driven by exaggerated tenderness, nostalgia, or idealized feelings. It does not describe professional empathy or awareness of others' concerns, and it does not idiomatically collocate with \"to\" in this context."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q019",
+    "target": "put off",
+    "data": {
+      "id": 22,
+      "sense_id": 147,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">put off</t>",
+      "correct": {
+        "id": "077634eed6074c4197c8c3fe1b48d17d",
+        "content": "To delay or postpone an event, activity, or task until a later time or date.",
+        "explanation": "Put off means to delay an event, activity, or task until later rather than do it at the originally intended time. It does not by itself guarantee a new date or eventual completion."
+      },
+      "distractors": [
+        {
+          "id": "0e3024258eb949adb96a79ff96ff67bd",
+          "content": "To cancel an arranged event, meeting, or plan entirely so that it will not take place at all.",
+          "explanation": "This describes cancelling an event so it will not take place. In the displayed sense, put off describes delaying it, not announcing that it is cancelled."
+        },
+        {
+          "id": "8093c0e678fb4982ae06f32beb404b36",
+          "content": "To reschedule an event, appointment, or deadline so that it occurs at an earlier date or time.",
+          "explanation": "This describes advancing a schedule or moving an event earlier (such as 'bringing forward'), whereas 'put off' specifically means delaying or shifting it to a later time."
+        },
+        {
+          "id": "0a1452e818f04a9392cdbd4c0bba2c85",
+          "content": "To abandon an ongoing task, activity, or project permanently before completing it.",
+          "explanation": "This describes abandoning a task permanently. The displayed sense of put off describes delaying the task rather than deciding never to complete it."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q020",
+    "target": "sensible",
+    "data": {
+      "id": 20,
+      "sense_id": 118,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">sensible</t> — Showing or based on good judgment, practical thinking, and sound reason rather than emotion.",
+      "correct": {
+        "id": "1ac54c7ed1a34ce19cd1e252425a0d39",
+        "content": "Instead of panicking and selling his investments during the market downturn, David took a <t inf=\"base\">sensible</t> approach and waited for conditions to stabilize.",
+        "explanation": "This sentence correctly uses sensible to describe an approach grounded in sound judgment and practical thinking rather than an emotional reaction."
+      },
+      "distractors": [
+        {
+          "id": "8a5ae094d5df4bb4ad32cf396458e700",
+          "content": "You should be gentle when offering feedback, as Aaron is deeply <t inf=\"base\">sensible</t> and tends to take any criticism personally.",
+          "explanation": "This sentence confuses sensible with sensitive. Sensible means showing good judgment or practical wisdom, whereas sensitive describes someone who is easily hurt or emotionally responsive."
+        },
+        {
+          "id": "4055703d0ca6493c8a7e6fb6fe779069",
+          "content": "The audit discovered that the company's internal server contained highly <t inf=\"base\">sensible</t> customer data that was not properly encrypted.",
+          "explanation": "This sentence incorrectly uses sensible instead of sensitive. Data that is confidential or requires protection is described as sensitive, while sensible applies to actions, decisions, or people demonstrating sound reason."
+        },
+        {
+          "id": "51e9716658c141c5b169d5bc2b805827",
+          "content": "Dermatologists advise using a fragrance-free cleanser if you have dry or <t inf=\"base\">sensible</t> skin that is prone to redness.",
+          "explanation": "This sentence incorrectly substitutes sensible for sensitive. Skin that reacts easily to irritation is sensitive, whereas sensible refers to having or exercising practical judgment."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q021",
+    "target": "reluctant",
+    "data": {
+      "id": 19,
+      "sense_id": 122,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "Not willing or eager to do something, or done, given, or acting with hesitation and unwillingness.",
+      "correct": {
+        "id": "2bcfa3eed19a4eec92007328b6f78888",
+        "content": "reluctant",
+        "explanation": "“Reluctant” directly matches this definition, describing a person who is unwilling or hesitant to act, or an action performed with hesitation and lack of eagerness."
+      },
+      "distractors": [
+        {
+          "id": "4dfb86caea1042d6becbaa9af913b569",
+          "content": "redundant",
+          "explanation": "Redundant means unnecessary because something is no longer needed or duplicates something else. It does not describe unwillingness or hesitation to act."
+        },
+        {
+          "id": "53d306bed65e478aa72cd255cb272a7f",
+          "content": "relentless",
+          "explanation": "Relentless means continuing without easing or stopping. It does not mean acting with hesitation or unwillingness."
+        },
+        {
+          "id": "1450e2a2795a4d07b0936ae65c47a1ca",
+          "content": "indifferent",
+          "explanation": "“Indifferent” describes having no interest, care, or emotional investment in an outcome, whereas reluctance involves an active disinclination or hesitation toward doing something."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q022",
+    "target": "run out of",
+    "data": {
+      "id": 21,
+      "sense_id": 152,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "While preparing pastries for a morning market, a baker scrapes the last carton of butter completely clean and finds that the storage shelves contain no additional packages to complete the remaining recipes.",
+      "correct": {
+        "id": "17e099277fba400a85ea5b0022ef7c87",
+        "content": "run out of",
+        "explanation": "The phrase '<t inf=\"base\">run</t> <t inf=\"base\">out</t> <t inf=\"base\">of</t>' appropriately describes this scenario because the baker has completely depleted the available supply of butter and has none left in reserve to continue baking."
+      },
+      "distractors": [
+        {
+          "id": "72bc2d0058d14dfc8232275af104d6a3",
+          "content": "cut down on",
+          "explanation": "While this phrase relates to managing resources, it means to intentionally reduce consumption or use less of something, whereas the baker has exhausted the supply entirely."
+        },
+        {
+          "id": "31b55f38dbf340b598bb232a7fade17f",
+          "content": "get rid of",
+          "explanation": "This expression means to intentionally discard, sell, or remove something unwanted, which does not apply to an essential ingredient depleted through ordinary use."
+        },
+        {
+          "id": "775e7e751c884adc93237f64e89ea491",
+          "content": "stock up on",
+          "explanation": "Although this expression involves inventory, it means to buy or collect a large quantity of goods for future use, which is the opposite of having no supplies left."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q023",
+    "target": "hardly",
+    "data": {
+      "id": 23,
+      "sense_id": 123,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "Because Liam works night shifts and sleeps during the day, he _ ever sees his neighbors during the week.",
+      "correct": {
+        "id": "93dd612854a54affac814a912a16137b",
+        "content": "hardly",
+        "explanation": "Combined with 'ever', 'hardly' forms the standard collocation 'hardly ever', meaning 'almost never', which accurately reflects Liam's lack of opportunity to see his neighbors."
+      },
+      "distractors": [
+        {
+          "id": "b6b505c405914265bac33cc91ef30367",
+          "content": "almost",
+          "explanation": "While 'almost' conveys approximation, it cannot combine directly with 'ever' (*almost ever) to express low frequency; standard English requires 'hardly ever' or 'almost never'."
+        },
+        {
+          "id": "2e1ee0e1cc2f420493eb08e922c33b20",
+          "content": "nearly",
+          "explanation": "'Nearly' cannot modify 'ever' (*nearly ever) to mean 'almost never'; the intended meaning requires 'hardly ever' or 'nearly never'."
+        },
+        {
+          "id": "1c1860a0e50b40d5a2fa0d9ab95e4941",
+          "content": "hard",
+          "explanation": "'Hard' functions as an adjective or an adverb of effort (such as 'work hard'), not a degree adverb meaning 'barely' or 'almost not', and it cannot grammatically modify 'ever'."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q024",
+    "target": "a piece of cake",
+    "data": {
+      "id": 27,
+      "sense_id": 156,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">a piece of cake</t>",
+      "correct": {
+        "id": "2ac3c5812d9449f5819a8fe42f364626",
+        "content": "something that is very easy and simple to do or achieve",
+        "explanation": "The idiom 'a piece of cake' is used informally to describe a task, action, or objective that presents no difficulty and is straightforward to accomplish with minimal effort."
+      },
+      "distractors": [
+        {
+          "id": "13f2893877364ae0aaae6727d958e3bd",
+          "content": "a fair or rightful share of an available profit, advantage, or resource",
+          "explanation": "This describes 'a piece of the pie' (or 'a slice of the cake' in some languages). While learners may confuse idioms involving portions of baked food, 'a piece of cake' in English refers strictly to ease of accomplishment rather than an allocation of rewards or resources."
+        },
+        {
+          "id": "a2c3bb0631984bac81f0a3b182f18e17",
+          "content": "an additional benefit or reward that makes an already favorable situation even better",
+          "explanation": "This describes 'the icing on the cake.' Although both idioms metaphorically involve cake, 'the icing on the cake' refers to a secondary perk that enhances an already positive circumstance, whereas 'a piece of cake' describes a task that requires very little effort."
+        },
+        {
+          "id": "b70cf53ce11b401da50f553e567cf7bb",
+          "content": "a stroke of unexpected good fortune that happens without any effort or planning",
+          "explanation": "This describes a 'stroke of luck' or a 'windfall.' While an effortless task involves minimal strain, 'a piece of cake' refers to the inherently simple nature of an activity, not an outcome produced by random chance or good fortune."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q025",
+    "target": "bank",
+    "data": {
+      "id": 24,
+      "sense_id": 2,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">bank</t> — The sloping land alongside a river, stream, lake, or other body of water.",
+      "correct": {
+        "id": "3a711f30e2f8469c8a4558353ac7968f",
+        "content": "Local conservationists planted native trees along the unstable <t inf=\"base\">bank</t> of the river to prevent the soil from washing away.",
+        "explanation": "This sentence correctly uses 'bank' in the displayed sense to refer to the sloping ground bordering a river that is prone to water erosion."
+      },
+      "distractors": [
+        {
+          "id": "2dfc8490dd774ff79e093a51eb04b9c8",
+          "content": "We rested on a grassy <t inf=\"base\">bank</t> river and watched the water flow past.",
+          "explanation": "In this intended noun phrase, bank needs a linking of before river, as in bank of the river, or river must precede it in river bank. Bank river is not the licensed construction intended here."
+        },
+        {
+          "id": "8dc7b35d1818424f85b0f8503e7a10ed",
+          "content": "The security team monitored incoming visitors using a large <t inf=\"base\">bank</t> of screens mounted on the wall.",
+          "explanation": "This sentence illustrates another established sense of 'bank' meaning a row or series of similar electronic devices, rather than land bordering a body of water."
+        },
+        {
+          "id": "8500ba03da764506afae29f7a0c4a211",
+          "content": "She stopped by the neighborhood <t inf=\"base\">bank</t> on her lunch break to deposit the check into her savings account.",
+          "explanation": "This sentence uses 'bank' in its familiar financial institution sense, which does not match the geographical definition."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q026",
+    "target": "in charge of",
+    "data": {
+      "id": 25,
+      "sense_id": 157,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "Responsible for or having control over someone or something.",
+      "correct": {
+        "id": "ea642f896ab34f0298f3e39af2945b13",
+        "content": "in charge of",
+        "explanation": "\"In charge of\" means having supervisory responsibility, management, or authoritative control over a person, group, activity, or area."
+      },
+      "distractors": [
+        {
+          "id": "f30cb0757d36409581f733ade129a271",
+          "content": "on behalf of",
+          "explanation": "\"On behalf of\" means acting as a representative, agent, or spokesperson for someone, rather than having managerial authority or control over them."
+        },
+        {
+          "id": "19ed33ba602c4397b3dadefee9a09d7e",
+          "content": "in support of",
+          "explanation": "\"In support of\" means providing assistance, approval, or encouragement to a cause or person, not holding command or responsibility over them."
+        },
+        {
+          "id": "725153a5991d4c9e9da5e9538b02f913",
+          "content": "in place of",
+          "explanation": "\"In place of\" means serving as a replacement or substitute for someone or something, rather than having authority or control over them."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q027",
+    "target": "charge",
+    "data": {
+      "id": 26,
+      "sense_id": 17,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "While dining at a hotel restaurant, a guest asks the server to put the cost of the meal onto his room account rather than paying with cash immediately, allowing him to pay the full balance when leaving at the end of his stay.",
+      "correct": {
+        "id": "89582b5868f34d75aa3a593124e0c26a",
+        "content": "charge",
+        "explanation": "To <t inf=\"base\">charge</t> an expense means to record it on an account or pay using credit so that it can be paid at a later time. In this situation, the guest asks to place the cost of the meal onto his room account instead of paying right away."
+      },
+      "distractors": [
+        {
+          "id": "657dd71efd274d0586a374bf6fb02fa7",
+          "content": "credit",
+          "explanation": "While 'credit' relates to financial accounts, it means to add funds to an account or reduce an amount owed, such as issuing a refund. Here, the guest is adding an expenditure to his balance rather than receiving funds."
+        },
+        {
+          "id": "2162cb48f0e24584867ad2d51aba24b9",
+          "content": "refund",
+          "explanation": "Refund means to return money previously paid. The guest is adding an unpaid meal cost to his room account, not receiving a repayment."
+        },
+        {
+          "id": "4be22af07ce74eb0b434bdc5934a1984",
+          "content": "settle",
+          "explanation": "To 'settle' means to pay off an outstanding balance or resolve a debt completely. The guest is doing the opposite by deferring payment and adding a new expense to his running account."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q028",
+    "target": "give up",
+    "data": {
+      "id": 29,
+      "sense_id": 127,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "After experiencing frequent migraines and restlessness, Priya decided to _ caffeine completely, swapping her daily coffees for herbal tea.",
+      "correct": {
+        "id": "1e1428117c7a4b6dbf28a400b444ba09",
+        "content": "give up",
+        "explanation": "'Give up' means to stop consuming or using something that you have regularly, especially a habit or an addictive substance. It correctly conveys Priya's decision to quit caffeine and drink herbal tea instead."
+      },
+      "distractors": [
+        {
+          "id": "bed0d3df93694998b24a34bbfb49cbd2",
+          "content": "take up",
+          "explanation": "'Take up' means to start a new habit, hobby, or pursuit, which directly contradicts the context of eliminating caffeine from her routine."
+        },
+        {
+          "id": "eb2bc993bff340abb2eff2da9676b376",
+          "content": "give in",
+          "explanation": "'Give in' means to yield or surrender to pressure, and it requires the preposition 'to' before an object rather than taking a direct noun like 'caffeine'."
+        },
+        {
+          "id": "b0c58dd8ac4d4657b89b2dac0a1e68f2",
+          "content": "give away",
+          "explanation": "'Give away' means to donate possessions for free or reveal confidential information; it does not mean to quit consuming a substance."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q029",
+    "target": "advice",
+    "data": {
+      "id": 28,
+      "sense_id": 39,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">advice</t>",
+      "correct": {
+        "id": "ad9bd6f3d78a4e52a088f375ef1fd0a6",
+        "content": "A formal or official notice giving information, especially about a business or financial transaction",
+        "explanation": "In formal commercial, banking, and shipping contexts, 'advice' refers to an official notice or document that communicates information about a specific transaction, such as a transfer of funds (remittance advice) or the dispatch of goods."
+      },
+      "distractors": [
+        {
+          "id": "77e3c496b05c4149adf4a0f60b27e733",
+          "content": "An itemized commercial document requesting payment for goods delivered or services rendered",
+          "explanation": "This defines an invoice. An invoice is an itemized request or bill demanding payment, whereas an advice serves as an informative notice about a transaction that has occurred or is underway, such as payment having been remitted."
+        },
+        {
+          "id": "00bd1155a4754ec789756b9bc67a7205",
+          "content": "An official authorization granting legal permission or approval to execute a financial transfer",
+          "explanation": "This defines an authorization, mandate, or warrant. An advice conveys factual notification that an action or transfer has occurred or will occur, but it does not confer the legal power or formal approval to perform it."
+        },
+        {
+          "id": "c920c5a6d21c4b44af5d1255ec838063",
+          "content": "A periodic financial summary detailing all debits, credits, and the running balance of an account",
+          "explanation": "This defines an account statement. An advice is an individual notification issued for a specific event or transaction, rather than an aggregate summary of account activity over a designated period."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q030",
+    "target": "break the ice",
+    "data": {
+      "id": 32,
+      "sense_id": 153,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">break the ice</t> — to do or say something that relieves tension or awkwardness, helping people feel more comfortable and willing to talk to one another",
+      "correct": {
+        "id": "8986844f3713466e8d19645bafc84a1c",
+        "content": "When an unexpected delay left everyone waiting silently in the lobby, the tour guide <t inf=\"past\">broke</t> <t inf=\"base\">the</t> <t inf=\"base\">ice</t> by handing out local snacks and chatting about nearby sights.",
+        "explanation": "This sentence correctly uses \"break the ice\" in the displayed sense, showing an action taken to relieve awkward silence and help people feel comfortable talking to one another."
+      },
+      "distractors": [
+        {
+          "id": "fc39e6c5e2c84817b8e4ccc82aa0196f",
+          "content": "The surgeon met privately with the patient's relatives to gently <t inf=\"base\">break</t> <t inf=\"base\">the</t> <t inf=\"base\">ice</t> about the complications during the procedure.",
+          "explanation": "This sentence incorrectly uses \"break the ice\" instead of \"break the news.\" While both idioms involve delicate speech in tense moments, \"break the news\" is used to disclose serious or distressing information, whereas \"break the ice\" specifically refers to easing initial social awkwardness."
+        },
+        {
+          "id": "d86da5168b8d43a58468539f7cc7fca5",
+          "content": "After months of refusing to comment publicly, the spokesperson finally <t inf=\"past\">broke</t> <t inf=\"base\">the</t> <t inf=\"base\">ice</t> about the financial audit during a live press briefing.",
+          "explanation": "This sentence confuses \"break the ice\" with \"break the silence.\" \"Break the silence\" means making a public statement after withholding comment on an issue, whereas \"break the ice\" describes informal social behavior meant to overcome hesitation among people."
+        },
+        {
+          "id": "aa54aa0349a44c34ad18d641f5070e3e",
+          "content": "During the sub-zero winter, the port authority deployed specialized tugboats to <t inf=\"base\">break</t> <t inf=\"base\">the</t> <t inf=\"base\">ice</t> and keep the shipping channels clear.",
+          "explanation": "This sentence uses \"break the ice\" in its literal, physical sense of crushing frozen water for navigation. It does not demonstrate the target figurative sense of relieving social tension to help people converse."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q031",
+    "target": "thank goodness",
+    "data": {
+      "id": 30,
+      "sense_id": 160,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "Used to express relief or gratitude that something bad has ended, been avoided, or did not happen.",
+      "correct": {
+        "id": "c191109cdd51495fa6a1d61e43d61586",
+        "content": "thank goodness",
+        "explanation": "\"Thank goodness\" is an exclamation used to express relief or gratitude when an undesirable situation has finished, been avoided, or failed to materialize."
+      },
+      "distractors": [
+        {
+          "id": "1cc71f55215d4ba4af4de4a93b6b7c40",
+          "content": "heaven forbid",
+          "explanation": "\"Heaven forbid\" is used to express a strong wish that an undesirable event will not happen in the future, rather than relief that a bad event has already ended or been avoided."
+        },
+        {
+          "id": "77c86ba6781b41819f976db608922299",
+          "content": "for goodness' sake",
+          "explanation": "\"For goodness' sake\" is an exclamation used to express annoyance, impatience, or exasperation, not relief or gratitude."
+        },
+        {
+          "id": "3f5631ceab0147ab8bbdea339c22d1bc",
+          "content": "fingers crossed",
+          "explanation": "\"Fingers crossed\" is used to express forward-looking hope for good luck or a favorable outcome, rather than relief that something bad did not happen."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q032",
+    "target": "research",
+    "data": {
+      "id": 31,
+      "sense_id": 41,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "A conservation team sets out to determine why a native bee species is rapidly disappearing from agricultural valleys. The scientists gather pollen samples across dozens of farms, measure local pesticide residues, cross-reference regional weather logs, and examine historical museum specimens to uncover the precise factors driving the decline.",
+      "correct": {
+        "id": "f3e77a43cc0649db9f7a8ff41f386e06",
+        "content": "research",
+        "explanation": "The scenario describes a thorough, evidence-based inquiry into an unresolved problem—systematically gathering physical samples, environmental measurements, and historical records to discover underlying facts. This systematic investigation exemplifies the verb <t inf=\"base\">research</t>."
+      },
+      "distractors": [
+        {
+          "id": "1c5d87143b544917b4f1731b812c72ef",
+          "content": "hypothesize",
+          "explanation": "'Hypothesize' means to propose a tentative explanation or assumption as a starting point for further reasoning or testing. It refers to formulating a theoretical conjecture rather than carrying out the active, empirical investigation and data collection described in the scenario."
+        },
+        {
+          "id": "75720852c44c4afabc6fbcfadbb9a3f3",
+          "content": "compile",
+          "explanation": "'Compile' means to collect and assemble existing items or information into a single list, report, or volume. Although the scientists gather data, 'compile' refers only to aggregating material, not the broader scientific investigation and discovery of causes."
+        },
+        {
+          "id": "f73ce4242d1a4bba9ea85d929d7d35ee",
+          "content": "speculate",
+          "explanation": "'Speculate' means to form opinions or make guesses without sufficient evidence. The team in the scenario is doing the exact opposite by methodically gathering empirical data and examining historical records to reach verifiable conclusions."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q033",
+    "target": "look after",
+    "data": {
+      "id": 34,
+      "sense_id": 137,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "When our community club elected its new committee, Elena agreed to _ the finances, managing the bank account and paying all the monthly bills.",
+      "correct": {
+        "id": "45e293d97f494d1985b697e42a4af766",
+        "content": "look after",
+        "explanation": "The phrasal verb \"look after\" means to be responsible for dealing with a task, matter, or practical arrangement, which fits the context of managing accounts and paying bills."
+      },
+      "distractors": [
+        {
+          "id": "5e700d4c12134b2b98e369be9442dd70",
+          "content": "look into",
+          "explanation": "\"Look into\" means to investigate or examine the facts of a problem or situation, not to handle ongoing administrative duties or manage finances."
+        },
+        {
+          "id": "f2bd4673e0fa41a78214268affb4ab11",
+          "content": "take after",
+          "explanation": "\"Take after\" is often confused with \"look after\" due to the related expression \"take care of\", but it actually means to resemble an older relative in appearance or behavior."
+        },
+        {
+          "id": "63a4d1a268794df09b26cde9f3fc1cf9",
+          "content": "look for",
+          "explanation": "\"Look for\" means to search for someone or something that is lost or needed, which does not fit the context of taking responsibility for organizational finances."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q034",
+    "target": "run",
+    "data": {
+      "id": 33,
+      "sense_id": 43,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">run</t>",
+      "correct": {
+        "id": "a6881e88e74d4415965c791903bd2590",
+        "content": "To go or hurry somewhere quickly, especially because of a rush, an emergency, or to escape danger.",
+        "explanation": "This definition accurately captures this sense of 'run', which centers on traveling or hurrying rapidly toward a place due to time pressure, an emergency, or the need to reach safety."
+      },
+      "distractors": [
+        {
+          "id": "969727657e04405aa7d2929b7845a3ec",
+          "content": "To move quietly and carefully in order to avoid being seen or heard",
+          "explanation": "This defines sneaking or creeping. Although someone might sneak to avoid a threat, 'run' involves moving rapidly and with urgency rather than moving stealthily and quietly."
+        },
+        {
+          "id": "b47c3da737634c57a635bc7a04e18e49",
+          "content": "To walk at a slow, relaxed pace without any hurry or urgency",
+          "explanation": "This describes strolling or ambling at an unhurried pace. The displayed sense of run involves going or hurrying somewhere quickly, although an emergency is not required."
+        },
+        {
+          "id": "205a7fd01fb749ed9e70134c5baa818e",
+          "content": "To move forward on hands and knees with the body close to the ground",
+          "explanation": "This definition specifies crawling on hands and knees. It does not express the rapid or hurried travel to a place described by the displayed meaning."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q035",
+    "target": "raise",
+    "data": {
+      "id": 35,
+      "sense_id": 86,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">raise</t> — to cause something to increase in amount, level, degree, or value",
+      "correct": {
+        "id": "07c56bd740ae4e86b86f99fa601e1112",
+        "content": "The city council voted to <t inf=\"base\">raise</t> property taxes to help fund the new public transit network.",
+        "explanation": "This sentence correctly uses <t inf=\"base\">raise</t> in the defined sense of causing an amount or rate (property taxes) to increase, operating as a transitive verb with a direct object."
+      },
+      "distractors": [
+        {
+          "id": "f5a858bd44cd46cc8c5c0819dd54a7dd",
+          "content": "Consumer prices are expected to <t inf=\"base\">raise</t> noticeably before the end of the fiscal year.",
+          "explanation": "Unlike the intransitive verb 'rise', <t inf=\"base\">raise</t> is transitive and requires a direct object. Because the subject itself is increasing, 'rise' should be used instead."
+        },
+        {
+          "id": "5b000610415046249d2de1e975a72366",
+          "content": "The construction crew used a crane to <t inf=\"base\">raise</t> the steel beam onto the upper floor.",
+          "explanation": "In this sentence, <t inf=\"base\">raise</t> refers to physically lifting an object to a higher location, rather than causing a quantitative amount, level, or value to increase."
+        },
+        {
+          "id": "93975818e6c44767a0cc2af3231ad01a",
+          "content": "After relocating to a rural town, the couple began to <t inf=\"base\">raise</t> sheep and cultivate organic vegetables.",
+          "explanation": "Here, <t inf=\"base\">raise</t> means to breed and care for livestock, which does not match the definition of increasing an amount, level, degree, or value."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q036",
+    "target": "on behalf of",
+    "data": {
+      "id": 36,
+      "sense_id": 159,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "For the benefit, interest, or support of someone.",
+      "correct": {
+        "id": "cfdc635d3bbe422abdedad633047931c",
+        "content": "on behalf of",
+        "explanation": "'On behalf of' means for the benefit, interest, or support of someone, as well as acting as their representative."
+      },
+      "distractors": [
+        {
+          "id": "15c4404ad17b4ccb95a2372db978d20b",
+          "content": "on the part of",
+          "explanation": "'On the part of' means done, made, or felt by someone, indicating the actor or source rather than the beneficiary of an action."
+        },
+        {
+          "id": "331664b0d504429a8b3959f671eb36fa",
+          "content": "on account of",
+          "explanation": "'On account of' means because of or due to, which introduces a cause or reason rather than an action done for someone's benefit."
+        },
+        {
+          "id": "32072adcdb044f869d85790c76a9ec48",
+          "content": "in lieu of",
+          "explanation": "'In lieu of' means instead of or in place of, designating a substitute rather than an effort to support or benefit someone."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q037",
+    "target": "spill the beans",
+    "data": {
+      "id": 38,
+      "sense_id": 154,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "The office staff spent weeks secretly preparing an elaborate farewell celebration for their manager, hiding decorations in a locked supply closet and repeatedly warning everyone to keep the event under wraps. When the manager stopped by and asked why people were whispering in the breakroom, an excited coworker struggled not to blurt out the entire plan.",
+      "correct": {
+        "id": "a9854d08f0da4f84ac06a2212d14eb26",
+        "content": "spill the beans",
+        "explanation": "To <t inf=\"base\">spill</t> <t inf=\"base\">the</t> <t inf=\"plural\">beans</t> means to disclose confidential or secret information, especially prematurely or indiscreetly. In this scenario, the office is trying to keep a celebration secret, and the coworker is fighting the impulse to give away the surprise, making this expression fit the context precisely."
+      },
+      "distractors": [
+        {
+          "id": "eeb8a16ef089477fb4888e476fa91ba5",
+          "content": "blow the whistle",
+          "explanation": "While 'blow the whistle' involves revealing concealed information, it specifically refers to reporting illegal, unethical, or fraudulent activity to authorities or the public, which does not apply to a harmless surprise party."
+        },
+        {
+          "id": "2c188093f5a14b37a822bd0916768c1b",
+          "content": "clear the air",
+          "explanation": "While 'clear the air' involves speaking openly to eliminate tension or secrecy, it means discussing lingering grievances, hurt feelings, or misunderstandings to resolve conflict, not spoiling an unannounced event."
+        },
+        {
+          "id": "1dda73a6ef9746d6b93af437a017543e",
+          "content": "beat around the bush",
+          "explanation": "While 'beat around the bush' relates to handling sensitive topics in conversation, it means speaking evasively and avoiding the main point, which is the opposite of blurting out the hidden details directly."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q038",
+    "target": "borrow",
+    "data": {
+      "id": 37,
+      "sense_id": 102,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "Having exhausted their savings during the move, the couple had to _ eight thousand dollars from the bank at a low interest rate to furnish their new home.",
+      "correct": {
+        "id": "4e18f08943c742b2ab25fbb168257d47",
+        "content": "borrow",
+        "explanation": "Correctly expresses receiving money from a financial institution with an agreement to pay it back later, following the standard pattern 'borrow [money] from [institution] at an interest rate'."
+      },
+      "distractors": [
+        {
+          "id": "e2f7d8be5eb44ea4a32dd350018ae12c",
+          "content": "lend",
+          "explanation": "'Lend' refers to providing money to someone temporarily rather than receiving it, which represents the lender's perspective and requires 'to' rather than 'from'."
+        },
+        {
+          "id": "c6b353db6b804c59be91008b3c608df9",
+          "content": "withdraw",
+          "explanation": "'Withdraw' means taking out money that you already own from an existing account, which contradicts having exhausted all savings and does not occur 'at an interest rate'."
+        },
+        {
+          "id": "54da46540c204302a6a704fc51440112",
+          "content": "repay",
+          "explanation": "'Repay' means returning money that was previously borrowed and takes the preposition 'to', whereas the context requires obtaining new funds to pay for furnishings."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q039",
+    "target": "take off",
+    "data": {
+      "id": 39,
+      "sense_id": 139,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">take off</t>",
+      "correct": {
+        "id": "07ab87d6ab064a51b4caa5545751c0b2",
+        "content": "To remove an item of clothing, jewelry, or an accessory from your body.",
+        "explanation": "'Take off' means to remove an item of clothing, jewelry, or an accessory that you are currently wearing, such as taking off your shoes or jacket. It is the direct opposite of 'put on'."
+      },
+      "distractors": [
+        {
+          "id": "954ed88a081b4545a21865cbbddfbe31",
+          "content": "To place an item of clothing, jewelry, or an accessory onto your body to wear it.",
+          "explanation": "This definition describes 'put on', which is the opposite of 'take off'. 'Take off' specifically means removing an item from your body rather than dressing in it."
+        },
+        {
+          "id": "1e8e9ad1c8a14784893ece055bfba058",
+          "content": "To wear an item of clothing temporarily to check whether it fits or looks suitable.",
+          "explanation": "This definition describes 'try on', which involves testing clothes for size or appearance, whereas 'take off' refers to removing clothing you are already wearing."
+        },
+        {
+          "id": "9bea7cdea35846caa433ace15e56e02d",
+          "content": "To fasten a garment securely using buttons, a zipper, or ties.",
+          "explanation": "This definition describes 'do up' or 'fasten', which involves securing or closing a piece of clothing rather than removing it from the body."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q040",
+    "target": "lend",
+    "data": {
+      "id": 40,
+      "sense_id": 106,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">lend</t> — to provide money to a person or organization on the condition that it will be paid back, usually along with interest",
+      "correct": {
+        "id": "135fdd262db74c3bbc812e853b744977",
+        "content": "Several commercial banks agreed to <t inf=\"base\">lend</t> capital to the clean-energy startup at a competitive interest rate.",
+        "explanation": "This sentence correctly uses 'lend' to describe financial institutions providing funds to a borrower under the condition of repayment with interest."
+      },
+      "distractors": [
+        {
+          "id": "068178b039924efeb90010aaea32b067",
+          "content": "To finance the construction of the new warehouse, the logistics company sought to <t inf=\"base\">lend</t> five million dollars from a consortium of private lenders.",
+          "explanation": "This sentence incorrectly uses 'lend' where 'borrow' is required; a recipient takes or borrows money 'from' a creditor, whereas a creditor provides or lends money 'to' a recipient."
+        },
+        {
+          "id": "4872e5f2572a40deba3644e67c576ae1",
+          "content": "The inclusion of verifiable case studies <t inf=\"present_3sg\">lends</t> considerable credibility to the research team's financial proposal.",
+          "explanation": "While this sentence correctly uses 'lend' in its figurative sense meaning to impart or contribute a quality, it does not match the displayed financial definition involving money, repayment, and interest."
+        },
+        {
+          "id": "901b4fec6a374f8dbbfdabaeaa2d31cb",
+          "content": "Because the disaster relief fund was a non-repayable gift, the charity <t inf=\"past\">lent</t> five thousand dollars directly to each homeowner without expecting the money back.",
+          "explanation": "'Lend' inherently denotes providing funds on the condition that they will be returned; money given permanently without any expectation of repayment is granted or donated, not lent."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q041",
+    "target": "sensitive",
+    "data": {
+      "id": 41,
+      "sense_id": 111,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "Easily hurt, offended, or upset by criticism or what other people say and do.",
+      "correct": {
+        "id": "734cda330fc54a5b8f0042c4c4ee76bd",
+        "content": "sensitive",
+        "explanation": "The adjective \"sensitive\" precisely describes someone who is quick to take offense, feel emotionally hurt, or become upset by negative remarks or perceived criticism."
+      },
+      "distractors": [
+        {
+          "id": "9357a2e0597c42f6998c632ead647693",
+          "content": "sensible",
+          "explanation": "Despite sharing a Latin root, \"sensible\" means showing good judgment, reason, and practical wisdom, not being easily offended or hurt."
+        },
+        {
+          "id": "d95b940b38d640a5ad74efe9f49b2789",
+          "content": "susceptible",
+          "explanation": "\"Susceptible\" means easily influenced, harmed, or infected by a specific outside condition or agent, rather than being personally hurt or offended by criticism."
+        },
+        {
+          "id": "ffb6c9db4c3041d3b2366279fc861a75",
+          "content": "sentimental",
+          "explanation": "\"Sentimental\" describes being prompted by feelings of tenderness, romance, or nostalgia, rather than reacting defensively or being easily upset by criticism."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q042",
+    "target": "put off",
+    "data": {
+      "id": 42,
+      "sense_id": 148,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "Elena arrived eager to dine at a highly recommended seafood bistro, but the foul stench of stagnant water near the entrance and the grease on the cutlery instantly extinguished her appetite and destroyed any desire she had to eat there.",
+      "correct": {
+        "id": "69d58cd1dd6642b0b2d6316da9e91dd0",
+        "content": "put off",
+        "explanation": "\"Put off\" accurately captures this situation because it means to cause someone to lose interest, enthusiasm, or appetite due to an unpleasant or repellent factor, precisely matching how the foul smell and dirty utensils ruined Elena's desire to eat."
+      },
+      "distractors": [
+        {
+          "id": "11f68ae7b6594ffdb9a8a3ae6d1fed5e",
+          "content": "call off",
+          "explanation": "\"Call off\" means to cancel an organized event, plan, or scheduled activity. While learners often confuse it with \"put off\" when negative circumstances disrupt plans, it refers to the decision to cancel an event rather than an unappealing factor causing someone to lose appetite or enthusiasm."
+        },
+        {
+          "id": "c130050dffa649388f2c497ca0b3d347",
+          "content": "turn down",
+          "explanation": "\"Turn down\" means to refuse or reject an offer, invitation, or application. Although someone might ultimately decline a service after a bad impression, \"turn down\" describes the deliberate act of refusal itself rather than the causative effect of dampening enthusiasm or provoking aversion."
+        },
+        {
+          "id": "61be0898f0dd4fc8b523c71a05eb13ce",
+          "content": "brush off",
+          "explanation": "\"Brush off\" means to dismiss or ignore a person, remark, or concern in a casual or rude manner. It does not convey the loss of appetite or enthusiasm caused by repulsive conditions."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q043",
+    "target": "sensible",
+    "data": {
+      "id": 43,
+      "sense_id": 119,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "Facing a demanding twelve-hour shift on the hospital ward, Priya chose a pair of _ shoes that offered arch support and cushioned soles rather than focusing on style.",
+      "correct": {
+        "id": "68ba2461b1bd4aa4abca735f56f4facd",
+        "content": "sensible",
+        "explanation": "'Sensible' describes clothing or footwear that is practical, comfortable, and functional rather than fashionable, making it the appropriate term for supportive work shoes."
+      },
+      "distractors": [
+        {
+          "id": "43f650d4503a49bab4014ea7be09162e",
+          "content": "sensitive",
+          "explanation": "'Sensitive' describes someone or something that is easily affected, emotionally responsive, or physically delicate; it is a common false friend and cannot mean practical or utilitarian."
+        },
+        {
+          "id": "054bb5559fa74cddbcf78b7e7c204d23",
+          "content": "sensory",
+          "explanation": "'Sensory' relates to physiological senses or perception (such as the sense of touch or hearing), not to practical, supportive design in clothing or footwear."
+        },
+        {
+          "id": "244c4055654a4f5ea71d349bae650d5d",
+          "content": "senseless",
+          "explanation": "Senseless means lacking sense or purpose. It does not describe footwear chosen for practical comfort, arch support, and cushioned soles."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q044",
+    "target": "once in a blue moon",
+    "data": {
+      "id": 45,
+      "sense_id": 155,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">once in a blue moon</t>",
+      "correct": {
+        "id": "5c3c3ceceb1c43b48e929848947bf3d5",
+        "content": "Very rarely; almost never.",
+        "explanation": "\"Very rarely; almost never.\" accurately defines \"once in a blue moon\", an informal adverbial idiom used to describe an event that occurs with extreme infrequency."
+      },
+      "distractors": [
+        {
+          "id": "09cb8ab4e96f4ce89fafc1c1a0e216db",
+          "content": "Unexpectedly and without any advance notice.",
+          "explanation": "\"Unexpectedly and without any advance notice.\" defines the idiom \"out of the blue\", confusing two idioms that feature the word \"blue\"."
+        },
+        {
+          "id": "5f128f3ec4cf43eb9ad1ce0419ce40b8",
+          "content": "At predictable intervals according to a regular cycle.",
+          "explanation": "This definition expresses regularity and predictability, not very low frequency. Once in a blue moon emphasizes how rarely an event occurs, without defining a timetable."
+        },
+        {
+          "id": "e281feb823374d4e8fa0645a620502e2",
+          "content": "Only once during a person's entire lifetime.",
+          "explanation": "This definition imposes a one-occurrence lifetime limit. Once in a blue moon expresses very low frequency without fixing how many times an event can happen in a person's life."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q045",
+    "target": "reluctant",
+    "data": {
+      "id": 44,
+      "sense_id": 122,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">reluctant</t> — Not willing or eager to do something, or done, given, or acting with hesitation and unwillingness.",
+      "correct": {
+        "id": "372a3c02205a4e98a7629ae1120232c0",
+        "content": "The university administration was <t inf=\"base\">reluctant</t> to increase tuition fees, doing so only after exhausting all available government subsidies.",
+        "explanation": "This sentence correctly uses 'reluctant' to describe an institution's unwillingness or hesitation to take an action, properly followed by a to-infinitive complement ('to increase')."
+      },
+      "distractors": [
+        {
+          "id": "11fb019d6ec8416da22d35caf8b6537c",
+          "content": "Although the lead architect saw merit in the revisions, she remained <t inf=\"base\">reluctant</t> to adopting the proposed structural changes.",
+          "explanation": "While 'reluctant' expresses unwillingness, standard grammar requires a to-infinitive complement ('reluctant to adopt') rather than the preposition 'to' followed by a gerund ('to adopting')."
+        },
+        {
+          "id": "4607f2ee25d944ee899091af6f9edc80",
+          "content": "Many board members were initially <t inf=\"base\">reluctant</t> of the acquisition, questioning whether the startup's valuation was justified.",
+          "explanation": "'Reluctant' does not collocate with the preposition 'of'. When expressing hesitation regarding a noun phrase, standard usage requires 'about' ('reluctant about the acquisition') or a to-infinitive clause ('reluctant to approve the acquisition')."
+        },
+        {
+          "id": "22a39ae2432c4b5180c38cc9f69cd7a1",
+          "content": "The lead investigator was openly <t inf=\"base\">reluctant</t> that the suspect's alibi would hold up under closer scrutiny.",
+          "explanation": "'Reluctant' denotes hesitation or unwillingness to act, not cognitive disbelief or skepticism. Furthermore, it cannot govern a declarative 'that'-clause; an adjective such as 'doubtful' or 'skeptical' is required."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q046",
+    "target": "in charge of",
+    "data": {
+      "id": 46,
+      "sense_id": 157,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "Responsible for or having control over someone or something.",
+      "correct": {
+        "id": "e95f658933e444218f218396d4e8864a",
+        "content": "in charge of",
+        "explanation": "\"In charge of\" means having supervisory control, managerial authority, or primary responsibility for a person, group, task, or operation."
+      },
+      "distractors": [
+        {
+          "id": "b55e960ee1dd4b40bc643f8b917635dc",
+          "content": "on behalf of",
+          "explanation": "\"On behalf of\" means acting as a representative or agent for someone else, rather than exercising managerial authority or holding control over them."
+        },
+        {
+          "id": "a14ee2b715474d08b2c4295062b91267",
+          "content": "in possession of",
+          "explanation": "\"In possession of\" means owning, holding, or carrying physical property or information, rather than having supervisory responsibility or authority over people or affairs."
+        },
+        {
+          "id": "fc10e36cba4345b79a583af726951f25",
+          "content": "in place of",
+          "explanation": "\"In place of\" means functioning as a substitute or replacement for someone or something, rather than being responsible for directing or controlling them."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q047",
+    "target": "hardly",
+    "data": {
+      "id": 48,
+      "sense_id": 124,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "When an auditor uncovers systematic accounting discrepancies that wiped out millions in company funds, the chief financial officer asks whether the upcoming regulatory review will simply overlook the issue. The auditor offers a dry, one-word response to convey that such an outcome is thoroughly out of the question.",
+      "correct": {
+        "id": "220091d1b729435aac193fb1b0e4add2",
+        "content": "hardly",
+        "explanation": "In this context, 'hardly' functions as an understated, emphatic negative retort meaning 'certainly not' or 'not at all,' conveying that regulatory leniency is completely out of the question."
+      },
+      "distractors": [
+        {
+          "id": "4a05d4f439b847f0a6e90b3657bd2497",
+          "content": "barely",
+          "explanation": "'Barely' means 'only just' or 'by a narrow margin.' If used to answer whether an issue will be overlooked, it would imply that regulators might overlook it by a slim margin, directly contradicting the intended meaning that it will definitely not happen."
+        },
+        {
+          "id": "101fa0183a154a8f963e4fc0b91eb84d",
+          "content": "surely",
+          "explanation": "'Surely' expresses positive conviction, belief, or an expectation of agreement. As a standalone response, it would affirm the suggestion rather than reject it as completely out of the question."
+        },
+        {
+          "id": "e6751daed2034347afbf4035bc135734",
+          "content": "rarely",
+          "explanation": "'Rarely' refers strictly to frequency ('seldom' or 'infrequently') across repeated occurrences, making it inappropriate for an emphatic rejection of a single prospective outcome."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q048",
+    "target": "run out of",
+    "data": {
+      "id": 47,
+      "sense_id": 152,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "After drafting twelve completely different concepts for the new library, the architect found it harder to think of anything new and admitted that she was beginning to _ ideas.",
+      "correct": {
+        "id": "adad53fb4be54ae4aca66d0227713a65",
+        "content": "run out of",
+        "explanation": "Beginning to run out of ideas means the supply is becoming depleted. It does not claim that she already has no ideas left."
+      },
+      "distractors": [
+        {
+          "id": "4dcd9e1b28f74f7b813c007031f96447",
+          "content": "run away",
+          "explanation": "Run away is intransitive and does not take ideas as a direct object. It describes fleeing, not a supply becoming depleted."
+        },
+        {
+          "id": "09abb9e6c5e444b48e787475d4264062",
+          "content": "take after",
+          "explanation": "Take after means to resemble an older relative. Ideas are not an older relative whom the architect resembles, so this does not express her dwindling supply of new thoughts."
+        },
+        {
+          "id": "7395571f96474f74b85bd1fb51fff545",
+          "content": "get along",
+          "explanation": "Get along cannot take ideas as a direct object in this construction. It does not express using up a supply."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q049",
+    "target": "bank",
+    "data": {
+      "id": 49,
+      "sense_id": 3,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">bank</t>",
+      "correct": {
+        "id": "14d8b0836dcd42d98dbea45a44a1ac95",
+        "content": "A raised mound, ridge, or steep heap of earth, sand, snow, clouds, or other material.",
+        "explanation": "This definition accurately captures the sense of \"bank\" as an accumulated mass, ridge, or mound of material—such as earth, snow, sand, or clouds—rising above the surrounding surface."
+      },
+      "distractors": [
+        {
+          "id": "fb669a88377c4177a7cd48f7850be56d",
+          "content": "A low-lying expanse of flat land alongside a waterway that is subject to periodic flooding.",
+          "explanation": "This describes a floodplain. While both concepts relate to waterways, a bank is the raised or sloping ground that bounds the water or terrain, rather than the low, flat plain that becomes submerged during high water."
+        },
+        {
+          "id": "8b6f0fa8584e4ae5a80ebac02b514e69",
+          "content": "A long, narrow trench or sunken channel dug into the earth, typically used for drainage or irrigation.",
+          "explanation": "This defines a ditch or trench. A trench is an excavated hollow cut downward into the soil, whereas a bank is an elevated ridge or mound piled upward above the surrounding surface."
+        },
+        {
+          "id": "c83cab7b41a5494dbfd071ccdf418d7b",
+          "content": "A broad, elevated area of land with a largely flat surface that rises sharply above the surrounding terrain.",
+          "explanation": "This defines a plateau or mesa. Although both involve raised ground, a plateau is defined by its extensive, flat top, whereas a bank forms a rounded mound, ridge, or steep heap of accumulated material."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q050",
+    "target": "a piece of cake",
+    "data": {
+      "id": 50,
+      "sense_id": 156,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">a piece of cake</t> — something that is very easy and simple to do or achieve",
+      "correct": {
+        "id": "0f6c6c20a2ae4bdc80f53dbe678f2231",
+        "content": "The intuitive user interface makes updating the company blog <t inf=\"base\">a</t> <t inf=\"base\">piece</t> <t inf=\"base\">of</t> <t inf=\"base\">cake</t>, even for staff members without technical training.",
+        "explanation": "This sentence correctly uses the idiom in the pattern 'make something a piece of cake' to describe an activity (updating the blog) that is straightforward and effortless to carry out."
+      },
+      "distractors": [
+        {
+          "id": "cf0e44db322e429e93b910020685b27b",
+          "content": "The hotel room had a stunning ocean view, and the complimentary breakfast was <t inf=\"base\">a</t> <t inf=\"base\">piece</t> <t inf=\"base\">of</t> <t inf=\"base\">cake</t> that made our stay unforgettable.",
+          "explanation": "This sentence confuses 'a piece of cake' with 'the icing on the cake'. While 'the icing on the cake' refers to an extra perk or enhancement that makes an already good situation even better, 'a piece of cake' denotes an action or task that is easy to do or achieve."
+        },
+        {
+          "id": "69caefcadfef4c47a8d6d82d9fe8388e",
+          "content": "After the startup secured millions in new funding, every early investor demanded <t inf=\"base\">a</t> <t inf=\"base\">piece</t> <t inf=\"base\">of</t> <t inf=\"base\">cake</t>.",
+          "explanation": "This sentence confuses 'a piece of cake' with 'a piece of the pie'. In financial and business contexts, demanding a share or cut of profits or capital is expressed by 'a piece of the pie', whereas 'a piece of cake' refers only to an easily accomplished task."
+        },
+        {
+          "id": "14661fad705848258468bf34af87b053",
+          "content": "Our IT specialist solved the database connection error <t inf=\"base\">a</t> <t inf=\"base\">piece</t> <t inf=\"base\">of</t> <t inf=\"base\">cake</t> before anyone else noticed the outage.",
+          "explanation": "This sentence misuses 'a piece of cake' as an adverbial modifier of manner to mean 'easily'. As a noun phrase, the idiom functions predicatively (for example, 'solving the error was a piece of cake') rather than as an adverb modifying the verb 'solved'."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q051",
+    "target": "thank goodness",
+    "data": {
+      "id": 52,
+      "sense_id": 160,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "Used to express relief or gratitude that something bad has ended, been avoided, or did not happen.",
+      "correct": {
+        "id": "c6908f5d48e34c3ab66453ee5984c4eb",
+        "content": "thank goodness",
+        "explanation": "\"Thank goodness\" is an interjection used specifically to voice relief or gratitude when a difficult situation has finished, a hazard has been avoided, or an undesirable outcome did not take place."
+      },
+      "distractors": [
+        {
+          "id": "303b7b06002648dd8551b71098b5a93b",
+          "content": "heaven forbid",
+          "explanation": "\"Heaven forbid\" is used prospectively to express a strong wish that a bad event will not occur in the future, rather than retrospective relief that something bad has already ended or failed to happen."
+        },
+        {
+          "id": "868d0308a8dc4c0eb28d5a6334c6953b",
+          "content": "fingers crossed",
+          "explanation": "\"Fingers crossed\" conveys an ongoing hope for good luck or a favorable outcome regarding future uncertainty, rather than relief or gratitude about a past or averted misfortune."
+        },
+        {
+          "id": "5e3bdb5c41824024b121817e6ab6a2b4",
+          "content": "for goodness' sake",
+          "explanation": "\"For goodness' sake\" shares the component word \"goodness\" in an exclamatory phrase, but it expresses annoyance, impatience, or exasperation rather than relief or gratitude."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q052",
+    "target": "charge",
+    "data": {
+      "id": 53,
+      "sense_id": 18,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "Following a six-month investigation into corporate embezzlement, detectives uncover falsified ledgers and illicit wire transfers. With sufficient proof assembled, the lead prosecutor officially files paperwork alleging that the chief financial officer committed grand larceny, requiring him to stand trial.",
+      "correct": {
+        "id": "5a09e5eb394d456f9d5fee8b6f1dda5a",
+        "content": "charge",
+        "explanation": "In a legal context, 'charge' specifically means to make a formal statement officially accusing someone of a crime, which matches the prosecutor's action of filing official documents alleging that the suspect committed grand larceny."
+      },
+      "distractors": [
+        {
+          "id": "302c2ad912414b00b2d0f39767118cae",
+          "content": "acquit",
+          "explanation": "Acquit means to declare an accused person not guilty. The prosecutor is formally alleging a crime before trial, not obtaining or issuing a not-guilty judgment."
+        },
+        {
+          "id": "d0a80b8f829140c98b745da455a3cc93",
+          "content": "arrest",
+          "explanation": "While 'arrest' is a related procedure in criminal investigations, it specifically means taking someone into physical custody and detaining them, not formally lodging the legal paperwork accusing them of an offense."
+        },
+        {
+          "id": "a21466039224426d8c0a898f03edaa59",
+          "content": "convict",
+          "explanation": "While 'convict' belongs to the judicial process, it means to formally declare someone guilty of a crime at the conclusion of a trial, whereas this scenario describes initiating the accusation before any trial occurs."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q053",
+    "target": "give up",
+    "data": {
+      "id": 51,
+      "sense_id": 128,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "After more than a decade in corporate finance, Martin decided to _ his career to open a bakery in his hometown.",
+      "correct": {
+        "id": "0f73f975b97b44e69c0a92c44da2b09d",
+        "content": "give up",
+        "explanation": "\"Give up\" means to leave or resign from a job, position, or career. In this context, it naturally collocates with \"his career\" to express Martin's decision to leave his long-term line of work."
+      },
+      "distractors": [
+        {
+          "id": "257cb41411864ec9918da55c4324900c",
+          "content": "step down",
+          "explanation": "\"Step down\" means to resign or retire from a post, but it is an intransitive phrasal verb that requires the preposition \"from\" (e.g., \"step down from his position\"), so it cannot take \"his career\" as a direct object."
+        },
+        {
+          "id": "df642baa2b5b4acd9e1d97d28caa7633",
+          "content": "turn down",
+          "explanation": "\"Turn down\" means to decline or reject an offer, request, or proposal. It cannot be used to mean leaving a career in which one has already worked for years."
+        },
+        {
+          "id": "3402512f133a4517b5e2eeaae2d49e64",
+          "content": "take up",
+          "explanation": "\"Take up\" means to start or adopt a new hobby, activity, or profession, which is the opposite of leaving an established career after more than a decade."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q054",
+    "target": "advice",
+    "data": {
+      "id": 55,
+      "sense_id": 38,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">advice</t>",
+      "correct": {
+        "id": "9948dca3d43d45e09831c91b69eabb3c",
+        "content": "Suggestions or recommendations offered to someone about what they should do or how they should handle a situation",
+        "explanation": "\"Advice\" refers to helpful guidance, suggestions, or recommendations given to assist someone in deciding what to do or how to handle a problem, which the recipient may choose to follow or disregard."
+      },
+      "distractors": [
+        {
+          "id": "06ae6b53e61b419fa25a31c5686a4b03",
+          "content": "Authoritative instructions or mandatory rules telling someone what they must do in a particular situation",
+          "explanation": "\"Advice\" consists of optional recommendations or helpful guidance, not compulsory orders, formal directives, or mandatory rules that someone is obliged to obey."
+        },
+        {
+          "id": "66ccee62d2384f2f8eb1683de5589e57",
+          "content": "Critical judgment or evaluative feedback assessing the quality and effectiveness of someone's completed work",
+          "explanation": "This definition describes judging the quality of completed work. It does not include the recommendation about what someone should do that defines advice, although real feedback can contain both evaluation and advice."
+        },
+        {
+          "id": "f066d5b2e3a543b2bc4ceee805f2538f",
+          "content": "Formal permission or official approval granting someone the legal or institutional right to do something",
+          "explanation": "\"Advice\" offers counsel on the best course of action rather than official authorization, clearance, or formal consent allowing someone to act."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q055",
+    "target": "research",
+    "data": {
+      "id": 56,
+      "sense_id": 40,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">research</t> — The systematic study and investigation of materials, sources, or data in order to discover new facts, test theories, or reach a deeper understanding of a subject.",
+      "correct": {
+        "id": "00e5f09c73a14512bc3662ab7f38b381",
+        "content": "Her team conducted independent <t inf=\"base\">research</t> into the long-term cognitive benefits of bilingual education.",
+        "explanation": "This sentence correctly uses 'research' as an uncountable noun with the verb 'conduct' to describe a systematic academic investigation."
+      },
+      "distractors": [
+        {
+          "id": "335c48ccce304df784affa06448fafd9",
+          "content": "The committee made extensive <t inf=\"base\">research</t> into the environmental impact of the new highway before issuing its recommendations.",
+          "explanation": "In English, 'research' does not collocate with the verb 'make'. Standard collocations include 'do', 'conduct', or 'carry out' research."
+        },
+        {
+          "id": "3e2ac79dd6b64594b71a92c373362a85",
+          "content": "The department recently published a comprehensive <t inf=\"base\">research</t> analyzing employment rates among recent university graduates.",
+          "explanation": "In the displayed modern general-English meaning, research is used as an uncountable noun. This sentence should use a comprehensive study or a comprehensive piece of research rather than a comprehensive research."
+        },
+        {
+          "id": "86fcfd89c86c46d187f07418903ff12f",
+          "content": "Rescue teams conducted extensive <t inf=\"base\">research</t> across the national park to find the lost hikers before nightfall.",
+          "explanation": "This sentence confuses 'research' with 'search'. 'Research' refers to systematic intellectual or scientific study, whereas physically looking for missing persons in a location is a 'search'."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q056",
+    "target": "on behalf of",
+    "data": {
+      "id": 54,
+      "sense_id": 158,
+      "theme_id": null,
+      "question_type": "definition_to_word",
+      "content": "As a representative or spokesperson of someone; acting or speaking for another person or group.",
+      "correct": {
+        "id": "ad533f938af34bd89840bb4fff1c72a9",
+        "content": "on behalf of",
+        "explanation": "'On behalf of' is used to indicate that someone is acting, speaking, or making decisions as the representative or designated agent of another person, group, or organization."
+      },
+      "distractors": [
+        {
+          "id": "80cfb44a8f0840a39d0379194ef4ffcd",
+          "content": "in place of",
+          "explanation": "'In place of' means acting as a substitute or replacement for someone or something, rather than serving as their authorized spokesperson or representative."
+        },
+        {
+          "id": "ffae698044714684889b15466ea4b424",
+          "content": "in charge of",
+          "explanation": "'In charge of' indicates having managerial authority, supervision, or responsibility over someone or something, rather than speaking or acting as their representative."
+        },
+        {
+          "id": "57a6dab93a3a4f7eb4d04832a791019b",
+          "content": "on account of",
+          "explanation": "'On account of' expresses causality or reason ('because of'), rather than representation or acting in someone's name."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q057",
+    "target": "break the ice",
+    "data": {
+      "id": 57,
+      "sense_id": 153,
+      "theme_id": null,
+      "question_type": "context_to_word",
+      "content": "At the start of an orientation workshop, twenty newly hired engineers from different departments sat in awkward silence, hesitating to introduce themselves. Sensing the initial stiffness, the organizer invited everyone to share their most embarrassing culinary mishap, sparking immediate laughter and helping the group chat openly.",
+      "correct": {
+        "id": "8f1fadd9ace9435dab179c4af4a3d736",
+        "content": "break the ice",
+        "explanation": "The scenario depicts an organizer using a lighthearted prompt to relieve initial social tension and awkwardness among strangers, enabling them to interact comfortably, which precisely defines \"break the ice\"."
+      },
+      "distractors": [
+        {
+          "id": "a3ff5620c8e54abcaf65960ae7e84a26",
+          "content": "clear the air",
+          "explanation": "While \"clear the air\" also involves relieving interpersonal tension, it specifically refers to resolving lingering resentment, suspicion, or unspoken conflict following a dispute, rather than overcoming initial social hesitation among strangers."
+        },
+        {
+          "id": "8ceabc5c89f444c2bee1a5b730cac6c3",
+          "content": "bridge the gap",
+          "explanation": "Although the organizer helps colleagues from different departments connect, \"bridge the gap\" means to overcome a significant divide, disparity, or difference in knowledge between distinct sides, not to relieve initial social awkwardness."
+        },
+        {
+          "id": "3f18b6c5a26744dda2fc679ccfcc4b24",
+          "content": "break the news",
+          "explanation": "While \"break the news\" shares the verb \"break\" and relates to communication, it means to inform someone of important or upsetting information for the first time, rather than to make a social atmosphere more relaxed."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q058",
+    "target": "run",
+    "data": {
+      "id": 58,
+      "sense_id": 44,
+      "theme_id": null,
+      "question_type": "cloze_to_word",
+      "content": "After months of pacing drills and endurance training, Marcus felt ready to _ his first official marathon this weekend.",
+      "correct": {
+        "id": "4eec6c2b371c4c14b167a3c93f73eb69",
+        "content": "run",
+        "explanation": "In this context, 'run' is used transitively with a race or distance as its direct object to mean participating in a foot race as a competitor."
+      },
+      "distractors": [
+        {
+          "id": "0e407a92e26848678713d083037a381e",
+          "content": "compete",
+          "explanation": "'Compete' conveys the idea of taking part in a contest, but it is an intransitive verb that requires the preposition 'in' before the event (e.g., 'compete in a marathon') rather than taking a direct object."
+        },
+        {
+          "id": "27639b83351149b8a936dc95a72b5e88",
+          "content": "participate",
+          "explanation": "Participate requires in before the event: participate in his first marathon. It does not take his first marathon as a direct object, so it cannot fill this unchanged blank."
+        },
+        {
+          "id": "0bc9849278894448a76dd8fecce36c67",
+          "content": "play",
+          "explanation": "Play does not form the standard combination play a marathon for taking part in a foot race. The appropriate combination in this sentence is run a marathon."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q059",
+    "target": "look after",
+    "data": {
+      "id": 60,
+      "sense_id": 136,
+      "theme_id": null,
+      "question_type": "word_to_definition",
+      "content": "<t inf=\"base\">look after</t>",
+      "correct": {
+        "id": "78f80ee670014846b2eca4383e5ee6e9",
+        "content": "To take care of someone or something, keeping them safe, healthy, or in good condition",
+        "explanation": "This definition accurately captures the core meaning of *look after*, which means to take responsibility for the physical well-being, safety, health, or proper condition of a person, animal, or object."
+      },
+      "distractors": [
+        {
+          "id": "366a7dc4e73a484399b029ad45668798",
+          "content": "To resemble an older family member in appearance, personality, or behavior",
+          "explanation": "This defines *take after* (or *look like*). Learners often confuse *look after* with *take after* because both are phrasal verbs with *after* that commonly refer to relatives, but *look after* means to provide care rather than inherit traits."
+        },
+        {
+          "id": "b69fb0a88c0340b8a5b5ec2ec79db7cc",
+          "content": "To search for someone or something that is lost or needed",
+          "explanation": "This defines *look for*. While both are common phrasal verbs starting with *look*, *look after* refers to protecting and caring for someone or something, not trying to locate something missing."
+        },
+        {
+          "id": "210f9fd3baf9420d9d17ae316d477c23",
+          "content": "To admire and respect someone as a role model",
+          "explanation": "This defines *look up to*. Although both are phrasal verbs based on *look* that frequently describe relationships with family members or elders, *look after* involves attending to practical needs and safety rather than holding someone in high esteem."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  },
+  {
+    "id": "q060",
+    "target": "raise",
+    "data": {
+      "id": 59,
+      "sense_id": 87,
+      "theme_id": null,
+      "question_type": "word_to_usage",
+      "content": "<t inf=\"base\">raise</t> — to care for a child until they are fully grown",
+      "correct": {
+        "id": "f5534c1b88864254b6dc390a964bf526",
+        "content": "After moving to the countryside, the couple spent the next two decades <t inf=\"ing\">raising</t> four children on their family farm.",
+        "explanation": "This sentence correctly uses \"raise\" as a transitive verb with the direct object \"four children\" to describe nurturing and caring for offspring throughout their youth."
+      },
+      "distractors": [
+        {
+          "id": "5bd624e41e8b4445aa72717963b079e1",
+          "content": "Even though he <t inf=\"past\">raised</t> in a bilingual household, he never became completely comfortable speaking French.",
+          "explanation": "Here, \"raise\" is incorrectly used as an intransitive verb in place of \"grew up.\" In the sense of childhood upbringing, \"raise\" requires a direct object or a passive construction (e.g., \"he was raised in a bilingual household\")."
+        },
+        {
+          "id": "a16fd07f56e04002b1b8142147a4ab2d",
+          "content": "The parent-teacher association organized an annual charity dinner to <t inf=\"base\">raise</t> funds for new classroom computers.",
+          "explanation": "In this sentence, \"raise\" means to collect or accumulate money, which does not match the displayed sense of caring for a child until adulthood."
+        },
+        {
+          "id": "83ff71238eee4d048051468b290f8bb6",
+          "content": "During the staff meeting, several teachers decided to <t inf=\"base\">raise</t> concerns regarding the recent changes to the school schedule.",
+          "explanation": "In this context, \"raise\" means to bring up or introduce a topic or question for discussion rather than caring for a child until they are fully grown."
+        }
+      ],
+      "correct_alternatives": [],
+      "target_placement": null
+    }
+  }
+]
