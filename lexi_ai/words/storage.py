@@ -282,6 +282,7 @@ async def get_word(db, word_id, theme_id=None, *, theme_key=None):
     data["senses"] = [sense_view(item, fingerprints) for item in data["senses"]]
     data["aliases"] = [item["content"] for item in data["aliases"]]
     data["related"] = [WordRelationView(**item) for item in data["related"]]
+    data["type"] = data.pop("entry_type")
     return WordView(**data)
 
 

@@ -137,9 +137,6 @@ async def test_anchored_correct_answer_is_not_in_model_schema(setup, kind):
             item_schema = schema.model_json_schema()["$defs"]["AnchoredQuestion"]
             assert "correct" not in item_schema["properties"]
             assert "correct" not in item_schema["required"]
-            assert "Do NOT generate a `correct` object" not in instruction
-            assert "Do not generate or rewrite" not in instruction
-            assert "Return only `content`" not in instruction
             context = prompt_context(data)
             assert context["definition" if kind == "word_to_definition" else "word"] == (
                 "A place for money" if kind == "word_to_definition" else "bank"

@@ -17,7 +17,11 @@ async def main(args):
 
         if args.available_id is not None:
             # The caller picks the handle; never implicitly generate the first hit.
-            word = await lexicon.generate(args.available_id, example_count=args.example_count)
+            if not args.target:
+                raise SystemExit("Generation requires --target for the selected lexical item.")
+            word = await lexicon.generate(
+                args.available_id, target=args.target, example_count=args.example_count
+            )
         elif args.word_id is not None:
             word = await lexicon.get_word(args.word_id)
         else:
@@ -44,5 +48,6 @@ if __name__ == "__main__":
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--available-id", help="Exact handle selected from search output")
     selection.add_argument("--word-id", type=int, help="Read an existing generated Word")
+    parser.add_argument("--target", help="Lexical item to generate for the selected entry")
     parser.add_argument("--example-count", type=int, default=3, help="Examples per new Sense")
     asyncio.run(main(parser.parse_args()))

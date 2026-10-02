@@ -1,11 +1,10 @@
-"""Squashed Lexicon baseline: singular content, dense Questions and lexical indexes.
+"""Initial Lexicon schema: relational content, dense Questions and lexical indexes.
 
 Revision ID: 20260930_base
 Revises: None
 
 Fresh generated dictionaries only; never target the read-only Cambridge database.
-Table definitions are frozen here, not imported from live ORM metadata. Existing
-databases need a verified schema match before an operator can stamp this baseline.
+Table definitions are frozen here, not imported from live ORM metadata.
 """
 
 import sqlalchemy as sa
@@ -89,7 +88,9 @@ def upgrade():
             "'determiner', 'interjection', 'noun', 'numeral', 'preposition', 'pronoun', 'verb')",
             name="ck_pos_vocab",
         ),
-        sa.CheckConstraint("tier IN ('common', 'core', 'extended', 'rare')", name="ck_tier_vocab"),
+        sa.CheckConstraint(
+            "tier IN ('common', 'core', 'less_common', 'rare')", name="ck_tier_vocab"
+        ),
         sa.ForeignKeyConstraint(["word_id"], ["words.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )

@@ -1,31 +1,19 @@
-"""Native structured output or prompted JSON; no tools or application retries."""
+"""Native structured output or prompted JSON with bounded same-model retries."""
 
 import json
 from typing import Protocol, TypeVar
 
-from pydantic import BaseModel, ValidationError
+import json_repair
+from pydantic import BaseModel
 
 from ..config import MAX_TEXT_LENGTH
 from ..errors import InvalidOutputError, MissingProviderError
 from ..models import TokenUsage
 from .config import LLMConfig
+from .retry import RefusedOutputError, retry
 from .usage import UsageRecorder, openai_usage
 
 Output = TypeVar("Output", bound=BaseModel)
-
-
-def _parse_text[Output: BaseModel](content, schema: type[Output]) -> Output:
-    if not isinstance(content, str) or not content.strip():
-        raise InvalidOutputError("LLM text response was empty")
-    text = content.strip()
-    # Accept one fenced JSON document, not prose or a guessed JSON substring.
-    lines = text.splitlines()
-    if len(lines) >= 3 and lines[0].lower() in ("```", "```json") and lines[-1] == "```":
-        text = "\n".join(lines[1:-1])
-    try:
-        return schema.model_validate_json(text)
-    except ValidationError as error:
-        raise InvalidOutputError("LLM text response does not match the required schema") from error
 
 
 class StructuredLLM(Protocol):
@@ -59,7 +47,7 @@ class OpenAIStructuredLLM:
                 api_key=self.config.api_key,
                 base_url=self.config.base_url,
                 timeout=self.config.timeout,
-                max_retries=2,
+                max_retries=0,
             )
             self._owned = True
         return self._client
@@ -93,36 +81,69 @@ class OpenAIStructuredLLM:
                     + json.dumps(schema.model_json_schema(), ensure_ascii=False)
                 )
             client = self._get_client()
-            try:
-                if self.config.structured_outputs:
-                    request = client.chat.completions.parse
-                    kwargs["response_format"] = schema
-                else:
-                    request = client.chat.completions.create
-                response = await request(
-                    model=model or self.config.model,
-                    messages=messages,
-                    max_completion_tokens=self.config.max_completion_tokens,
-                    timeout=self.config.timeout,
-                    **kwargs,
-                )
-            except Exception as error:
-                if with_usage:
-                    usage.records.append(openai_usage(getattr(error, "completion", None)))
-                raise
-            if with_usage:
-                usage.records.append(openai_usage(response))
-            if not response.choices or response.choices[0].message.refusal:
-                raise InvalidOutputError("structured request was refused or empty")
-            if not self.config.structured_outputs:
-                if response.choices[0].finish_reason not in ("stop", None):
-                    raise InvalidOutputError("LLM text response did not complete")
-                return usage.finish(_parse_text(response.choices[0].message.content, schema))
-            parsed = response.choices[0].message.parsed
-            if parsed is None:
-                raise InvalidOutputError("structured response was empty")
-            # The SDK already parsed and validated response_format into this instance.
-            return usage.finish(parsed)
+            # SDK transport retries must not multiply the shared attempt ceiling.
+            # with_options shares the injected client's connection pool without
+            # changing its owner's configuration or lifecycle.
+            if getattr(client, "max_retries", 0):
+                client = client.with_options(max_retries=0)
+            raw = (
+                getattr(client.chat.completions, "with_raw_response", None)
+                if with_usage and self.config.structured_outputs
+                else None
+            )
+            if self.config.structured_outputs:
+                request = raw.parse if raw is not None else client.chat.completions.parse
+                kwargs["response_format"] = schema
+            else:
+                request = client.chat.completions.create
+
+            async def attempt():
+                recorded = False
+                try:
+                    response = await request(
+                        model=model or self.config.model,
+                        messages=messages,
+                        max_completion_tokens=self.config.max_completion_tokens,
+                        timeout=self.config.timeout,
+                        **kwargs,
+                    )
+                    if raw is not None:
+                        # Native SDK parsing can raise without attaching the
+                        # completion. Capture its usage before that parser runs.
+                        usage.records.append(openai_usage(response.http_response.json()))
+                        recorded = True
+                        response = response.parse()
+                except Exception as error:
+                    if with_usage and not recorded:
+                        usage.records.append(openai_usage(getattr(error, "completion", None)))
+                    raise
+                if with_usage and not recorded:
+                    usage.records.append(openai_usage(response))
+                if not response.choices:
+                    raise InvalidOutputError("structured response was empty")
+                if response.choices[0].message.refusal:
+                    raise RefusedOutputError("structured request was refused")
+                if not self.config.structured_outputs:
+                    if response.choices[0].finish_reason == "content_filter":
+                        raise RefusedOutputError("LLM text response was filtered")
+                    if response.choices[0].finish_reason not in ("stop", None):
+                        raise InvalidOutputError("LLM text response did not complete")
+                    content = response.choices[0].message.content
+                    if not isinstance(content, str) or not content.strip():
+                        raise InvalidOutputError("LLM text response was empty")
+                    try:
+                        return schema.model_validate(json_repair.loads(content))
+                    except ValueError as error:
+                        raise InvalidOutputError(
+                            "LLM text response does not match the required schema"
+                        ) from error
+                parsed = response.choices[0].message.parsed
+                if parsed is None:
+                    raise InvalidOutputError("structured response was empty")
+                # The SDK already parsed/validated this instance; do not redo it.
+                return parsed
+
+            return usage.finish(await retry(attempt, self.config.max_retries))
 
     async def close(self) -> None:
         if not self._closed and self._owned and self._client is not None:

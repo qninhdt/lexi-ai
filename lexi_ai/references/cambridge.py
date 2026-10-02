@@ -123,12 +123,6 @@ class Cambridge:
             raise InvalidHandleError("invalid source entry")
         return await asyncio.to_thread(self._fetch, entry_id)
 
-    async def from_handle(self, handle: str) -> SourceEntry:
-        entry = await self.fetch_by_id(decode_available_id(handle))
-        if entry is None or not entry.senses:
-            raise InvalidHandleError("available entry has no generation evidence")
-        return entry
-
     def _search(self, query: str, limit: int) -> list[SourceHit]:
         escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         with closing(self._connect()) as connection:

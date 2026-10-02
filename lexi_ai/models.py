@@ -75,7 +75,7 @@ class Sense:
 class Word:
     id: int
     lemma: str
-    entry_type: str
+    type: str
     generation_state: str
     senses: list[Sense] = field(default_factory=list)
     aliases: list[str] = field(default_factory=list)

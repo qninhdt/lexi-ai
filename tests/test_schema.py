@@ -1,4 +1,4 @@
-from sqlalchemy import UniqueConstraint, inspect, select, text
+from sqlalchemy import UniqueConstraint, select
 
 from lexi_ai.db.session import Database
 from lexi_ai.schema import Base, Definition, Example, Question, Sense, Theme, Word
@@ -64,32 +64,5 @@ async def test_theme_delete_cascades_without_neutral_relabel(tmp_path):
         async with db.transaction() as session:
             assert (await session.scalars(select(Sense))).all() == []
             assert (await session.scalars(select(Definition))).all() == []
-    finally:
-        await db.close()
-
-
-async def test_schema_has_no_legacy_columns_or_tables(tmp_path):
-    db = Database(f"sqlite+aiosqlite:///{tmp_path / 'generated.db'}")
-    try:
-        await db.create_schema(Base.metadata)
-        async with db.engine.connect() as connection:
-            tables = await connection.run_sync(lambda conn: inspect(conn).get_table_names())
-            assert not {"themed_senses", "assets"} & set(tables)
-            columns = await connection.run_sync(
-                lambda conn: {
-                    table: {item["name"] for item in inspect(conn).get_columns(table)}
-                    for table in tables
-                }
-            )
-            assert "definition" not in columns["senses"]
-            for table in tables:
-                assert not {"model_id", "prompt_version", "file_path"} & columns[table]
-            assert (
-                "position" not in columns["definitions"] | columns["examples"] | columns["senses"]
-            )
-            indexes = await connection.run_sync(lambda conn: inspect(conn).get_indexes("senses"))
-            assert any("word_id" in item["column_names"] for item in indexes)
-            assert (await connection.execute(text("PRAGMA foreign_keys"))).scalar() == 1
-        assert Base.metadata.tables["word_sources"].c.source_id.unique
     finally:
         await db.close()

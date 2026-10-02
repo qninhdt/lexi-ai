@@ -166,6 +166,67 @@ async def test_benchmark_temperature_uses_env_or_profile_override(
             assert model._fallback_provider.temperature == expected
 
 
+@pytest.mark.parametrize(
+    "override,value,expected",
+    [
+        (False, None, "xhigh"),
+        (True, "low", "low"),
+        (True, None, None),
+    ],
+)
+async def test_benchmark_reasoning_uses_shared_env_or_profile_override(
+    tmp_path,
+    monkeypatch,
+    override,
+    value,
+    expected,
+):
+    for name in PROVIDER_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "LLM_API_KEY=fake\nLLM_BASE_URL=https://llm.test/v1\nLLM_MODEL=test\n"
+        "LLM_STRUCTURED_OUTPUTS=false\nLLM_REASONING_EFFORT=xhigh\n"
+    )
+    profile = {"mode": "llm_only", "threshold": 0.8, "timeout": 30}
+    if override:
+        profile["reasoning_effort"] = value
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"benchmarks": {"test": profile}}))
+    config = load_config(path, "test", env_file=env_file)
+    assert config["reasoning_effort"] == expected
+    async with configured_model(config) as model:
+        assert model.llm_config.reasoning_effort == expected
+        if expected is not None:
+            assert model._fallback_provider.reasoning_effort == expected
+
+
+@pytest.mark.parametrize("override,expected", [(None, 2), (0, 0), (1, 1)])
+async def test_benchmark_max_retries_uses_shared_env_or_profile_override(
+    tmp_path,
+    monkeypatch,
+    override,
+    expected,
+):
+    for name in PROVIDER_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "LLM_API_KEY=fake\nLLM_BASE_URL=https://llm.test/v1\nLLM_MODEL=test\n"
+        "LLM_STRUCTURED_OUTPUTS=false\nLLM_MAX_RETRIES=2\n"
+    )
+    profile = {"mode": "llm_only", "threshold": 0.8, "timeout": 30}
+    if override is not None:
+        profile["max_retries"] = override
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"benchmarks": {"test": profile}}))
+    config = load_config(path, "test", env_file=env_file)
+    assert config["max_retries"] == expected
+    async with configured_model(config) as model:
+        assert model.llm_config.max_retries == expected
+        assert model._fallback_provider._client.max_retries == 0
+
+
 @pytest.mark.parametrize("value", [True, "0", -1, 2.1, float("nan")])
 def test_benchmark_rejects_invalid_temperature(tmp_path, value):
     path = tmp_path / "config.json"
@@ -224,12 +285,8 @@ def test_output_config_rejects_invalid_flags(tmp_path, monkeypatch, value):
 
 
 def example_cases():
-    cases = []
-    for task in TASKS:
-        case = json.loads((ROOT / "benchmarks" / "templates" / f"{task}.template.jsonl").read_text().splitlines()[0])
-        case.pop("example")
-        cases.append(case)
-    return cases
+    dataset = load_dataset(ROOT / "benchmarks" / "grading")
+    return [next(case for case in dataset if case["task"] == task) for task in TASKS]
 
 
 class Transport:
@@ -259,6 +316,57 @@ class Transport:
                 if not isinstance(question, Noul)
             },
         )
+
+
+async def test_concurrent_benchmark_completes_each_case_once(tmp_path):
+    import asyncio
+
+    cases = example_cases()
+    expected_by_state = {
+        (
+            json.dumps(prepare_case(case)[0], sort_keys=True),
+            tuple(sorted(prepare_case(case)[1])),
+        ): case["expected"]
+        for case in cases
+    }
+
+    class ConcurrentTransport(Transport):
+        active = peak = 0
+
+        async def system_one(self, *, state, questions):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            try:
+                await asyncio.sleep(0.005)
+                key = (json.dumps(state, sort_keys=True), tuple(sorted(questions)))
+                expected = expected_by_state[key]
+                # Reuse the fake provider, but associate labels by context, not call order.
+                fake = Transport([{"expected": expected}])
+                result = await fake.system_one(state=state, questions=questions)
+                self.calls.append((state, questions))
+                return result
+            finally:
+                self.active -= 1
+
+    transport = ConcurrentTransport([])
+    model = DecisionModel(DecisionConfig(0.8), primary=transport)
+    output = tmp_path / "concurrent"
+    summary = await run_benchmark(
+        cases,
+        model,
+        mode=DecisionMode.DECISION_ONLY,
+        timeout=5,
+        output=output,
+        workers=3,
+        progress=False,
+        pricing=PRICING,
+    )
+    assert summary["accuracy"] == 1
+    assert summary["concurrency"] == transport.peak == 3
+    records = [json.loads(line) for line in (output / "results.jsonl").read_text().splitlines()]
+    assert len(records) == len(transport.calls) == len(cases)
+    assert {record["id"] for record in records} == {case["id"] for case in cases}
+    assert summary["total_tokens"] == 660
 
 
 @pytest.mark.parametrize("mode", [DecisionMode.DECISION_ONLY, DecisionMode.LLM_ONLY])
@@ -397,10 +505,7 @@ async def test_timeout_counts_as_wrong_and_does_not_cancel_remaining_cases(tmp_p
     assert json.loads(rows[1])["status"] == "ok"
 
 
-def test_dataset_templates_are_valid_but_not_silently_treated_as_verified_gt(tmp_path):
-    assert len(load_dataset(ROOT / "benchmarks" / "templates", allow_examples=True)) == 10
-    with pytest.raises(ValueError, match="template case"):
-        load_dataset(ROOT / "benchmarks" / "templates")
+def test_dataset_load_and_validation(tmp_path):
     cases = example_cases()
     path = tmp_path / "grading.jsonl"
     path.write_text("\n".join(json.dumps(case) for case in cases))

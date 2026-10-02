@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import httpx
+import json_repair
 import pytest
 from openai import AsyncOpenAI
 from system_one_adapter import AsyncSystemOneAdapterClient
@@ -100,7 +101,7 @@ async def test_llm_only_uses_llm_config_model_without_decision_credentials():
         llm_config=LLMConfig(api_key="explicit-key", model="standalone-llm"),
     )
     try:
-        adapter = model._fallback(mode=DecisionMode.LLM_ONLY)
+        adapter = model._fallback()
         assert adapter.model.model_name == "standalone-llm"
         assert model.primary is None
         assert model._fallback() is adapter
@@ -154,7 +155,7 @@ async def test_invalid_choice_is_error():
         )
 
 
-@pytest.mark.parametrize("probability", [-0.1, 1.1, float("inf"), float("nan"), "0.8"])
+@pytest.mark.parametrize("probability", [-0.1, 1.1, float("inf"), float("nan"), "0.8", True])
 async def test_invalid_primary_probability_is_not_a_boolean_verdict(probability):
     with pytest.raises(InvalidOutputError, match="probability"):
         await DecisionModel(DecisionConfig(0.7), DecisionTransport(probability=probability)).decide(
@@ -169,7 +170,12 @@ async def test_fallback_response_is_validated(choice, confidence):
     questions = {"match": Choice(instructions="Which?", criteria={"0": "none", "1": "one"})}
     state = {"answer": "untrusted"}
     with pytest.raises(InvalidOutputError):
-        await DecisionModel(DecisionConfig(0.7), primary, fallback).decide(state, questions)
+        await DecisionModel(
+            DecisionConfig(0.7),
+            primary,
+            fallback,
+            llm_config=LLMConfig(max_retries=0),
+        ).decide(state, questions)
     assert len(primary.calls) == len(fallback.calls) == 1
     assert fallback.calls[0][0] is state
     assert fallback.calls[0][1] is questions
@@ -211,7 +217,7 @@ async def test_configured_boundary_controls_applicable_choice(threshold, should_
         await fallback.aclose()
 
 
-@pytest.mark.parametrize("value", [-0.1, 0, 1.01, float("nan")])
+@pytest.mark.parametrize("value", [-0.1, 0, 1.01, float("nan"), True, "0.8"])
 def test_invalid_decision_threshold(value):
     with pytest.raises(ValueError):
         DecisionConfig(value)
@@ -317,8 +323,9 @@ async def test_transport_error_is_not_no_match_or_fallback():
 @pytest.mark.parametrize("mode", [DecisionMode.LLM_FALLBACK, DecisionMode.LLM_ONLY])
 @pytest.mark.parametrize("valid", [True, False])
 @pytest.mark.parametrize("temperature", [None, 0, 0.7])
+@pytest.mark.parametrize("reasoning_effort", [None, "xhigh"])
 async def test_owned_text_adapter_parses_without_provider_json_mode(
-    monkeypatch, mode, valid, temperature
+    monkeypatch, mode, valid, temperature, reasoning_effort
 ):
     requests = []
 
@@ -357,6 +364,8 @@ async def test_owned_text_adapter_parses_without_provider_json_mode(
             api_key="explicit",
             structured_outputs=False,
             temperature=temperature,
+            reasoning_effort=reasoning_effort,
+            max_retries=0,
         ),
         fallback_model="fallback-model" if mode == DecisionMode.LLM_FALLBACK else None,
     )
@@ -384,6 +393,10 @@ async def test_owned_text_adapter_parses_without_provider_json_mode(
             assert "temperature" not in payload
         else:
             assert payload["temperature"] == temperature
+        if reasoning_effort is None:
+            assert "reasoning_effort" not in payload
+        else:
+            assert payload["reasoning_effort"] == reasoning_effort
         assert "schema exactly" in payload["messages"][0]["content"]
         assert "\\u003c/document\\u003e" in payload["messages"][1]["content"]
         llm_usage = next(item for item in usage if item.model_id == "actual-llm")
@@ -393,16 +406,101 @@ async def test_owned_text_adapter_parses_without_provider_json_mode(
     assert client.is_closed()
 
 
+@pytest.mark.parametrize(
+    "content,valid",
+    [
+        ('{answers: {match: "0", fit: true,}}', True),
+        ('{"answers":{"match":"0","fit":true}', True),
+        ('{"answers":{"match":"999","fit":true,}}', False),
+        ('{"answers":{"match":"0",}}', False),
+    ],
+)
+async def test_text_decision_repair_preserves_schema_raw_trace_and_usage(
+    monkeypatch,
+    content,
+    valid,
+):
+    requests, repair_calls = [], []
+    original = json_repair.repair_json
+
+    def repair(text, **kwargs):
+        repair_calls.append(text)
+        return original(text, **kwargs)
+
+    monkeypatch.setattr("lexi_ai.inference.adapter_provider.json_repair.repair_json", repair)
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "fixture",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "actual",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": content,
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+            },
+        )
+
+    client = AsyncOpenAI(
+        api_key="fake",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    monkeypatch.setattr("openai.AsyncOpenAI", lambda **kwargs: client)
+    model = DecisionModel(
+        DecisionConfig(0.8),
+        llm_config=LLMConfig(
+            api_key="explicit",
+            structured_outputs=False,
+            max_retries=0,
+        ),
+    )
+    questions = {
+        "match": Choice(instructions="Pick", criteria={"0": "none", "1": "one"}),
+        "fit": Noul(instructions="Fits?"),
+    }
+    try:
+        if valid:
+            result, usage = await model.decide({}, questions, mode="llm_only", with_usage=True)
+            assert result.choices["match"].choice == "0" and result.nouls["fit"].noul == 1
+            debug = result.debug
+        else:
+            with pytest.raises(TypeSafeAPIResponseValidationError) as caught:
+                await model.decide({}, questions, mode="llm_only", with_usage=True)
+            usage, debug = caught.value.usage, caught.value.debug
+        assert repair_calls == [content] and len(requests) == 1
+        assert usage[0].input_tokens == 10 and usage[0].output_tokens == 20
+        raw = debug["llm_attempts"][0]["llm_response"]
+        assert raw["choices"][0]["message"]["content"] == content
+    finally:
+        await model.close()
+
+
 @pytest.mark.parametrize("api", ["responses", "chat_completions"])
 @pytest.mark.parametrize("terminal", ["ok", "incomplete", "refusal"])
-async def test_temperature_provider_preserves_structured_schema_and_failure_usage(
-    monkeypatch, api, terminal
+@pytest.mark.parametrize("reasoning_effort", [None, "xhigh"])
+@pytest.mark.parametrize("temperature", [None, 0])
+async def test_configured_provider_preserves_limits_schema_and_failure_usage(
+    monkeypatch, api, terminal, reasoning_effort, temperature
 ):
     requests = []
+    timeouts = []
     base_url = "https://api.openai.com/v1" if api == "responses" else "https://llm.test/v1"
 
     def respond(request):
         requests.append(json.loads(request.content))
+        timeouts.append(request.extensions["timeout"])
         text = '{"answers":{"fit":true}}'
         if api == "responses":
             content = {"type": "output_text", "text": text, "annotations": []}
@@ -455,7 +553,15 @@ async def test_temperature_provider_preserves_structured_schema_and_failure_usag
     monkeypatch.setattr("openai.AsyncOpenAI", lambda **kwargs: client)
     model = DecisionModel(
         DecisionConfig(0.8),
-        llm_config=LLMConfig(api_key="explicit", base_url=base_url, temperature=0),
+        llm_config=LLMConfig(
+            api_key="explicit",
+            base_url=base_url,
+            temperature=temperature,
+            timeout=7.5,
+            max_completion_tokens=321,
+            reasoning_effort=reasoning_effort,
+            max_retries=0,
+        ),
     )
     try:
         if terminal == "ok":
@@ -476,11 +582,22 @@ async def test_temperature_provider_preserves_structured_schema_and_failure_usag
                 )
             usage = caught.value.usage
         assert len(requests) == 1 and model.primary is None
-        assert requests[0]["temperature"] == 0
+        assert requests[0].get("temperature") == temperature
+        assert all(value == 7.5 for value in timeouts[0].values())
         if api == "responses":
+            assert requests[0]["max_output_tokens"] == 321
             assert requests[0]["text"]["format"]["type"] == "json_schema"
+            if reasoning_effort is not None:
+                assert requests[0]["reasoning"] == {"effort": reasoning_effort}
+            else:
+                assert "reasoning" not in requests[0]
         else:
+            assert requests[0]["max_completion_tokens"] == 321
             assert requests[0]["response_format"]["type"] == "json_schema"
+            if reasoning_effort is not None:
+                assert requests[0]["reasoning_effort"] == reasoning_effort
+            else:
+                assert "reasoning_effort" not in requests[0]
         assert usage[0].model_id == "actual-llm"
         assert usage[0].input_tokens == 100 and usage[0].output_tokens == 10
     finally:

@@ -15,6 +15,7 @@ Each question must provide a meaningful learning opportunity through lexical ret
 # Input Policy
 
 - The supplied Word and selected Sense are the lexical authority. Use their definitions, examples, forms, patterns, and usage information to establish accurate meanings and constructions.
+- Treat qualifiers such as "typically" and "often" as tendencies, not exhaustive restrictions. Supplied examples and patterns illustrate usage; do not infer that an unlisted subject, construction, or collocation is invalid merely because it is absent.
 - The selected Sense defines the intended learning target. Other Senses may provide disambiguating context but must not change that target.
 - Use the exact requested content namespace. Generate neutral content by default; apply thematic adaptation only when a Theme is supplied.
 - Preserve any supplied fixed content exactly, including its wording and markup.
@@ -43,6 +44,7 @@ Each question must provide a meaningful learning opportunity through lexical ret
 ## Distractor Design
 
 - Generate the requested number of distinct, plausible distractors that are genuinely incorrect for the specific question.
+- For each distractor, identify a specific requirement of the displayed question that it fails. Consider its established meanings and usage; if it reasonably satisfies the question, replace it rather than inventing a distinction to justify rejection.
 - Favor meaningful confusion: semantic proximity, lexical similarity, contextual mismatch, or usage distinctions relevant to the question type.
 - Make stronger distractors competitive with the correct answer while preserving a clear, explainable distinction.
 - Avoid arbitrary, absurd, obviously unrelated, or artificially complicated options used merely to fill the distractor count.
@@ -53,9 +55,9 @@ Each question must provide a meaningful learning opportunity through lexical ret
 
 - Provide a concise, informative English explanation for every option, including the correct answer.
 - Explain why the correct option satisfies the question's specific meaning, context, or usage requirements.
-- For each distractor, identify the relevant misconception or distinguishing feature that makes it inappropriate for this question.
+- For each distractor, explain the specific contextual or linguistic defect in that option. Distinguish a wrong meaning from a construction error or collocational problem; the explanation must match the actual defect, not a different possible error.
 - Make explanations corrective and educational, helping learners understand the underlying lexical distinction rather than merely identifying an option as wrong.
-- Avoid unsupported absolute claims about a word's meaning or usage when the option is only incorrect in the particular context.
+- Limit claims to what is needed to explain the displayed contrast. Avoid unsupported absolute claims about a word's meaning, usage, or a specialist concept when the option is only incorrect in the particular context.
 
 ## Batch Quality
 
@@ -63,6 +65,7 @@ Each question must provide a meaningful learning opportunity through lexical ret
 - Vary appropriate contexts, sentence structures, lexical distinctions, and reasoning demands while preserving the selected learning objective.
 - Avoid repeatedly relying on the same situation, distractor pattern, or contextual clue.
 - Maintain consistent linguistic quality across the entire batch, including later questions and lower-ranked distractors.
+- Before returning the batch, check every distractor against the displayed question and its explanation. Replace ambiguous distractors and correct unsupported explanations within this response, preserving any fixed content or answer anchors; do not include this check in the output.
 
 {% include "words/prompts/target_expression_tagging.jinja" %}
 
@@ -77,7 +80,7 @@ Each question must provide a meaningful learning opportunity through lexical ret
 - Do not introduce unsupported lexical meanings or alter the selected Sense to accommodate a question.
 - Do not produce multiple valid correct options or distractors that become correct under a reasonable interpretation of the displayed question.
 - Do not expose the correct answer or option explanations through question content unless explicitly required by the question type.
-- Keep learner-facing content limited to the actual exercise material; do not embed UI instructions such as "Choose the correct answer."
+- For every question type, keep question content limited to the exercise material required by that type. Do not prepend, append, or embed UI instructions, answer-format directions, or meta-questions such as "Choose the correct answer", "Which expression describes...", or "Write a sentence...". The application supplies task directions separately. Questions naturally spoken within exercise dialogue are exercise material, not UI instructions.
 - Do not sacrifice linguistic accuracy, answer uniqueness, or pedagogical value for difficulty, creativity, or diversity.
 - Respect the requested batch size and distractor count.
 

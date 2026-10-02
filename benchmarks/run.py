@@ -22,6 +22,7 @@ from lexi_ai.inference.prompting import render_decision
 from lexi_ai.vocab import POS_TAGS, QUESTION_FORMATS
 
 from .scoring import summarize, validate_pricing
+from .workers import map_workers, validate_workers
 
 TASKS = (
     "grade_single_word_1",
@@ -40,14 +41,10 @@ def _text(value):
     return isinstance(value, str) and bool(value.strip())
 
 
-def prepare_case(case, *, allow_examples=False):
+def prepare_case(case):
     """Validate labels against the actual rendered task before spending inference."""
     if not isinstance(case, dict) or not _text(case.get("id")):
         raise ValueError("case.id must be a nonempty string")
-    if type(case.get("example", False)) is not bool:
-        raise ValueError("case.example must be a boolean")
-    if case.get("example") and not allow_examples:
-        raise ValueError("template case: review the GT and remove example=true before running")
     task = case.get("task")
     if task not in TASKS:
         raise ValueError(f"unsupported grading task: {task!r}")
@@ -108,7 +105,7 @@ def prepare_case(case, *, allow_examples=False):
     return state, questions
 
 
-def load_dataset(path, *, allow_examples=False):
+def load_dataset(path):
     path = Path(path)
     paths = sorted(path.glob("*.jsonl")) if path.is_dir() else [path]
     cases, ids = [], set()
@@ -118,7 +115,7 @@ def load_dataset(path, *, allow_examples=False):
                 continue
             try:
                 case = json.loads(line)
-                prepare_case(case, allow_examples=allow_examples)
+                prepare_case(case)
                 if case["id"] in ids:
                     raise ValueError(f"duplicate case ID: {case['id']}")
             except (ValueError, TypeError) as error:
@@ -138,6 +135,7 @@ def load_settings(path, benchmark):
     if not isinstance(profile, dict):
         raise ValueError(f"unknown benchmark: {benchmark!r}; choose {list(settings['benchmarks'])}")
     config = dict(profile)
+    validate_workers(config.get("workers", 4))
     if any(field in config for field in ("api_key", "base_url", "model")):
         raise ValueError("provider key/URL/model belong in the root .env, not benchmark config")
     mode = DecisionMode(config.get("mode"))
@@ -152,6 +150,14 @@ def load_settings(path, benchmark):
         if mode != DecisionMode.LLM_ONLY:
             raise ValueError("temperature applies only to llm_only benchmarks")
         LLMConfig(temperature=config["temperature"])
+    if "reasoning_effort" in config:
+        if mode != DecisionMode.LLM_ONLY:
+            raise ValueError("reasoning_effort applies only to llm_only benchmarks")
+        LLMConfig(reasoning_effort=config["reasoning_effort"])
+    if "max_retries" in config:
+        if mode != DecisionMode.LLM_ONLY:
+            raise ValueError("max_retries applies only to llm_only benchmarks")
+        LLMConfig(max_retries=config["max_retries"])
     for name in ("threshold", "timeout"):
         value = config.get(name)
         if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
@@ -177,7 +183,7 @@ def load_config(path, benchmark, *, env_file=DEFAULT_ENV_FILE):
     config, prices = load_settings(path, benchmark)
     prefix = "DECISION" if config["mode"] == DecisionMode.DECISION_ONLY else "LLM"
     provider = provider_options(load_provider_values(env_file), prefix, require_key=True)
-    for field in ("structured_outputs", "temperature"):
+    for field in ("structured_outputs", "temperature", "reasoning_effort", "max_retries"):
         if field in config:
             provider.pop(field, None)
     config.update(provider)
@@ -212,11 +218,13 @@ async def configured_model(config):
                 timeout=config["timeout"],
                 structured_outputs=config["structured_outputs"],
                 temperature=config["temperature"],
+                reasoning_effort=config.get("reasoning_effort"),
+                max_retries=config.get("max_retries", 0),
             ),
         )
         try:
             # Initialize outside per-case timing, just like the Decision client.
-            model._fallback(mode=DecisionMode.LLM_ONLY)
+            model._fallback()
             yield model
         finally:
             await model.close()
@@ -228,7 +236,19 @@ def _write_json(path, value):
         file.write("\n")
 
 
-async def run_benchmark(cases, model, *, mode, timeout, output, pricing=None, metadata=None):
+async def run_benchmark(
+    cases,
+    model,
+    *,
+    mode,
+    timeout,
+    output,
+    pricing=None,
+    metadata=None,
+    workers=1,
+    progress=True,
+):
+    validate_workers(workers)
     mode = DecisionMode(mode)
     if mode not in MODES:
         raise ValueError("benchmark mode must be decision_only or llm_only")
@@ -253,7 +273,11 @@ async def run_benchmark(cases, model, *, mode, timeout, output, pricing=None, me
             model.llm_config.structured_outputs if mode == DecisionMode.LLM_ONLY else None
         ),
         "temperature": model.llm_config.temperature if mode == DecisionMode.LLM_ONLY else None,
-        "concurrency": 1,
+        "reasoning_effort": (
+            model.llm_config.reasoning_effort if mode == DecisionMode.LLM_ONLY else None
+        ),
+        "max_retries": model.llm_config.max_retries if mode == DecisionMode.LLM_ONLY else 0,
+        "concurrency": min(workers, len(cases)),
         "repetitions": 1,
         "started_at": datetime.now(UTC).isoformat(),
         "dataset_sha256": hashlib.sha256(
@@ -266,9 +290,10 @@ async def run_benchmark(cases, model, *, mode, timeout, output, pricing=None, me
         "pricing": pricing,
     }
     _write_json(output / "manifest.json", manifest)
-    records = []
     with (output / "results.jsonl").open("x", encoding="utf-8") as file:
-        for case, (state, questions) in zip(cases, prepared, strict=True):
+
+        async def one(item):
+            case, (state, questions) = item
             record = {
                 "id": case["id"],
                 "task": case["task"],
@@ -314,11 +339,23 @@ async def run_benchmark(cases, model, *, mode, timeout, output, pricing=None, me
             record["correct"] = (
                 record["status"] == "ok" and record["prediction"] == record["expected"]
             )
+            return record
+
+        def save(_index, record):
             file.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
             file.flush()
-            records.append(record)
+
+        records = await map_workers(
+            zip(cases, prepared, strict=True),
+            one,
+            workers=workers,
+            progress=progress,
+            desc="Benchmark",
+            on_result=save,
+        )
     summary = summarize(records, pricing)
     summary["mode"] = mode.value
+    summary["concurrency"] = manifest["concurrency"]
     if metadata and "model" in metadata:
         summary["model"] = metadata["model"]
     _write_json(output / "summary.json", summary)
@@ -345,9 +382,13 @@ def main():
     )
     parser.add_argument("--output", type=Path, help="New output directory (never overwrite a run)")
     parser.add_argument(
+        "--workers", type=int, help="Concurrent cases; overrides profile (default 4)"
+    )
+    parser.add_argument("--no-progress", action="store_true", help="Disable tqdm progress")
+    parser.add_argument(
         "--validate-only",
         action="store_true",
-        help="Check dataset format, including illustrative templates, without provider calls",
+        help="Check dataset format without provider calls",
     )
     args = parser.parse_args()
     if args.validate_only and args.results:
@@ -368,13 +409,15 @@ def main():
             _write_json(args.output / "summary.json", summary)
         print(json.dumps(summary, indent=2, ensure_ascii=False, allow_nan=False))
         return
-    cases = load_dataset(args.dataset, allow_examples=args.validate_only)
+    cases = load_dataset(args.dataset)
     if args.validate_only:
         print(f"Valid: {len(cases)} cases, {len({case['task'] for case in cases})} grading tasks")
         return
     if args.benchmark is None:
         parser.error("--benchmark is required to run a provider")
     config = load_config(args.config, args.benchmark, env_file=args.env_file)
+    workers = args.workers if args.workers is not None else config.get("workers", 4)
+    validate_workers(workers)
     output = args.output or Path("benchmark-results") / (
         datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
     )
@@ -389,12 +432,14 @@ def main():
                 mode=config["mode"],
                 timeout=config["timeout"],
                 output=output,
+                workers=workers,
+                progress=not args.no_progress,
                 pricing=config.get("pricing"),
                 metadata={
                     "benchmark": args.benchmark,
                     "model": config["model"],
                     "base_url": config["base_url"],
-                    "retries": 0,
+                    "retries": config.get("max_retries", 0),
                 },
             )
 

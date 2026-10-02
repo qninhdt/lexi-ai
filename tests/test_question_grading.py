@@ -41,7 +41,7 @@ class Decision:
             **(nouls or {}),
         }
 
-    async def decide(self, state, questions):
+    async def decide(self, state, questions, *, mode=DecisionMode.LLM_FALLBACK):
         self.calls.append((state, questions))
         return SimpleNamespace(
             choices={
@@ -214,7 +214,7 @@ async def test_definition_resolves_intent_then_grades_only_selected_meaning(bank
     assert set(asdict(result)) == {"sense_id", "accuracy", "coverage"}
 
 
-@pytest.mark.parametrize("mode", [DecisionMode.DECISION_ONLY, DecisionMode.LLM_ONLY])
+@pytest.mark.parametrize("mode", list(DecisionMode))
 async def test_explicit_mode_is_forwarded_to_each_grading_stage(bank, mode):
     db, (single, definition, usage) = bank
 

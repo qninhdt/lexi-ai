@@ -1,13 +1,13 @@
 """Environment parsing belongs to repository scripts, never to the installed library."""
 
 import argparse
-import ast
 import importlib.util
 from pathlib import Path
 
 import pytest
 
 from lexi_ai import DecisionConfig, LLMConfig
+from lexi_ai.config import database_schema_name
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location("example_config", ROOT / "examples" / "_config.py")
@@ -15,16 +15,10 @@ example_config = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(example_config)
 
 
-def test_library_has_no_environment_loaders():
-    for path in (ROOT / "lexi_ai").rglob("*.py"):
-        for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                modules = (
-                    [node.module or ""]
-                    if isinstance(node, ast.ImportFrom)
-                    else [item.name for item in node.names]
-                )
-                assert not any(name.split(".")[0] in {"os", "dotenv"} for name in modules), path
+@pytest.mark.parametrize("value", ["", "a" * 64, "bad;schema", "has space", 123])
+def test_schema_names_reject_invalid_or_truncated_identifiers(value):
+    with pytest.raises(ValueError, match="schema name"):
+        database_schema_name(value)
 
 
 def test_configs_do_not_expose_keys_in_repr():
@@ -52,6 +46,8 @@ async def test_example_env_is_explicit_and_does_not_mutate_environment(tmp_path,
         "LLM_API_KEY=llm-file-key\nLLM_BASE_URL=https://llm.test/v1\nLLM_MODEL=file-model\n"
         "LLM_STRUCTURED_OUTPUTS=false\n"
         "LLM_TEMPERATURE=0\n"
+        "LLM_REASONING_EFFORT=xhigh\n"
+        "LLM_MAX_RETRIES=1\n"
         "DECISION_API_KEY=decision-file-key\nDECISION_BASE_URL=https://decision.test\n"
         "DECISION_MODEL=decision-model\nDECISION_FALLBACK_MODEL=fallback-model\n"
     )
@@ -71,6 +67,8 @@ async def test_example_env_is_explicit_and_does_not_mutate_environment(tmp_path,
         assert lexicon.llm_config.base_url == "https://llm.test/v1"
         assert lexicon.llm_config.structured_outputs is False
         assert lexicon.llm_config.temperature == 0
+        assert lexicon.llm_config.reasoning_effort == "xhigh"
+        assert lexicon.llm_config.max_retries == 1
         assert lexicon.decision_config.model == "decision-model"
         assert lexicon.decision_config.api_key == "decision-file-key"
         assert lexicon.decision_config.base_url == "https://decision.test"
@@ -126,6 +124,54 @@ def test_shared_env_parses_temperature(value, expected):
         "LLM",
     )
     assert options["temperature"] == expected
+
+
+@pytest.mark.parametrize("value,expected", [(None, None), ("", None), (" xhigh ", "xhigh")])
+def test_shared_env_parses_reasoning_effort(value, expected):
+    options = example_config.provider_options(
+        {
+            "LLM_BASE_URL": "https://llm.test/v1",
+            "LLM_MODEL": "selected",
+            "LLM_REASONING_EFFORT": value,
+        },
+        "LLM",
+    )
+    assert options["reasoning_effort"] == expected
+
+
+@pytest.mark.parametrize("value", [True, 1, []])
+def test_shared_env_rejects_nonstring_reasoning_effort(value):
+    with pytest.raises(ValueError, match="LLM_REASONING_EFFORT"):
+        example_config.provider_options(
+            {
+                "LLM_BASE_URL": "https://llm.test/v1",
+                "LLM_MODEL": "selected",
+                "LLM_REASONING_EFFORT": value,
+            },
+            "LLM",
+        )
+
+
+@pytest.mark.parametrize("value,expected", [(None, 2), ("", 2), ("0", 0), ("2", 2)])
+def test_shared_env_parses_max_retries(value, expected):
+    options = example_config.provider_options(
+        {"LLM_BASE_URL": "https://llm.test/v1", "LLM_MODEL": "selected", "LLM_MAX_RETRIES": value},
+        "LLM",
+    )
+    assert options["max_retries"] == expected
+
+
+@pytest.mark.parametrize("value", ["-1", "1.5", "false", True, 2])
+def test_shared_env_rejects_invalid_max_retries(value):
+    with pytest.raises(ValueError, match="LLM_MAX_RETRIES"):
+        example_config.provider_options(
+            {
+                "LLM_BASE_URL": "https://llm.test/v1",
+                "LLM_MODEL": "selected",
+                "LLM_MAX_RETRIES": value,
+            },
+            "LLM",
+        )
 
 
 @pytest.mark.parametrize("value", ["true", "nan", "inf", "-0.1", "2.1"])

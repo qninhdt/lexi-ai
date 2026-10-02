@@ -1,19 +1,21 @@
 [project]
 name = "lexi-ai"
 version = "0.1.0"
-description = "On-demand English learner's dictionary with selected Cambridge-backed generation."
+description = "Async English learner's dictionary with generation from selected reference entries."
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.14"
 authors = [
     { name = "qninhdt", email = "qndt123@gmail.com" }
 ]
 dependencies = [
-    "sqlalchemy[asyncio]>=2.1.1",
+    "sqlalchemy[asyncio]>=2.0.38",
     "aiosqlite>=0.22.1",
     "asyncpg>=0.31.0",
     "jinja2>=3.1.6",
     "json-e>=4.8.0,<5",
+    "json-repair>=0.63.5,<1",
     "openai>=3.22.1",
     "pydantic>=2.13.5",
     "nltk>=3.10.3",
@@ -30,6 +32,7 @@ dev = [
     "ruff>=0.16.9",
     "import-linter>=2.15",
     "python-dotenv>=1.2.1,<2",
+    "tqdm>=4.67.1,<5",
 ]
 
 [build-system]

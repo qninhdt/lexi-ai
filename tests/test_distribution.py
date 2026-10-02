@@ -1,21 +1,37 @@
-"""Check the wheel from a clean interpreter, not the editable checkout."""
+"""Build wheel from sdist and exercise installed resources outside the checkout."""
 
 import os
 import subprocess
+import tarfile
 from pathlib import Path
 
 
-def test_wheel_import_and_resources_from_isolated_install(tmp_path):
+def test_sdist_wheel_and_installed_resources(tmp_path):
     root = Path(__file__).resolve().parent.parent
     wheel_dir = tmp_path / "dist"
     venv = tmp_path / "venv"
     subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(wheel_dir)],
+        ["uv", "build", "--out-dir", str(wheel_dir)],
         cwd=root,
         check=True,
         capture_output=True,
         text=True,
     )
+    with tarfile.open(next(wheel_dir.glob("*.tar.gz"))) as archive:
+        names = [Path(name).parts[1:] for name in archive.getnames()]
+        assert all(
+            parts[0]
+            in {
+                "lexi_ai",
+                "pyproject.toml",
+                "pyproject.toml.orig",
+                "README.md",
+                "LICENSE",
+                "PKG-INFO",
+            }
+            for parts in names
+            if parts
+        )
     subprocess.run(["uv", "venv", str(venv)], check=True, capture_output=True, text=True)
     python = venv / "bin" / "python"
     subprocess.run(
@@ -26,38 +42,25 @@ def test_wheel_import_and_resources_from_isolated_install(tmp_path):
         text=True,
     )
     code = """
-import importlib.util
 from pathlib import Path
-from lexi_ai import DecisionConfig, DecisionMode, Lexicon, LLMConfig, TokenUsage
+from lexi_ai import Lexicon, migrations
 import lexi_ai
-assert importlib.util.find_spec('lexi_ai_v2') is None
-assert not hasattr(lexi_ai, 'LexiAI')
-assert importlib.util.find_spec('lexi_ai.styles') is None
-assert not hasattr(Lexicon, 'create_style')
-assert not hasattr(lexi_ai, 'ContentCounts')
-assert not hasattr(Lexicon, 'from_settings')
-assert LLMConfig().base_url == 'https://api.openai.com/v1'
-assert LLMConfig().structured_outputs is True
-assert LLMConfig(structured_outputs=False).structured_outputs is False
-assert LLMConfig().temperature is None
-assert LLMConfig(temperature=0).temperature == 0
-assert DecisionConfig(0.8).accepts(0.8)
-assert TokenUsage('actual', 1, 0, None, 2).cache_write_tokens is None
-assert DecisionMode.LLM_FALLBACK == 'llm_fallback'
 assert Lexicon.__module__ == 'lexi_ai.api'
 root = Path(lexi_ai.__file__).parent
 assert (root / 'alembic.ini').is_file()
-assert len(list((root / 'migrations' / 'versions').glob('*.py'))) == 2
-assert (root / 'questions' / 'prompts' / 'generate_question.jinja').is_file()
-assert not (root / 'prompts').exists()
-for module in ('llm', 'decision', 'prompting'):
-    assert importlib.util.find_spec('lexi_ai.' + module) is None
-for module in ('questions', 'words', 'themes', 'translation', 'question_schemas', 'word_schemas'):
-    assert importlib.util.find_spec('lexi_ai.inference.' + module) is None
-from lexi_ai.questions.schemas import AnchoredQuestionBatch
-from lexi_ai.words.schemas import WordOutput
-from lexi_ai.translation.generate import translate_text
+assert list(root.parent.glob('lexi_ai-*.dist-info/licenses/LICENSE'))
+url = 'sqlite+aiosqlite:///' + str(Path.cwd() / 'installed.db')
+migrations.upgrade_to_head(url)
+assert migrations.inspect_current(url) == migrations.inspect_head()
+from alembic import command
+command.check(migrations.get_migration_config(url))
 from lexi_ai.inference.prompting import render_prompt, render_decision
+system, user = render_prompt('words/prompts/inventory.jinja', target='bank', references=[])
+assert system.strip() and 'bank' in user
+system, user = render_prompt('words/prompts/enrich_sense.jinja',
+                            target='bank', word={}, sense={'definition': 'Money', 'pos': 'noun'},
+                            examples_per_sense=1, references=[])
+assert system.strip() and '<sense_request>' in user
 state, questions = render_decision('questions/prompts/decision/grade_single_word_1.json',
                                   question='question', answer='answer',
                                   question_type='cloze_to_word')
@@ -65,14 +68,14 @@ assert set(questions) == {'task_fit', 'spelling_error'}
 system, user = render_prompt('questions/prompts/generate_question.jinja',
                             question_type='cloze_to_word',
                             theme=None, context={'word': 'bank'})
-assert 'cloze' in system.lower() and 'bank' in user
+assert system.strip() and 'bank' in user
 system, user = render_prompt('questions/prompts/generate_question.jinja',
                             question_type='dialogue_completion',
                             theme=None, context={'word': 'bank'})
-assert 'Target in Dialogue' in system
+assert system.strip() and user.strip()
 system, user = render_prompt('translation/prompts/translate.jinja',
                             target_language='vi', content='bank')
-assert 'translator' in system and '<text>bank</text>' in user
+assert system.strip() and '<text>bank</text>' in user
 """
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)

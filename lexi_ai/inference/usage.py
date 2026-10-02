@@ -23,12 +23,28 @@ def _model(response):
 def openai_usage(response) -> TokenUsage:
     usage = _get(response, "usage")
     details = _get(usage, "prompt_tokens_details", _get(usage, "input_tokens_details"))
+    input_tokens = _count(_get(usage, "prompt_tokens", _get(usage, "input_tokens")))
+    output_tokens = _count(_get(usage, "completion_tokens", _get(usage, "output_tokens")))
+    output_details = _get(usage, "completion_tokens_details", _get(usage, "output_tokens_details"))
+    reasoning = _count(_get(output_details, "reasoning_tokens"))
+    total = _count(_get(usage, "total_tokens"))
+    # OpenAI includes reasoning in completion/output tokens. Some compatible
+    # endpoints report it separately. Only add it when the reported total proves
+    # that accounting convention; never guess or double-count standard responses.
+    if (
+        input_tokens is not None
+        and output_tokens is not None
+        and reasoning is not None
+        and reasoning > 0
+        and total == input_tokens + output_tokens + reasoning
+    ):
+        output_tokens += reasoning
     return TokenUsage(
         model_id=_model(response),
-        input_tokens=_count(_get(usage, "prompt_tokens", _get(usage, "input_tokens"))),
+        input_tokens=input_tokens,
         cache_read_tokens=_count(_get(details, "cached_tokens")),
         cache_write_tokens=_count(_get(usage, "cache_write_tokens")),
-        output_tokens=_count(_get(usage, "completion_tokens", _get(usage, "output_tokens"))),
+        output_tokens=output_tokens,
     )
 
 

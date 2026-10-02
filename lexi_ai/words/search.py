@@ -6,7 +6,7 @@ from lexi_ai import schema as row
 from lexi_ai.config import MAX_QUERY_LENGTH
 from lexi_ai.db.collections import collection
 from lexi_ai.errors import InvalidResourceError
-from lexi_ai.models import AvailableHit, SearchResult, Word, WordHit
+from lexi_ai.models import AvailableHit, SearchResult, WordHit
 from lexi_ai.patterns import matches_pattern, surface_head_key
 from lexi_ai.references.cambridge import encode_available_id
 from lexi_ai.text import answer_key
@@ -129,7 +129,9 @@ async def _patterns(session, key, query, ranked, *, limit=_LIMIT):
             if matches_pattern(
                 pattern["content"], query, forms=forms_by_sense[pattern["sense_id"]]
             ):
-                word = Word(pattern["word_id"], pattern["lemma"], pattern["entry_type"], "done")
+                word = row.Word(
+                    id=pattern["word_id"], lemma=pattern["lemma"], entry_type=pattern["entry_type"]
+                )
                 _offer(ranked, word, 3, 1.0, "pattern", pattern["content"])
         _trim(ranked, limit)
         last_id = records[-1]["id"]

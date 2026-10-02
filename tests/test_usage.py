@@ -35,6 +35,42 @@ def chat_usage(input_tokens=100, cached=25, output_tokens=10):
     )
 
 
+@pytest.mark.parametrize(
+    "input_tokens,output,reasoning,total,expected",
+    [
+        (100, 10, 4, 110, 10),  # Standard OpenAI: reasoning already included.
+        (100, 10, 4, 114, 14),  # Compatible provider: reasoning is separate.
+        (100, 10, 4, 113, 10),  # Inconsistent metadata cannot justify adding counts.
+        (100, 10, 4, None, 10),
+        (100, 10, "4", 114, 10),
+        (100, None, 4, 114, None),
+        (None, 10, 4, 114, 10),
+        (100, 10, 0, 110, 10),
+    ],
+)
+def test_reasoning_output_counts_only_add_separate_tokens_when_total_confirms(
+    input_tokens,
+    output,
+    reasoning,
+    total,
+    expected,
+):
+    raw = {
+        "model": "actual",
+        "usage": {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output,
+            "completion_tokens_details": {"reasoning_tokens": reasoning},
+            "total_tokens": total,
+        },
+    }
+    assert openai_usage(raw).output_tokens == expected
+    # The official grading adapter's raw attempt trace uses the same collector.
+    assert decision_usage({"debug": {"llm_attempts": [{"llm_response": raw}]}})[0] == (
+        openai_usage(raw)
+    )
+
+
 @pytest.mark.parametrize("counts", [None, chat_usage()])
 async def test_llm_tuple_preserves_result_instance_and_actual_model(counts):
     parsed = Reply(answer="yes")
@@ -310,7 +346,7 @@ async def lexicon(tmp_path, source):
 
 async def generate_bank(lexicon):
     handle = (await lexicon.search("bank", include_available=True)).available[0].available_id
-    word = await lexicon.generate(handle, example_count=1)
+    word = await lexicon.generate(handle, target="bank", example_count=1)
     return handle, word
 
 
@@ -318,9 +354,11 @@ async def test_public_generation_theme_and_question_usage_and_cached_reads(lexic
     handle = (await lexicon.search("bank", include_available=True)).available[0].available_id
     _, usage = await lexicon.create_theme("pirate", "Pirate", "nautical", with_usage=True)
     assert usage == [LLM_USAGE]
-    word, usage = await lexicon.generate(handle, theme="pirate", example_count=1, with_usage=True)
-    assert usage == [TokenUsage("actual-llm", 20, 6, None, 4)]
-    stored, usage = await lexicon.generate(handle, theme="pirate", with_usage=True)
+    word, usage = await lexicon.generate(
+        handle, target="bank", theme="pirate", example_count=1, with_usage=True
+    )
+    assert usage == [TokenUsage("actual-llm", 30, 9, None, 6)]
+    stored, usage = await lexicon.generate(handle, target="bank", theme="pirate", with_usage=True)
     assert stored == word and usage == []
     questions, usage = await lexicon.generate_questions(
         word.senses[0].id,
@@ -380,7 +418,7 @@ async def test_all_grading_stages_and_gates_collect_only_their_own_calls(
     class GradingDecision:
         calls = 0
 
-        async def decide(self, state, questions, *, with_usage=False):
+        async def decide(self, state, questions, *, with_usage=False, **kwargs):
             self.calls += 1
             choices, nouls = {}, {}
             for name, q in questions.items():
@@ -485,7 +523,7 @@ async def test_parallel_relation_error_preserves_usage_without_canceling_success
         )
 
     class PartialDecision:
-        async def decide(self, state, questions, *, with_usage=False):
+        async def decide(self, state, questions, *, with_usage=False, **kwargs):
             await asyncio.sleep(0)
             if state["target"]["word"] == "word2":
                 error = InvalidOutputError("invalid verdict")

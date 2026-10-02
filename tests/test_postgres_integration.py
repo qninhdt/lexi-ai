@@ -13,11 +13,14 @@ from sqlalchemy import func, inspect, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from test_end_to_end import verify_consumer_flow
-from test_migrations import migration_config, run_migration
+from test_migrations import run_migration
 from test_relations import Decision
 from test_scale_fixes import seed_links
 
+from lexi_ai.contract import LEXI_SCHEMA
+from lexi_ai.contract import Sense as ContractSense
 from lexi_ai.db.session import Database
+from lexi_ai.migrations import get_migration_config, inspect_current, inspect_head, upgrade_to_head
 from lexi_ai.relations.resolve import resolve_relations
 from lexi_ai.relations.storage import definition_hash, pending_relations
 from lexi_ai.schema import Base, Definition, Sense, SenseForm, SenseRelation, Word
@@ -30,10 +33,9 @@ pytestmark = pytest.mark.skipif(not PG_URL, reason="no disposable LEXI_TEST_PG_U
 
 async def test_migration_nondefault_schema(source):
     assert PG_URL.startswith("postgresql+asyncpg://")
-    schema = f"lexi_test_{uuid.uuid4().hex[:12]}"
+    schema = f"Lexi_test_{uuid.uuid4().hex[:12]}"
     engine = create_async_engine(PG_URL)
-    config = migration_config(PG_URL)
-    config.set_main_option("db_schema", schema)
+    config = get_migration_config(PG_URL, db_schema=schema)
     try:
         async with engine.begin() as connection:
             public_before = await connection.run_sync(
@@ -44,11 +46,8 @@ async def test_migration_nondefault_schema(source):
         script = """
 import os
 import sys
-from alembic import command
-from test_migrations import migration_config
-config = migration_config(os.environ['LEXI_TEST_PG_URL'])
-config.set_main_option('db_schema', sys.argv[1])
-command.upgrade(config, 'head')
+from lexi_ai.migrations import upgrade_to_head
+upgrade_to_head(os.environ['LEXI_TEST_PG_URL'], db_schema=sys.argv[1])
 """
         env = os.environ.copy()
         env["PYTHONPATH"] = str(Path(__file__).parent)
@@ -59,6 +58,7 @@ command.upgrade(config, 'head')
             capture_output=True,
             text=True,
         )
+        assert await asyncio.to_thread(inspect_current, PG_URL, db_schema=schema) == inspect_head()
         async with engine.connect() as connection:
 
             def reflect(sync_connection):
@@ -99,6 +99,21 @@ command.upgrade(config, 'head')
                 for fk in column.foreign_keys
             }
         await run_migration(config, PG_URL, command.check)
+        await asyncio.to_thread(upgrade_to_head, PG_URL, db_schema=schema)
+        async with engine.begin() as connection:
+            path_before = await connection.scalar(text("SHOW search_path"))
+            reflected_schema = connection.dialect.default_schema_name
+            await connection.run_sync(
+                lambda conn: upgrade_to_head(connection=conn, db_schema=schema)
+            )
+            assert await connection.scalar(text("SHOW search_path")) == path_before
+            assert connection.dialect.default_schema_name == reflected_schema
+            assert (
+                await connection.run_sync(
+                    lambda conn: inspect_current(connection=conn, db_schema=schema)
+                )
+                == inspect_head()
+            )
         await verify_consumer_flow(PG_URL, source, db_schema=schema)
         await run_migration(config, PG_URL, command.downgrade, "base")
         await run_migration(config, PG_URL, command.upgrade, "head")
@@ -120,6 +135,23 @@ command.upgrade(config, 'head')
                 async with db.transaction() as session:
                     session.add(Definition(sense_id=sense.id, content="NUL\x00is invalid"))
                     await session.flush()
+            async with db.engine.connect() as connection:
+                connection = await connection.execution_options(
+                    schema_translate_map={LEXI_SCHEMA: schema}
+                )
+                actual = (await connection.execute(select(ContractSense.__table__))).one()
+                assert (actual.id, actual.word_id, actual.pos, actual.tier) == (
+                    sense.id,
+                    word.id,
+                    "noun",
+                    "core",
+                )
+                columns = await connection.run_sync(
+                    lambda conn: inspect(conn).get_columns("senses", schema=schema)
+                )
+                assert {column["name"]: str(column["type"]) for column in columns} == {
+                    column.name: str(column.type) for column in ContractSense.__table__.columns
+                }
             with pytest.raises(DBAPIError):
                 async with db.transaction() as session:
                     session.add(

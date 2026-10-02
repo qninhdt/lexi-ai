@@ -17,6 +17,8 @@ PROVIDER_VARIABLES = (
     "LLM_MODEL",
     "LLM_STRUCTURED_OUTPUTS",
     "LLM_TEMPERATURE",
+    "LLM_REASONING_EFFORT",
+    "LLM_MAX_RETRIES",
     "DECISION_API_KEY",
     "DECISION_BASE_URL",
     "DECISION_MODEL",
@@ -73,6 +75,18 @@ def provider_options(values, prefix, *, require_key=False):
             raise ValueError(
                 "LLM_TEMPERATURE must be a finite number in [0, 2] or blank"
             ) from error
+        value = values.get("LLM_REASONING_EFFORT")
+        if value is not None and not isinstance(value, str):
+            raise ValueError("LLM_REASONING_EFFORT must be a string or blank")
+        options["reasoning_effort"] = value.strip() or None if value is not None else None
+        value = values.get("LLM_MAX_RETRIES")
+        if value is not None and not isinstance(value, str):
+            raise ValueError("LLM_MAX_RETRIES must be a non-negative integer or blank")
+        try:
+            retries = int(value) if value is not None and value.strip() else 2
+            options["max_retries"] = LLMConfig(max_retries=retries).max_retries
+        except ValueError as error:
+            raise ValueError("LLM_MAX_RETRIES must be a non-negative integer or blank") from error
     return options
 
 

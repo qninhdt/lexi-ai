@@ -20,7 +20,7 @@ async def main(args):
         pprint(asdict(theme))
 
         themed = await lexicon.generate(
-            args.available_id, theme=theme.key, example_count=args.example_count
+            args.available_id, target=args.target, theme=theme.key, example_count=args.example_count
         )
         print("Neutral namespace:")
         pprint(asdict(await lexicon.get_word(themed.id)))
@@ -45,6 +45,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     add_config_arguments(parser)
     parser.add_argument("available_id", help="Selected Cambridge handle from example 01")
+    parser.add_argument("--target", required=True, help="Selected lexical item to generate")
     parser.add_argument("--theme", required=True, help="Exact Theme key")
     parser.add_argument("--name", help="Display name when creating a new Theme")
     parser.add_argument("--concept", help="Style concept when creating a new Theme")

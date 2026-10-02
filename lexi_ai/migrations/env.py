@@ -15,44 +15,56 @@ target_metadata = Base.metadata
 
 
 def include_object(_object, name, type_, _reflected, _compare_to):
+    if type_ == "table" and name == "alembic_version":
+        return False
     return not managed_search_object(name, type_)
 
 
-def _schema_name():
-    return database_schema_name(config.get_main_option("db_schema") or None)
+def _schema_name(dialect_name):
+    name = database_schema_name(config.get_main_option("db_schema") or None)
+    if dialect_name == "postgresql":
+        return name or "lexi"
+    if name is not None:
+        raise ValueError("named database schema requires PostgreSQL")
+    return None
 
 
 def run_migrations_offline():
-    name = _schema_name()
-    context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
-        target_metadata=target_metadata,
-        literal_binds=True,
-        compare_type=True,
-        include_object=include_object,
-    )
-    with context.begin_transaction():
-        if name:
-            context.execute(f'SET search_path TO "{name}"')
-        context.run_migrations()
+    raise RuntimeError("Dictionary bootstrap requires an online migration")
 
 
 def do_run_migrations(connection):
-    name = _schema_name()
-    if name and connection.dialect.name == "postgresql":
-        connection.execute(text(f'SET search_path TO "{name}"'))
+    dialect_name = connection.dialect.name
+    name = _schema_name(dialect_name)
+    opts = {
+        "connection": connection,
+        "target_metadata": target_metadata,
+        "compare_type": True,
+        "include_object": include_object,
+    }
+    if dialect_name == "postgresql":
+        original_schema = connection.dialect.default_schema_name
+        original_path = connection.scalar(text("SHOW search_path"))
+        connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{name}"'))
+        connection.execute(text(f'SET LOCAL search_path TO "{name}"'))
         connection.dialect.default_schema_name = name
-    context.configure(
-        connection=connection,
-        target_metadata=target_metadata,
-        compare_type=True,
-        include_object=include_object,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
+        opts["version_table_schema"] = name
+    try:
+        context.configure(**opts)
+        with context.begin_transaction():
+            context.run_migrations()
+        if dialect_name == "postgresql":
+            connection.execute(
+                text("SELECT set_config('search_path', :path, true)"), {"path": original_path}
+            )
+    finally:
+        if dialect_name == "postgresql":
+            connection.dialect.default_schema_name = original_schema
 
 
 async def run_async_migrations():
+    if not config.get_main_option("sqlalchemy.url"):
+        raise ValueError("an explicit generated-database URL is required")
     engine = async_engine_from_config(
         config.get_section(config.config_ini_section),
         prefix="sqlalchemy.",

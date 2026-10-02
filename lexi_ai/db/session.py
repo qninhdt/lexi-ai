@@ -1,5 +1,6 @@
 """Explicit, per-operation transaction scopes for the generated dictionary."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -22,10 +23,10 @@ class Database:
         if schema is not None and not url.startswith("postgresql+asyncpg://"):
             raise ValueError("named database schema requires PostgreSQL")
         sqlite = url.startswith("sqlite+aiosqlite://")
+        if not sqlite:
+            schema = schema or "lexi"
         connect_args = (
-            {"timeout": 5}
-            if sqlite
-            else ({"server_settings": {"search_path": schema}} if schema else {})
+            {"timeout": 5} if sqlite else {"server_settings": {"search_path": f'"{schema}"'}}
         )
         self.engine: AsyncEngine = create_async_engine(
             url, connect_args=connect_args, pool_pre_ping=not sqlite
@@ -81,3 +82,25 @@ class Database:
 
     async def close(self) -> None:
         await self.engine.dispose()
+
+
+class SessionDatabase:
+    """Borrow a host session; serialize SQL within parallel Sense Linking work."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self.engine = session.bind
+        self._lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def transaction(self, *, immediate: bool = False) -> AsyncIterator[AsyncSession]:
+        async with self._lock:
+            yield self.session
+
+    @asynccontextmanager
+    async def read(self):
+        async with self._lock:
+            yield self.session
+
+    async def close(self) -> None:
+        pass

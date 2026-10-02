@@ -1,33 +1,46 @@
 {
   "pricing": {
-    "jev-latest": {
+    "typesafe/jev-1.13": {
       "currency": "USD",
-      "as_of": null,
-      "model_ids": ["jev-latest"],
-      "input_per_million": null,
-      "output_per_million": null,
+      "as_of": "2026-10-02",
+      "model_ids": ["typesafe/jev-1.13", "typesafe/jev-1.13-20260917"],
+      "input_per_million": 0.042,
+      "output_per_million": 0,
       "cache_read_per_million": null,
-      "cache_write_per_million": null
+      "cache_write_per_million": null,
+      "source": "https://openrouter.ai/api/v1/models/typesafe/jev-1.13/endpoints"
     },
-    "gpt-4o": {
+    "openai/gpt-6-luna": {
       "currency": "USD",
-      "as_of": null,
-      "model_ids": ["gpt-4o"],
-      "input_per_million": null,
-      "output_per_million": null,
-      "cache_read_per_million": null,
-      "cache_write_per_million": null
+      "as_of": "2026-10-02",
+      "model_ids": ["openai/gpt-6-luna"],
+      "input_per_million": 0.1,
+      "output_per_million": 0.5,
+      "cache_read_per_million": 0.01,
+      "cache_write_per_million": 0.125,
+      "source": "https://openrouter.ai/api/v1/models",
+      "overrides": [
+        {
+          "min_prompt_tokens": 272000,
+          "input_per_million": 0.2,
+          "output_per_million": 0.75,
+          "cache_read_per_million": 0.02,
+          "cache_write_per_million": 0.25
+        }
+      ]
     }
   },
   "benchmarks": {
     "grading_decision": {
       "mode": "decision_only",
       "threshold": 0.8,
+      "workers": 2,
       "timeout": 30
     },
     "grading_llm": {
       "mode": "llm_only",
       "threshold": 0.8,
+      "workers": 4,
       "timeout": 30
     }
   }

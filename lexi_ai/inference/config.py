@@ -19,7 +19,7 @@ class DecisionConfig:
     model: str = field(default="jev-latest", kw_only=True)
 
     def __post_init__(self) -> None:
-        if not 0 < self.threshold <= 1:
+        if type(self.threshold) not in (float, int) or not 0 < self.threshold <= 1:
             raise ValueError("decision threshold must be in (0, 1]")
         if not self.model.strip() or not self.base_url.strip():
             raise ValueError("decision model and base URL must not be blank")
@@ -39,10 +39,17 @@ class LLMConfig:
     reasoning_effort: str | None = None
     structured_outputs: bool = True
     temperature: float | None = None
+    max_retries: int = 2
 
     def __post_init__(self) -> None:
         if type(self.structured_outputs) is not bool:
             raise TypeError("structured_outputs must be a boolean")
+        if type(self.max_retries) is not int or self.max_retries < 0:
+            raise ValueError("max_retries must be a non-negative integer")
+        if self.reasoning_effort is not None and (
+            not isinstance(self.reasoning_effort, str) or not self.reasoning_effort.strip()
+        ):
+            raise ValueError("reasoning_effort must be a nonblank string or None")
         if self.temperature is not None and (
             type(self.temperature) not in (int, float)
             or not math.isfinite(self.temperature)

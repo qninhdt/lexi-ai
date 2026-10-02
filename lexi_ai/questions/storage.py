@@ -67,7 +67,9 @@ async def append(db, artifacts: list[Question]) -> list[Question]:
 async def get(db, question_id: int) -> Question | None:
     async with db.read() as connection:
         record = (
-            await connection.execute(select(QuestionRow).where(QuestionRow.id == question_id))
+            await connection.execute(
+                select(QuestionRow.__table__).where(QuestionRow.id == question_id)
+            )
         ).first()
         return _dto(record) if record else None
 

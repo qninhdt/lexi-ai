@@ -15,7 +15,7 @@ async def by_key(db, input_hash: str, language: str) -> Translation | None:
     async with db.read() as connection:
         record = (
             await connection.execute(
-                select(TranslationRow).where(
+                select(TranslationRow.__table__).where(
                     TranslationRow.input_hash == input_hash,
                     TranslationRow.target_language == language,
                 )
@@ -35,7 +35,9 @@ async def insert(db, input_hash: str, language: str, content: str) -> Translatio
 async def get(db, identifier: int) -> Translation | None:
     async with db.read() as connection:
         row = (
-            await connection.execute(select(TranslationRow).where(TranslationRow.id == identifier))
+            await connection.execute(
+                select(TranslationRow.__table__).where(TranslationRow.id == identifier)
+            )
         ).first()
         return _dto(row) if row else None
 
@@ -44,7 +46,7 @@ async def list_rows(
     db, *, after_id: int | None = None, limit: int | None = None
 ) -> list[Translation]:
     validate_page(limit, after_id)
-    statement = select(TranslationRow).order_by(TranslationRow.id).limit(limit)
+    statement = select(TranslationRow.__table__).order_by(TranslationRow.id).limit(limit)
     if after_id is not None:
         statement = statement.where(TranslationRow.id > after_id)
     async with db.read() as connection:

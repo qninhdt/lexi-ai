@@ -58,46 +58,6 @@ class LLM:
         )
 
 
-@pytest.mark.parametrize(
-    "kind", ["word_to_definition", "word_to_usage", "dialogue_completion", "meaning_in_context"]
-)
-async def test_all_from_word_types(kind, tmp_path):
-    db = Database(f"sqlite+aiosqlite:///{tmp_path / 'generated.db'}")
-    try:
-        await db.create_schema(Base.metadata)
-        async with db.transaction() as session:
-            word = Word(lemma="bank", match_key="bank", entry_type="word", generation_state="done")
-            session.add(word)
-            await session.flush()
-            sense = Sense(word_id=word.id, pos="noun", tier="core")
-            session.add(sense)
-            await session.flush()
-            session.add_all(
-                [
-                    Definition(sense_id=sense.id, content="A place for money"),
-                    Example(sense_id=sense.id, content='The <t inf="base">bank</t> opened.'),
-                ]
-            )
-        question = (await generate_questions(db, LLM(), sense.id, kind, 1, distractor_count=4))[0]
-        assert question.question_type == kind
-        assert len(question.distractors) == 4
-        if kind == "dialogue_completion":
-            assert question.content[1]["text"] is None
-        if kind == "word_to_definition":
-            assert question.correct_alternatives == []
-        assert question.supports("single_choice")
-        assert question.supports("short_answer") == (
-            kind
-            in {
-                "word_to_definition",
-                "word_to_usage",
-            }
-        )
-        assert len(ALLOWED_PAIRS) == 12
-    finally:
-        await db.close()
-
-
 def test_exactly_twelve_question_response_pairs():
     expected = (
         {

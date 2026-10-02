@@ -78,14 +78,16 @@ async def create_theme(db, llm, key: str, name: str, concept: str) -> Theme:
 async def get_theme(db, key: str) -> Theme | None:
     async with db.read() as connection:
         record = (
-            await connection.execute(select(ThemeRow).where(ThemeRow.key == normalize_key(key)))
+            await connection.execute(
+                select(ThemeRow.__table__).where(ThemeRow.key == normalize_key(key))
+            )
         ).first()
         return _dto(record) if record else None
 
 
 async def list_themes(db, *, after_key: str | None = None, limit: int | None = None) -> list[Theme]:
     validate_page(limit)
-    statement = select(ThemeRow).order_by(ThemeRow.key).limit(limit)
+    statement = select(ThemeRow.__table__).order_by(ThemeRow.key).limit(limit)
     if after_key is not None:
         statement = statement.where(ThemeRow.key > normalize_key(after_key))
     async with db.read() as connection:

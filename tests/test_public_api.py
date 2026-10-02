@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 from test_decision import DecisionTransport
 from test_prompting import prompt_context
+from test_word_generation import stage_payload
 
 from lexi_ai import DecisionConfig, DecisionMode, Lexicon, LLMConfig
 from lexi_ai.errors import InvalidResourceError, MissingProviderError
@@ -14,11 +15,11 @@ class LLM:
 
     async def complete(self, instruction, data, schema):
         self.calls += 1
-        if schema.__name__ == "WordOutput":
-            return schema.model_validate(
+        if schema.__name__ in {"InventoryOutput", "SenseEnrichment"}:
+            return stage_payload(
                 {
                     "lemma": "bank",
-                    "entry_type": "word",
+                    "type": "word",
                     "aliases": [],
                     "related": [],
                     "senses": [
@@ -26,15 +27,19 @@ class LLM:
                             "definition": "A place to keep money",
                             "pos": "noun",
                             "tier": "core",
+                            "cefr_level": "A1",
+                            "register": None,
                             "examples": ['The <t inf="base">bank</t> opens early.'],
                             "forms": [],
                             "patterns": [],
                             "collocations": [],
                             "relations": [],
-                            "references": [{"source": "cambridge", "source_ref": "101"}],
+                            "sources": ["c1"],
                         }
                     ],
-                }
+                },
+                data,
+                schema,
             )
         if schema.__name__ == "TranslationOutput":
             return schema(content="ngân hàng")
@@ -54,22 +59,22 @@ async def test_selected_search_generate_read_and_close(tmp_path, source):
         await ai.db.create_schema(Base.metadata)
         available = (await ai.search("bank", include_available=True)).available
         assert len(available) == 1
-        assert not hasattr(available[0], "cambridge_id")
-        word = await ai.generate(available[0].available_id, example_count=1)
+        word = await ai.generate(available[0].available_id, target="bank", example_count=1)
         assert word.lemma == "bank"
+        assert word.type == "word"
         assert (await ai.get_word(word.id)).senses[0].definition.content == (
             "A place to keep money"
         )
-        assert await ai.generate(available[0].available_id) == word
-        assert llm.calls == 1
+        assert await ai.generate(available[0].available_id, target="bank") == word
+        assert llm.calls == 2
         original_path = ai.cambridge.path
         ai.cambridge.path = tmp_path / "absent-source.db"
-        assert await ai.generate(available[0].available_id) == word
+        assert await ai.generate(available[0].available_id, target="bank") == word
         ai.cambridge.path = original_path
         assert (await ai.search("bank", include_available=True)).available == []
         assert await ai.translate_text("bank", "vi") == "ngân hàng"
         assert await ai.translate_text("bank", "vi") == "ngân hàng"
-        assert llm.calls == 2
+        assert llm.calls == 3
         with pytest.raises(InvalidResourceError):
             await ai.get_word(word.id, theme="unknown")
     finally:
@@ -98,8 +103,6 @@ async def test_explicit_config_ignores_environment(monkeypatch, tmp_path, source
         llm_config=LLMConfig(api_key="llm-key", model="selected-llm", base_url="https://llm.test"),
     )
     try:
-        assert not hasattr(Lexicon, "from_settings")
-        assert not hasattr(ai, "neutral_counts") and not hasattr(ai, "themed_counts")
         assert ai.decision_config.accepts(0.7)
         assert not ai.decision_config.accepts(0.69)
         assert ai._decision_model().config is ai.decision_config
@@ -108,10 +111,6 @@ async def test_explicit_config_ignores_environment(monkeypatch, tmp_path, source
         assert ai.cambridge.path == source
     finally:
         await ai.close()
-
-
-def test_topic_surface_is_removed():
-    assert not any("topic" in name for name in dir(Lexicon))
 
 
 async def test_close_only_owned_providers_once(monkeypatch, tmp_path, source):
@@ -150,7 +149,10 @@ async def test_example_counts_are_per_generate_call(tmp_path, source, neutral_fi
             if schema.__name__ == "ThemeParts":
                 self.calls += 1
                 return schema(voice="Captain", diction="nautical")
-            count = prompt_context(data, "generation_parameters")["examples_per_sense"]
+            if schema.__name__ == "InventoryOutput":
+                return await super().complete(instruction, data, schema)
+            tag = "generation_parameters" if schema.__name__ == "ThemedWord" else "sense_request"
+            count = prompt_context(data, tag)["examples_per_sense"]
             if schema.__name__ == "ThemedWord":
                 self.calls += 1
                 return schema(
@@ -162,7 +164,7 @@ async def test_example_counts_are_per_generate_call(tmp_path, source, neutral_fi
                     ]
                 )
             output = await super().complete(instruction, data, schema)
-            output.senses[0].examples *= count
+            output.examples *= count
             return output
 
     llm = CountingLLM()
@@ -176,18 +178,20 @@ async def test_example_counts_are_per_generate_call(tmp_path, source, neutral_fi
         await lexicon.db.create_schema(Base.metadata)
         handle = (await lexicon.search("bank", include_available=True)).available[0].available_id
         if neutral_first:
-            await lexicon.generate(handle, example_count=2)
+            await lexicon.generate(handle, target="bank", example_count=2)
         await lexicon.create_theme("pirate", "Pirate", "nautical voice")
-        themed = await lexicon.generate(handle, theme="pirate", example_count=4)
+        themed = await lexicon.generate(handle, target="bank", theme="pirate", example_count=4)
         assert len(themed.senses[0].examples) == 4
         neutral = await lexicon.get_word(themed.id)
         assert len(neutral.senses[0].examples) == (2 if neutral_first else 4)
         assert neutral.senses[0].definition is not None
         assert themed.senses[0].definition is not None
-        assert llm.calls == 3
-        assert await lexicon.generate(handle, example_count=9) == neutral
-        assert await lexicon.generate(handle, theme="pirate", example_count=9) == themed
-        assert llm.calls == 3
+        assert llm.calls == 4
+        assert await lexicon.generate(handle, target="bank", example_count=9) == neutral
+        assert (
+            await lexicon.generate(handle, target="bank", theme="pirate", example_count=9)
+        ) == themed
+        assert llm.calls == 4
     finally:
         await lexicon.close()
 
@@ -202,7 +206,7 @@ async def test_generate_rejects_invalid_count_before_io(tmp_path, source, count)
     )
     try:
         with pytest.raises(ValueError, match="positive integer"):
-            await lexicon.generate("invalid-handle", example_count=count)
+            await lexicon.generate("invalid-handle", target="bank", example_count=count)
         assert lexicon.llm is None
         assert not (tmp_path / "unused.db").exists()
     finally:
@@ -220,23 +224,37 @@ def test_lexicon_requires_llm_without_opening_storage(tmp_path, source, llm_conf
     assert not (tmp_path / "unused.db").exists()
 
 
-async def test_decision_is_optional_and_decision_only_fails_explicitly(tmp_path, source):
+async def test_decision_only_requires_credentials_only_for_inference(tmp_path, source, monkeypatch):
+    from lexi_ai.schema import Base
+
     lexicon = Lexicon(
         f"sqlite+aiosqlite:///{tmp_path / 'unused.db'}",
         str(source),
         llm_config=LLMConfig(api_key="fake-key"),
     )
+
+    async def question(*args):
+        return SimpleNamespace(
+            sense_id=1,
+            content="Financial institution",
+            question_type="definition_to_word",
+            correct=SimpleNamespace(id="yes", content="bank"),
+            distractors=[],
+            supports=lambda fmt: fmt in {"single_choice", "single_word"},
+        )
+
+    monkeypatch.setattr("lexi_ai.questions.grade.get_question", question)
     try:
-        assert lexicon.decision_config.api_key is None
-        decision = lexicon._decision_model()
-        assert decision.config.threshold == 0.8
-        assert decision.llm_config is lexicon.llm_config
-        assert decision.primary is None
-        with pytest.raises(MissingProviderError, match="decision_only"):
+        for fmt, answer in (("single_word", " BANK "), ("single_choice", "yes")):
+            grade, usage = await lexicon.grade_answer(
+                1, fmt, answer, mode=DecisionMode.DECISION_ONLY, with_usage=True
+            )
+            assert grade.task_fit is True and usage == []
+        with pytest.raises(MissingProviderError, match="decision model credentials"):
             await lexicon.grade_answer(1, "single_word", "answer", mode=DecisionMode.DECISION_ONLY)
-        with pytest.raises(MissingProviderError, match="decision_only"):
-            await lexicon.resolve_relations(mode=DecisionMode.DECISION_ONLY)
-        assert not (tmp_path / "unused.db").exists()
+        await lexicon.db.create_schema(Base.metadata)
+        assert await lexicon.resolve_relations(mode=DecisionMode.DECISION_ONLY) == []
+        assert lexicon.decision_model.primary is None and lexicon.llm is None
     finally:
         await lexicon.close()
 

@@ -142,8 +142,7 @@ async def grade_answer(
     mode: DecisionMode = DecisionMode.LLM_FALLBACK,
 ):
     mode = DecisionMode(mode)
-    # Preserve the original injected-provider signature on default calls.
-    options = {} if mode == DecisionMode.LLM_FALLBACK else {"mode": mode}
+    options = {"mode": mode}
     if not isinstance(answer, str) or not answer.strip() or len(answer) > MAX_TEXT_LENGTH:
         raise InvalidResourceError("invalid answer")
     question = await get_question(db, question_id)

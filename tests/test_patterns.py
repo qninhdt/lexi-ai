@@ -33,6 +33,32 @@ def test_licensed_patterns_are_anchored_and_bounded():
         validate_pattern("the {anything} thing")
 
 
+@pytest.mark.parametrize(
+    "pattern,surface,expected",
+    [
+        ("{sb}", "my old friend", True),
+        ("{sth}", "hello-world", True),
+        ("{sth}", "go_away", False),
+        ("{one's}", "John’s", True),
+        ("{oneself}", "myself", True),
+        ("{num}", "1.2", True),
+        ("the {place}", "the railway station", True),
+        ("{doing} {do}", "reading a book go home", True),
+        ("{clause}", "we left", True),
+        ("{clause}", "left", False),
+        ("{clause}", " ".join(["word"] * 13), False),
+        ("{sth}{sth}", "gopher", True),
+        ("ı {sth}", "i book", True),
+    ],
+)
+def test_slot_languages_and_bounds(pattern, surface, expected):
+    assert matches_pattern(pattern, surface) is expected
+
+
+def test_overlapping_licensed_heads_do_not_hide_longer_matches():
+    assert matches_pattern("a{oneself}", "abmyself", forms={"a": ["ab"]})
+
+
 def test_markup_and_exact_text_hash():
     assert parse_marked_example('She <t inf="past">took</t> it off.')[1][0].surface == "took"
     assert strip_markup('She <t inf="past">took</t> it off.') == "She took it off."

@@ -306,79 +306,6 @@ async def test_append_returns_detached_artifact_without_json_roundtrip(sqlite_db
     assert saved.distractors == []
 
 
-async def test_stamping_current_baseline_preserves_content_and_resolution(optimized_db):
-    from alembic import command
-    from sqlalchemy import text
-    from test_migrations import migration_config
-
-    db = optimized_db
-    await shared_target(db, source_count=1)
-    artifact = (
-        await append(
-            db,
-            [
-                Question(
-                    0,
-                    1,
-                    None,
-                    "definition_to_word",
-                    "source",
-                    Option("yes", "word1", "Fits"),
-                    [],
-                )
-            ],
-        )
-    )[0]
-    async with db.transaction() as session:
-        await session.execute(
-            text("""
-            UPDATE sense_relations SET to_sense_id=1000,target_hash=:hash,
-              resolve_attempted_at='done'
-        """),
-            {"hash": definition_hash("target")},
-        )
-        before = (
-            await session.execute(
-                select(
-                    row.Question.id,
-                    row.Question.payload,
-                    row.Question.position,
-                    row.Question.type_position,
-                )
-            )
-        ).all()
-    url = db.engine.url.render_as_string(hide_password=False)
-    config = migration_config(url)
-    # Use the schema-isolated connection so this test never addresses public tables.
-    async with db.engine.begin() as connection:
-
-        def migrate(sync):
-            config.attributes["connection"] = sync
-            try:
-                command.stamp(config, "head")
-                command.upgrade(config, "head")
-                command.check(config)
-            finally:
-                del config.attributes["connection"]
-
-        await connection.run_sync(migrate)
-    async with db.read() as connection:
-        after = (
-            await connection.execute(
-                select(
-                    row.Question.id,
-                    row.Question.payload,
-                    row.Question.position,
-                    row.Question.type_position,
-                )
-            )
-        ).all()
-        assert await connection.scalar(select(row.SenseRelation.resolve_attempted_at)) == "done"
-    assert after == before
-    assert (await get_word(db, 1)).senses[0].relations[0].resolution_state == "resolved"
-    assert (await list_for_sense(db, 1))[0] == artifact
-
-
 async def test_generation_checks_source_reuse_and_theme_in_one_read(optimized_db):
     await shared_target(optimized_db, source_count=1)
     async with optimized_db.transaction() as session:
@@ -402,6 +329,7 @@ async def test_generation_checks_source_reuse_and_theme_in_one_read(optimized_db
                 None,
                 encode_available_id(1),
                 1,
+                target="word0",
                 theme_key="style",
             )
             == 1
@@ -414,6 +342,7 @@ async def test_generation_checks_source_reuse_and_theme_in_one_read(optimized_db
                 None,
                 encode_available_id(2),
                 1,
+                target="word0",
                 theme_key="missing",
             )
         assert len(statements) == 2

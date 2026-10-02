@@ -18,7 +18,7 @@ POS_TAGS = frozenset(
         "auxiliary",
     }
 )
-TIERS = ("core", "common", "extended", "rare")
+TIERS = ("core", "common", "less_common", "rare")
 SLOTS = frozenset(
     {"{sb}", "{sth}", "{one's}", "{oneself}", "{place}", "{doing}", "{do}", "{num}", "{clause}"}
 )

@@ -2,6 +2,11 @@
 
 import asyncio
 from dataclasses import dataclass
+from threading import Lock
+
+# NLTK's lazy corpus reader shares seekable files and an on-demand ZIP handle.
+# Protect loading, lookup and materialization across all to_thread workers.
+_reader_lock = Lock()
 
 
 @dataclass(frozen=True)
@@ -13,15 +18,16 @@ class Synset:
 
 
 def _lookup(citation: str) -> list[Synset]:
-    from nltk.corpus import wordnet
+    with _reader_lock:
+        from nltk.corpus import wordnet
 
-    try:
-        return [
-            Synset(item.name(), item.pos(), item.definition(), list(item.examples()))
-            for item in wordnet.synsets(citation.replace(" ", "_"))[:20]
-        ]
-    except LookupError:
-        return []
+        try:
+            return [
+                Synset(item.name(), item.pos(), item.definition(), list(item.examples()))
+                for item in wordnet.synsets(citation.replace(" ", "_"))[:20]
+            ]
+        except LookupError:
+            return []
 
 
 async def lookup(citation: str) -> list[Synset]:

@@ -1,11 +1,14 @@
+import asyncio
 import hashlib
 import sqlite3
+import time
+from types import SimpleNamespace
 
 import pytest
 
 from lexi_ai.errors import InvalidHandleError
 from lexi_ai.references.cambridge import Cambridge, decode_available_id, encode_available_id
-from lexi_ai.references.wordnet import lookup
+from lexi_ai.references.wordnet import Synset, lookup
 
 
 @pytest.fixture
@@ -42,11 +45,9 @@ async def test_fetch_by_id_is_exact_and_read_only(source):
     assert (await cambridge.fetch_by_id(1)).senses[0].definition == "financial institution"
     assert (await cambridge.fetch_by_id(2)).senses[0].pos == "verb"
     assert (await cambridge.fetch_by_id(500)) is None
-    assert (await cambridge.from_handle(encode_available_id(1))).senses[0].examples == [
-        "Go to the bank."
-    ]
-    with pytest.raises(InvalidHandleError):
-        await cambridge.from_handle(encode_available_id(3))
+    assert (await cambridge.fetch_by_id(1)).senses[0].examples == ["Go to the bank."]
+    assert (await cambridge.fetch_by_id(3)).senses == []
+    assert decode_available_id(encode_available_id(1)) == 1
     with pytest.raises(InvalidHandleError):
         decode_available_id("entry_!!!")
     assert hashlib.sha256(source.read_bytes()).hexdigest() == before
@@ -58,6 +59,60 @@ async def test_search_preserves_distinct_eligible_ids(source):
     assert await Cambridge(source).search("empty") == []
     assert await Cambridge(source).search("pending") == []
     assert await lookup("not/a/citation") == []
+
+
+async def test_wordnet_workers_serialize_lookup_and_materialize_under_same_lock(monkeypatch):
+    import nltk.corpus
+
+    active = 0
+    calls = []
+
+    def synsets(citation):
+        nonlocal active
+        assert active == 0
+        active += 1
+        calls.append(citation)
+        time.sleep(0.005)
+
+        def examples():
+            nonlocal active
+            assert active == 1
+            time.sleep(0.005)
+            active -= 1
+            return ["Example"]
+
+        return [
+            SimpleNamespace(
+                name=lambda: citation + ".n.01",
+                pos=lambda: "n",
+                definition=lambda: "Meaning",
+                examples=examples,
+            )
+        ]
+
+    monkeypatch.setattr(nltk.corpus, "wordnet", SimpleNamespace(synsets=synsets))
+    citations = [f"word {index}" for index in range(8)]
+    results = await asyncio.gather(*(lookup(citation) for citation in citations))
+    assert active == 0
+    assert set(calls) == {citation.replace(" ", "_") for citation in citations}
+    assert results == [
+        [Synset(citation.replace(" ", "_") + ".n.01", "n", "Meaning", ["Example"])]
+        for citation in citations
+    ]
+
+
+async def test_wordnet_missing_corpus_releases_lock_for_following_lookups(monkeypatch):
+    import nltk.corpus
+
+    calls = []
+
+    def synsets(citation):
+        calls.append(citation)
+        raise LookupError("missing corpus")
+
+    monkeypatch.setattr(nltk.corpus, "wordnet", SimpleNamespace(synsets=synsets))
+    assert await asyncio.gather(lookup("bank"), lookup("charge")) == [[], []]
+    assert set(calls) == {"bank", "charge"}
 
 
 async def test_cambridge_fetch_aggregates_examples_once_with_stable_order(source, monkeypatch):

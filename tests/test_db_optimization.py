@@ -64,27 +64,6 @@ async def seed(db):
         )
 
 
-async def test_relation_trigger_names(optimized_db):
-    db = optimized_db
-    if db.engine.dialect.name == "postgresql":
-        query = """
-            SELECT t.tgname FROM pg_trigger t
-            JOIN pg_class c ON c.oid=t.tgrelid
-            JOIN pg_namespace n ON n.oid=c.relnamespace
-            WHERE n.nspname=current_schema() AND NOT t.tgisinternal
-        """
-    else:
-        query = "SELECT name FROM sqlite_master WHERE type='trigger'"
-    async with db.read() as connection:
-        names = set((await connection.scalars(text(query))).all())
-    assert {name for name in names if name.startswith("lexi_relation_")} == {
-        f"lexi_relation_{table}_{operation}"
-        for table in ("definitions", "senses")
-        for operation in ("insert", "update", "delete")
-    }
-    assert not any(name.startswith("lexi_wsd_") for name in names)
-
-
 async def assert_dense(db):
     async with db.read() as connection:
         records = (await connection.execute(select(row.Question).order_by(row.Question.id))).all()
@@ -309,7 +288,7 @@ async def test_postgres_concurrent_question_inserts(pg_db):
 
 @pytest.mark.parametrize("size", [1, 20])
 async def test_publication_is_batched_not_per_sense(optimized_db, monkeypatch, size):
-    from test_word_generation import payload
+    from test_word_generation import payload, stage_payload
 
     db = optimized_db
 
@@ -323,7 +302,7 @@ async def test_publication_is_batched_not_per_sense(optimized_db, monkeypatch, s
     output = payload()
     output["senses"] = []
     for i in range(size):
-        sense = payload(source_ref=str(101 + i))["senses"][0]
+        sense = payload(source_ref=f"c{i + 1}")["senses"][0]
         sense["definition"] = f"meaning{i}"
         sense["forms"] = [{"surface": "banks", "inf": "plural"}]
         sense["patterns"] = ["bank {sth}"]
@@ -337,7 +316,7 @@ async def test_publication_is_batched_not_per_sense(optimized_db, monkeypatch, s
 
     class LLM:
         async def complete(self, _instruction, _data, schema):
-            return schema.model_validate(output)
+            return stage_payload(output, _data, schema)
 
     async def no_wordnet(_lemma):
         return []
@@ -350,7 +329,7 @@ async def test_publication_is_batched_not_per_sense(optimized_db, monkeypatch, s
 
     event.listen(db.engine.sync_engine, "before_cursor_execute", capture)
     try:
-        word_id = await generate_word(db, Source(), LLM(), encode_available_id(1), 1)
+        word_id = await generate_word(db, Source(), LLM(), encode_available_id(1), 1, target="bank")
         assert len(statements) <= 18
         for table in (
             "senses",

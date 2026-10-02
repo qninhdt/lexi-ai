@@ -1,1 +1,0 @@
-{"id":"usage-2-example-01","task":"grade_word_to_usage_2","input":{"word":{"lemma":"bank"},"meaning":"An organization where people can keep and borrow money.","answer":"I deposited my savings at the bank."},"expected":{"meaning":"correct","form":"correct","construction":true,"collocation":"natural","appropriacy":"appropriate"},"example":true}

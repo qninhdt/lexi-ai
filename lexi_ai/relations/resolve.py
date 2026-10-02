@@ -23,7 +23,6 @@ async def resolve_relations(
 ) -> list[Resolution]:
     """Caller coordinates overlapping calls; work runs independently within this one call."""
     mode = DecisionMode(mode)
-    options = {} if mode == DecisionMode.LLM_FALLBACK else {"mode": mode}
     if type(batch_size) is not int or batch_size < 1:
         raise ValueError("batch size must be positive")
     links = await pending_relations(db, min(batch_size, 50))
@@ -54,7 +53,7 @@ async def resolve_relations(
                             for i, c in enumerate(link.candidates, 1)
                         ],
                     ),
-                    **options,
+                    mode=mode,
                 )
                 choice = result.choices["matched_sense"].choice
                 if choice != "no_candidate":

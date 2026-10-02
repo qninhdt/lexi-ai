@@ -2,9 +2,10 @@ import json
 from types import SimpleNamespace
 
 import httpx
+import json_repair
 import pytest
 from openai import AsyncOpenAI, InternalServerError
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 from lexi_ai.errors import InvalidOutputError, MissingProviderError
 from lexi_ai.inference.config import LLMConfig
@@ -207,25 +208,28 @@ async def test_output_modes_keep_schema_validation_and_usage(structured_outputs,
 
 
 @pytest.mark.parametrize(
-    "content,finish_reason,refusal,valid",
+    "content,finish_reason,refusal,expected",
     [
-        ('```json\n{"answer":"yes"}\n```', "stop", None, True),
-        ('```\n{"answer":"yes"}\n```', "stop", None, True),
-        ('  {"answer":"yes"}  ', "stop", None, True),
-        (None, "stop", None, False),
-        ("", "stop", None, False),
-        ('{"missing":"yes"}', "stop", None, False),
-        ('{"answer":123}', "stop", None, False),
-        ('{"answer":"yes"', "stop", None, False),
-        ('Here is the answer: {"answer":"yes"}', "stop", None, False),
-        ('{"answer":"yes"} {"answer":"other"}', "stop", None, False),
-        ('{"answer":"yes"}', "length", None, False),
-        ('{"answer":"yes"}', "content_filter", None, False),
-        ('{"answer":"yes"}', "stop", "refused", False),
+        ('```json\n{"answer":"yes"}\n```', "stop", None, "yes"),
+        ('```\n{"answer":"yes"}\n```', "stop", None, "yes"),
+        ('  {"answer":"yes"}  ', "stop", None, "yes"),
+        (None, "stop", None, None),
+        ("", "stop", None, None),
+        ('{"missing":"yes"}', "stop", None, None),
+        ('{"answer":123}', "stop", None, None),
+        ('{"answer":"yes"', "stop", None, "yes"),
+        ('Here is the answer: {"answer":"yes"}', "stop", None, "yes"),
+        ('{answer: "yes",}', "stop", None, "yes"),
+        ("{'answer': 'yes'}", "stop", None, "yes"),
+        ('{"answer":"yes"} {"answer":"other"}', "stop", None, "other"),
+        ('{"answer":"yes"} ["other"]', "stop", None, None),
+        ('{"answer":"yes"}', "length", None, None),
+        ('{"answer":"yes"}', "content_filter", None, None),
+        ('{"answer":"yes"}', "stop", "refused", None),
     ],
 )
-async def test_text_parsing_is_bounded_and_retains_usage_on_invalid_output(
-    content, finish_reason, refusal, valid
+async def test_text_repair_keeps_schema_finish_reason_and_usage_checks(
+    content, finish_reason, refusal, expected
 ):
     calls = []
 
@@ -243,10 +247,10 @@ async def test_text_parsing_is_bounded_and_retains_usage_on_invalid_output(
         )
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    llm = OpenAIStructuredLLM(LLMConfig(structured_outputs=False), client)
-    if valid:
+    llm = OpenAIStructuredLLM(LLMConfig(structured_outputs=False, max_retries=0), client)
+    if expected is not None:
         answer, usage = await llm.complete("task", "data", Reply, with_usage=True)
-        assert answer == Reply(answer="yes")
+        assert answer == Reply(answer=expected)
     else:
         with pytest.raises(InvalidOutputError) as caught:
             await llm.complete("task", "data", Reply, with_usage=True)
@@ -254,6 +258,143 @@ async def test_text_parsing_is_bounded_and_retains_usage_on_invalid_output(
     assert len(calls) == 1
     assert usage[0].model_id == "text-model"
     assert usage[0].input_tokens == 20 and usage[0].output_tokens == 5
+
+
+@pytest.mark.parametrize("structured_outputs", [True, False])
+async def test_json_repair_is_only_called_for_text_mode(monkeypatch, structured_outputs):
+    calls = []
+    original = json_repair.loads
+
+    def repair(content, **kwargs):
+        calls.append((content, kwargs))
+        return original(content, **kwargs)
+
+    monkeypatch.setattr("lexi_ai.inference.llm.json_repair.loads", repair)
+    content = '{"answer": "She visited the <t inf="base">bank</t>."}'
+    expected = Reply(answer='She visited the <t inf="base">bank</t>.')
+    if structured_outputs:
+        client = FakeClient(expected)
+    else:
+
+        async def create(**kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(content=content, refusal=None),
+                    )
+                ]
+            )
+
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    llm = OpenAIStructuredLLM(
+        LLMConfig(structured_outputs=structured_outputs, max_retries=0),
+        client,
+    )
+    assert await llm.complete("task", "data", Reply) == expected
+    assert calls == ([] if structured_outputs else [(content, {})])
+
+
+@pytest.mark.parametrize("structured_outputs", [True, False])
+async def test_sdk_unescaped_tag_quotes_repair_keeps_usage_without_extra_calls(structured_outputs):
+    requests = []
+    content = '{"answer": "Café: she visited the <t inf="base">bank</t>."}'
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "fixture",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "actual",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": content,
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="fake",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    ) as client:
+        llm = OpenAIStructuredLLM(
+            LLMConfig(structured_outputs=structured_outputs, max_retries=0),
+            client,
+        )
+        if structured_outputs:
+            # Native SDK parsing rejects the malformed JSON; Lexi never repairs it.
+            from pydantic import ValidationError
+
+            with pytest.raises(ValidationError) as caught:
+                await llm.complete("task", "data", Reply, with_usage=True)
+            usage = caught.value.usage
+        else:
+            result, usage = await llm.complete("task", "data", Reply, with_usage=True)
+            assert result.answer == 'Café: she visited the <t inf="base">bank</t>.'
+    assert len(requests) == 1
+    assert usage[0].input_tokens == 10 and usage[0].output_tokens == 20
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"missing": "yes",}',
+        '{"answer": 123,}',
+        '{"answer": "yes", "unexpected": true,}',
+        '{"answer": }',
+    ],
+)
+async def test_repair_never_supplies_schema_fields_or_relaxes_constraints(content):
+    class StrictReply(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        answer: str = Field(min_length=1)
+
+    async def create(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(content=content, refusal=None),
+                )
+            ]
+        )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    llm = OpenAIStructuredLLM(LLMConfig(structured_outputs=False, max_retries=0), client)
+    with pytest.raises(InvalidOutputError):
+        await llm.complete("task", "data", StrictReply)
+
+
+async def test_repair_supports_text_mode_root_arrays():
+    class Answers(RootModel[list[str]]):
+        pass
+
+    async def create(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="```json\n['first', 'second',]\n```", refusal=None
+                    ),
+                )
+            ]
+        )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    llm = OpenAIStructuredLLM(LLMConfig(structured_outputs=False, max_retries=0), client)
+    assert (await llm.complete("task", "data", Answers)).root == ["first", "second"]
 
 
 @pytest.mark.parametrize("value", [None, "false", 0, 1])
@@ -266,3 +407,9 @@ def test_structured_outputs_requires_a_boolean(value):
 def test_invalid_temperature(value):
     with pytest.raises(ValueError, match="temperature"):
         LLMConfig(temperature=value)
+
+
+@pytest.mark.parametrize("value", ["", " ", True, 1, []])
+def test_invalid_reasoning_effort(value):
+    with pytest.raises(ValueError, match="reasoning_effort"):
+        LLMConfig(reasoning_effort=value)

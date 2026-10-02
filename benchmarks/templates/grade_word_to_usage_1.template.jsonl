@@ -1,2 +1,0 @@
-{"id":"usage-1-example-01","task":"grade_word_to_usage_1","input":{"word":{"lemma":"bank"},"answer":"I deposited my savings at the bank."},"expected":{"used":true},"example":true}
-{"id":"usage-1-example-02","task":"grade_word_to_usage_1","input":{"word":{"lemma":"bank"},"answer":"I deposited my savings at the financial institution."},"expected":{"used":false},"example":true}

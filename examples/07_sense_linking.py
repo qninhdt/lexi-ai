@@ -29,8 +29,10 @@ async def main(args):
                 print("Select a Cambridge available_id explicitly if this target needs generation:")
                 pprint(asdict(await lexicon.search(lemma, include_available=True)))
 
-        for available_id in args.target_entry:
-            target = await lexicon.generate(available_id, example_count=args.example_count)
+        for available_id, target_text in args.target_entry:
+            target = await lexicon.generate(
+                available_id, target=target_text, example_count=args.example_count
+            )
             print("Generated/reused selected target:", target.id, target.lemma)
 
         if not args.resolve:
@@ -61,7 +63,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     add_config_arguments(parser)
     parser.add_argument("word_id", type=int, help="Source Word to inspect, NOT a resolution filter")
-    parser.add_argument("--target-entry", action="append", default=[], help="Selected Cambridge ID")
+    parser.add_argument(
+        "--target-entry",
+        action="append",
+        nargs=2,
+        metavar=("AVAILABLE_ID", "TARGET"),
+        default=[],
+        help="Selected Cambridge ID and lexical item; repeat for multiple entries",
+    )
     parser.add_argument(
         "--resolve", action="store_true", help="Opt in to global relation decisions"
     )

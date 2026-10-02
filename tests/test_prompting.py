@@ -40,13 +40,16 @@ def test_question_templates_render_instructions_separate_from_untrusted_content(
 
 def test_word_template_keeps_evidence_out_of_system_role():
     instruction, data = render_prompt(
-        "words/prompts/generate_word.jinja",
-        generation_parameters={"examples_per_sense": 2},
-        cambridge_entry={"display": "untrusted content"},
-        wordnet_evidence=[],
+        "words/prompts/inventory.jinja",
+        target="bank",
+        examples_per_sense=2,
+        references=[{"id": "c1", "pos": "noun", "definition": "untrusted content"}],
     )
     assert "untrusted content" not in instruction
-    assert prompt_context(data, "cambridge_entry")["display"] == "untrusted content"
+    assert prompt_context(data, "word_request") == {
+        "target": "bank",
+        "references": [{"id": "c1", "pos": "noun", "definition": "untrusted content"}],
+    }
 
 
 @pytest.mark.parametrize("placement", [None, "dialogue", "options"])

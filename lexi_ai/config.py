@@ -4,7 +4,11 @@ import re
 
 
 def database_schema_name(value: str | None) -> str | None:
-    if value is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+    if value is not None and (
+        not isinstance(value, str)
+        or len(value) > 63
+        or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value)
+    ):
         raise ValueError("invalid generated DB schema name")
     return value
 

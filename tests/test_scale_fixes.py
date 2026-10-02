@@ -225,7 +225,7 @@ async def test_changed_provider_evidence_is_not_written_as_a_completed_decision(
     db = Database(f"sqlite+aiosqlite:///{tmp_path / 'relations.db'}")
 
     class ChangingDecision:
-        async def decide(self, _state, _questions):
+        async def decide(self, _state, _questions, **kwargs):
             async with db.transaction() as session:
                 if change == "inventory":
                     sense = row.Sense(word_id=2, pos="verb", tier="core")

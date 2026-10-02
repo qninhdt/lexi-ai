@@ -8,6 +8,7 @@ from alembic import command
 from sqlalchemy import select
 from test_migrations import migration_config, run_migration
 from test_prompting import bound_content, prompt_context
+from test_word_generation import stage_payload
 
 from lexi_ai import DecisionConfig, Lexicon
 from lexi_ai.db.session import Database
@@ -26,11 +27,11 @@ class LLM:
 
     async def complete(self, instruction, data, schema):
         self.calls.append(schema.__name__)
-        if schema.__name__ == "WordOutput":
-            return schema.model_validate(
+        if schema.__name__ in {"InventoryOutput", "SenseEnrichment"}:
+            return stage_payload(
                 {
                     "lemma": "bank",
-                    "entry_type": "word",
+                    "type": "word",
                     "aliases": [],
                     "related": [],
                     "senses": [
@@ -38,6 +39,8 @@ class LLM:
                             "definition": "A place to keep money",
                             "pos": "noun",
                             "tier": "core",
+                            "cefr_level": "A1",
+                            "register": None,
                             "examples": ['The <t inf="base">bank</t> opened.'],
                             "forms": [],
                             "patterns": [],
@@ -49,10 +52,12 @@ class LLM:
                                     "gloss": "place to keep money",
                                 }
                             ],
-                            "references": [{"source": "cambridge", "source_ref": "101"}],
+                            "sources": ["c1"],
                         }
                     ],
-                }
+                },
+                data,
+                schema,
             )
         if schema.__name__ == "ThemeParts":
             return schema(voice="Captain", diction="nautical")
@@ -136,7 +141,7 @@ async def test_selected_to_theme_question_grade_sense_linking_and_translation(tm
     await verify_consumer_flow(url, source)
 
 
-async def verify_consumer_flow(url, source, *, db_schema=None):
+async def verify_consumer_flow(url, source, *, db_schema=None, session=None):
     before = hashlib.sha256(source.read_bytes()).digest()
     llm, decision = LLM(), Decision()
     ai = Lexicon(
@@ -146,6 +151,7 @@ async def verify_consumer_flow(url, source, *, db_schema=None):
         db_schema=db_schema,
         llm=llm,
         decision_model=decision,
+        session=session,
     )
     try:
         async with ai.db.transaction() as session:
@@ -161,11 +167,15 @@ async def verify_consumer_flow(url, source, *, db_schema=None):
         available = (await ai.search("bank", include_available=True)).available
         assert len(available) == 1
         assert llm.calls == []
-        word = await ai.generate(available[0].available_id, example_count=1)
+        word = await ai.generate(available[0].available_id, target="bank", example_count=1)
         sense_id = word.senses[0].id
         theme = await ai.create_theme("pirate", "Pirate", "nautical voice")
+        assert await ai.get_theme(theme.key) == theme
+        assert await ai.list_themes() == [theme]
         assert (await ai.get_word(word.id, theme.key)) is None
-        themed = await ai.generate(available[0].available_id, theme.key, example_count=1)
+        themed = await ai.generate(
+            available[0].available_id, theme.key, target="bank", example_count=1
+        )
         assert themed.senses[0].definition.content == "A safe house for treasure"
         assert (await ai.get_word(word.id)).senses[0].definition.content == (
             "A place to keep money"
@@ -194,6 +204,9 @@ async def verify_consumer_flow(url, source, *, db_schema=None):
         assert (await ai.get_word(word.id)).senses[0].relations[0].to_sense_id == target_sense.id
         assert decision.calls == 3
         assert await ai.translate_text("bank", "vi") == "ngân hàng"
+        translations = await ai.list_translations()
+        assert len(translations) == 1
+        assert await ai.get_translation(translations[0].id) == translations[0]
         calls_before_reads = len(llm.calls)
         assert await ai.translate_text("bank", "vi") == "ngân hàng"
         assert await ai.get_question(usage.id) == usage
@@ -234,7 +247,7 @@ async def test_oversized_selected_source_fails_without_partial_word(tmp_path, mo
         await db.create_schema(Base.metadata)
         llm = OpenAIStructuredLLM(LLMConfig())
         with pytest.raises(ValueError, match="invalid structured request"):
-            await generate_word(db, HugeSource(), llm, encode_available_id(1), 1)
+            await generate_word(db, HugeSource(), llm, encode_available_id(1), 1, target="bank")
         async with db.transaction() as session:
             assert (await session.scalars(select(Word))).all() == []
     finally:

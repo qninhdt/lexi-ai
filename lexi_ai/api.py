@@ -1,6 +1,8 @@
 """The Python library entry point; this is not an HTTP API or scheduler."""
 
-from .db.session import Database
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .db.session import Database, SessionDatabase
 from .errors import MissingProviderError
 from .inference.config import DecisionConfig, DecisionMode, LLMConfig
 from .inference.decision import DecisionModel
@@ -35,9 +37,10 @@ class Lexicon:
 
     def __init__(
         self,
-        db_url: str,
-        cambridge_path: str,
+        db_url: str | None = None,
+        cambridge_path: str = "",
         *,
+        session: AsyncSession | None = None,
         decision_config: DecisionConfig | None = None,
         db_schema: str | None = None,
         llm: StructuredLLM | None = None,
@@ -45,13 +48,20 @@ class Lexicon:
         llm_config: LLMConfig | None = None,
         decision_fallback_model: str | None = None,
     ):
+        if (db_url is None) == (session is None):
+            raise ValueError("Lexicon requires exactly one of db_url or session")
+        if session is not None and db_schema is not None:
+            raise ValueError("configure the database schema on the host session")
         if llm is None and (
             llm_config is None or not llm_config.api_key or not llm_config.api_key.strip()
         ):
             raise MissingProviderError(
                 "Lexicon requires an LLM configuration with credentials or llm"
             )
-        self.db = Database(db_url, schema=db_schema)
+        if session is not None:
+            self.db = SessionDatabase(session)
+        else:
+            self.db = Database(db_url, schema=db_schema)
         self.cambridge = Cambridge(cambridge_path)
         self.llm = llm
         self.decision_model = decision_model
@@ -72,14 +82,7 @@ class Lexicon:
             self._owned_llm = True
         return self.llm
 
-    def _decision_model(self, mode=DecisionMode.LLM_FALLBACK):
-        mode = DecisionMode(mode)
-        if (
-            mode == DecisionMode.DECISION_ONLY
-            and (self.decision_model is None or self._owned_decision)
-            and not (self.decision_config.api_key and self.decision_config.api_key.strip())
-        ):
-            raise MissingProviderError("decision_only requires a configured decision provider")
+    def _decision_model(self):
         if self.decision_model is None:
             self.decision_model = DecisionModel(
                 self.decision_config,
@@ -98,11 +101,13 @@ class Lexicon:
         available_id: str,
         theme: str | None = None,
         *,
+        target: str,
         example_count: int = 5,
         with_usage: bool = False,
     ):
         """Generate/reuse a selected entry, neutral first.
 
+        target is the selected lexical item, supplied explicitly by the caller.
         example_count applies to new examples per Sense in each created namespace.
         Saved content is reused regardless of the requested count. The caller
         serializes overlapping requests on the same Word.
@@ -113,7 +118,13 @@ class Lexicon:
                 raise ValueError("example count must be a positive integer")
             llm = usage.wrap(self._llm())
             word_id = await generate_word(
-                self.db, self.cambridge, llm, available_id, example_count, theme_key=theme
+                self.db,
+                self.cambridge,
+                llm,
+                available_id,
+                example_count,
+                target=target,
+                theme_key=theme,
             )
             word = (
                 await ensure_word_theme(self.db, llm, word_id, theme, example_count)
@@ -220,7 +231,7 @@ class Lexicon:
     ):
         self._open()
         with UsageRecorder(with_usage) as usage:
-            decision = self._decision_model(mode)
+            decision = self._decision_model()
             model = None if fmt == "single_choice" else usage.wrap(decision)
             grade = await grade_answer(
                 self.db, model, question_id, fmt, answer, config=self.decision_config, mode=mode
@@ -237,7 +248,7 @@ class Lexicon:
         self._open()
         with UsageRecorder(with_usage) as usage:
             results = await resolve_relations(
-                self.db, usage.wrap(self._decision_model(mode)), batch_size, mode=mode
+                self.db, usage.wrap(self._decision_model()), batch_size, mode=mode
             )
             return usage.finish(results)
 

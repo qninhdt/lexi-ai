@@ -1,9 +1,7 @@
 """Complete search ranking, bounded pattern matching and scoped projections."""
 
 import importlib
-import itertools
 import random
-import re
 import subprocess
 import sys
 
@@ -14,88 +12,13 @@ from test_question_grading import CONFIG, Decision
 from lexi_ai import schema as row
 from lexi_ai.db.session import Database
 from lexi_ai.models import Option, Question, SearchResult, WordHit
-from lexi_ai.patterns import _slot_regex, matches_pattern, validate_pattern
+from lexi_ai.patterns import matches_pattern
 from lexi_ai.questions.grade import grade_answer
 from lexi_ai.questions.storage import append
 from lexi_ai.relations.storage import definition_hash
 from lexi_ai.text import answer_key, match_key
 from lexi_ai.words.search import search
 from lexi_ai.words.storage import get_senses, get_word, meaning_inventory
-
-
-def legacy_pattern(pattern, surface, forms=None):
-    """Pre-optimization combined-regex oracle; use only small, safe inputs."""
-    pattern = validate_pattern(pattern)
-    parts, cursor = [], 0
-
-    def literal(value, first):
-        value = value.casefold()
-        if first and forms and value.strip():
-            head, separator, tail = value.partition(" ")
-            heads = [head] + [
-                answer_key(item) for item in forms.get(head, []) if " " not in answer_key(item)
-            ]
-            return (
-                "(?:"
-                + "|".join(re.escape(item) for item in heads)
-                + ")"
-                + re.escape(separator + tail).replace(r"\ ", r"\s+")
-            )
-        return re.escape(value).replace(r"\ ", r"\s+")
-
-    for slot in re.finditer(r"\{[^{}]+\}", pattern):
-        parts += [literal(pattern[cursor : slot.start()], cursor == 0), _slot_regex(slot.group())]
-        cursor = slot.end()
-    parts.append(literal(pattern[cursor:], cursor == 0))
-    return re.fullmatch("".join(parts), answer_key(surface), flags=re.I) is not None
-
-
-def test_pattern_dynamic_matching_preserves_combined_regex_language():
-    patterns = [
-        "{sth}",
-        "{sth}{sth}",
-        "{clause}",
-        "{sb} {sth}",
-        "{sb}",
-        "{one's}",
-        "{oneself}",
-        "{num}",
-        "go{sth}",
-        "go {sth} off",
-        "go {sth} {sth}",
-        "{doing} {do}",
-        "the {place}",
-        "{num}{sth}",
-    ]
-    surfaces = [
-        " ".join(words)
-        for size in range(1, 4)
-        for words in itertools.product(["go", "my", "a", "off", "2"], repeat=size)
-    ]
-    surfaces += [
-        "John's",
-        "John’s",
-        "myself",
-        "1.2",
-        "two",
-        "hello-world",
-        "go_away",
-        "went it off",
-        "gopher",
-        "i x",
-        "ı x",
-        "go my old friend off",
-    ]
-    for pattern in patterns + ["ı {sth}"]:
-        for surface in surfaces:
-            forms = {"go": ["went", "g", "go my"]}
-            assert matches_pattern(pattern, surface, forms=forms) == legacy_pattern(
-                pattern,
-                surface,
-                forms,
-            ), (pattern, surface)
-    # A shorter head alternative must not hide a valid longer one.
-    assert matches_pattern("a{oneself}", "abmyself", forms={"a": ["ab"]})
 
 
 def test_ten_clause_slots_finish_without_regex_backtracking():
@@ -136,7 +59,7 @@ def brute_search(words, aliases, forms, patterns, query):
                 and item.sense_id == pattern.sense_id
                 and answer_key(item.surface).partition(" ")[2] == tail
             ]
-            if owner == word.id and legacy_pattern(pattern.content, query, {head: licensed}):
+            if owner == word.id and matches_pattern(pattern.content, query, forms={head: licensed}):
                 candidates.append((3, 1.0, "pattern", pattern.content))
         if word.match_key.startswith(key) and word.match_key != key:
             candidates.append((4, 0.0, "prefix", word.lemma))

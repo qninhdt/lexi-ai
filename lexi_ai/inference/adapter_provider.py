@@ -1,5 +1,6 @@
-"""Per-request temperature for the adapter's existing OpenAI provider boundary."""
+"""Per-request generation options at the adapter's existing OpenAI boundary."""
 
+import json_repair
 from system_one_adapter.providers import ProviderResult
 from system_one_adapter.providers.base import (
     record_request,
@@ -11,17 +12,34 @@ from system_one_adapter.providers.openai import AsyncOpenAIProvider
 from typesafe_sdk import TypeSafeError
 
 
-class TemperatureOpenAIProvider(AsyncOpenAIProvider):
-    """Reuse adapter lifecycle/errors/traces; leave schema parsing to the adapter."""
+class ConfiguredOpenAIProvider(AsyncOpenAIProvider):
+    """Repair text JSON only; retain adapter schema validation and raw response traces."""
 
-    def __init__(self, model_name, *, temperature, **kwargs):
+    def __init__(
+        self,
+        model_name,
+        *,
+        temperature=None,
+        reasoning_effort=None,
+        timeout=30.0,
+        max_completion_tokens=4096,
+        **kwargs,
+    ):
         super().__init__(model_name, **kwargs)
         self.temperature = temperature
+        self.reasoning_effort = reasoning_effort
+        self.timeout = timeout
+        self.max_completion_tokens = max_completion_tokens
 
     async def request(self, messages, *, schema, structured):
-        kwargs = {"model": self.model_name, "temperature": self.temperature}
+        kwargs = {"model": self.model_name, "timeout": self.timeout}
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
         with translating(self.translate_error):
             if self.api == "responses":
+                kwargs["max_output_tokens"] = self.max_completion_tokens
+                if self.reasoning_effort is not None:
+                    kwargs["reasoning"] = {"effort": self.reasoning_effort}
                 output_format = (
                     {"type": "json_schema", "name": "evaluation", "schema": schema, "strict": True}
                     if structured
@@ -55,6 +73,9 @@ class TemperatureOpenAIProvider(AsyncOpenAIProvider):
                 input_tokens = getattr(response.usage, "input_tokens", None)
                 output_tokens = getattr(response.usage, "output_tokens", None)
             else:
+                kwargs["max_completion_tokens"] = self.max_completion_tokens
+                if self.reasoning_effort is not None:
+                    kwargs["reasoning_effort"] = self.reasoning_effort
                 kwargs["messages"] = render_messages(messages)
                 if structured:
                     kwargs["response_format"] = {
@@ -72,4 +93,6 @@ class TemperatureOpenAIProvider(AsyncOpenAIProvider):
                 text = response.choices[0].message.content or ""
                 input_tokens = getattr(response.usage, "prompt_tokens", None)
                 output_tokens = getattr(response.usage, "completion_tokens", None)
+        if not structured:
+            text = json_repair.repair_json(text, ensure_ascii=False)
         return ProviderResult(text=text, input_tokens=input_tokens, output_tokens=output_tokens)

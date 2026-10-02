@@ -418,6 +418,15 @@ wheels = [
 ]
 
 [[package]]
+name = "json-repair"
+version = "0.63.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/29/653c36e0de80f7048f01298a9098f1c66bb9da162e92ad6a6e2c3202cc52/json_repair-0.63.5.tar.gz", hash = "sha256:75a6a1a4ea954935dd3fb69b6e49ac0e3e3d69b4290127a0c8d37af93b709f3a", size = 52945, upload-time = "2026-09-22T18:36:08.745Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6b/a4/222e2581667c326183a87df229e772140fbf3e5dc03ec73e2a0e74804114/json_repair-0.63.5-py3-none-any.whl", hash = "sha256:0e39b3066f7829b4bd7fc614e463cfd4ff7a4c46f82f5b65431fc11e29a74c81", size = 51334, upload-time = "2026-09-22T18:36:07.05Z" },
+]
+
+[[package]]
 name = "lexi-ai"
 version = "0.1.0"
 source = { editable = "." }
@@ -427,6 +436,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "jinja2" },
     { name = "json-e" },
+    { name = "json-repair" },
     { name = "nltk" },
     { name = "openai" },
     { name = "pydantic" },
@@ -443,6 +453,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "python-dotenv" },
     { name = "ruff" },
+    { name = "tqdm" },
 ]
 
 [package.metadata]
@@ -452,10 +463,11 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.31.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "json-e", specifier = ">=4.8.0,<5" },
+    { name = "json-repair", specifier = ">=0.63.5,<1" },
     { name = "nltk", specifier = ">=3.10.3" },
     { name = "openai", specifier = ">=3.22.1" },
     { name = "pydantic", specifier = ">=2.13.5" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.1.1" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.38" },
     { name = "system-one-adapter", extras = ["openai"], specifier = ">=0.2.1" },
     { name = "typesafe-sdk", specifier = ">=0.7.2" },
 ]
@@ -468,6 +480,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "python-dotenv", specifier = ">=1.2.1,<2" },
     { name = "ruff", specifier = ">=0.16.9" },
+    { name = "tqdm", specifier = ">=4.67.1,<5" },
 ]
 
 [[package]]

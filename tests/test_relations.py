@@ -16,7 +16,7 @@ class Decision:
         self.choice = choice
         self.calls = []
 
-    async def decide(self, state, questions):
+    async def decide(self, state, questions, **kwargs):
         self.calls.append((state, questions))
         return SimpleNamespace(choices={"matched_sense": SimpleNamespace(choice=self.choice)})
 
@@ -191,7 +191,7 @@ async def test_resolution_revalidates_eligibility_before_writing(ready_relation,
     db, source_id, target_id, candidate_id, edge_id = ready_relation
 
     class ChangingDecision:
-        async def decide(self, state, questions):
+        async def decide(self, state, questions, **kwargs):
             async with db.transaction() as session:
                 if change in {"target_state", "zero_target_state"}:
                     (await session.get(Word, target_id)).generation_state = "pending"
@@ -327,7 +327,7 @@ async def test_parallel_resolution_isolates_invalid_verdict_and_transport_error(
     both_started = asyncio.Event()
 
     class IndependentDecisions:
-        async def decide(self, state, questions):
+        async def decide(self, state, questions, **kwargs):
             started.append(state["target"]["gloss"])
             if len(started) == 2:
                 both_started.set()

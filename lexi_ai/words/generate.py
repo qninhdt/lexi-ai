@@ -1,4 +1,6 @@
-"""One selected entry produces one neutral Word, never implicit questions or Sense Linking."""
+"""Inventory -> independent Sense enrichment -> one atomic relational publication."""
+
+import asyncio
 
 from sqlalchemy import update
 
@@ -20,17 +22,25 @@ from lexi_ai.schema import (
 from lexi_ai.text import match_key, validate_lemma
 from lexi_ai.vocab import normalize_pos
 
-from .schemas import WordOutput, validate_evidence
+from .schemas import (
+    InventoryOutput,
+    SenseEnrichment,
+    SenseOutput,
+    WordOutput,
+    validate_evidence,
+    validate_inventory,
+)
 from .storage import consumed_word, insert_contents, publish_identity, target_words
 
 
 async def generate_word(
-    db, cambridge, llm, available_id: str, example_count: int, *, theme_key=None
+    db, cambridge, llm, available_id: str, example_count: int, *, target: str, theme_key=None
 ):
     """Publish one transaction; caller serializes overlapping operations on the same Word."""
     if type(example_count) is not int or example_count < 1:
         raise ValueError("example count must be a positive integer")
     selected_id = decode_available_id(available_id)
+    target = validate_lemma(target)
     async with db.read() as connection:
         existing = await consumed_word(connection, selected_id, theme_key=theme_key)
         if existing is not None:
@@ -40,56 +50,85 @@ async def generate_word(
         raise InvalidHandleError("available entry has no generation evidence")
     if llm is None:
         raise MissingProviderError("Word generation requires a structured LLM")
-    supporting = await lookup(entry.slug)
-    instruction, data = render_prompt(
-        "words/prompts/generate_word.jinja",
-        generation_parameters={
-            "examples_per_sense": example_count,
-        },
-        cambridge_entry={
-            "display": entry.display,
-            "slug": entry.slug,
-            "entry_type": entry.entry_type,
-            "senses": [
-                {
-                    "id": f"sense#{sense.id}",
-                    "pos": sense.pos,
-                    "definition": sense.definition,
-                    "examples": sense.examples,
-                    "cefr_level": sense.cefr_level,
-                    "phrase_title": sense.phrase_title,
-                    "ipa_uk": sense.ipa_uk,
-                    "ipa_us": sense.ipa_us,
-                }
-                for sense in entry.senses
-            ],
-            "alternatives": entry.alternatives,
-        },
-        wordnet_evidence=[
-            {"key": sense.key, "pos": sense.pos, "definition": sense.definition}
-            for sense in supporting
-        ],
+    supporting = await lookup(target)
+    cambridge_sources = {f"c{index}": sense for index, sense in enumerate(entry.senses, 1)}
+    source_refs = {key: ("cambridge", str(sense.id)) for key, sense in cambridge_sources.items()}
+    source_refs.update(
+        {f"w{index}": ("wordnet", sense.key) for index, sense in enumerate(supporting, 1)}
     )
-    generated = await llm.complete(instruction, data, WordOutput)
+    references = [
+        {
+            "id": key,
+            "pos": sense.pos,
+            "definition": sense.definition,
+            "cefr_level": sense.cefr_level,
+        }
+        for key, sense in cambridge_sources.items()
+    ] + [
+        {"id": f"w{index}", "pos": sense.pos, "definition": sense.definition}
+        for index, sense in enumerate(supporting, 1)
+    ]
+    instruction, data = render_prompt(
+        "words/prompts/inventory.jinja",
+        target=target,
+        references=references,
+    )
+    inventory = await llm.complete(instruction, data, InventoryOutput)
     try:
-        generated = WordOutput.model_validate(generated)
+        inventory = InventoryOutput.model_validate(inventory)
     except ValueError as exc:
-        raise InvalidOutputError("invalid Word output") from exc
-    validate_evidence(generated, entry, supporting)
-    if any(len(sense.examples) != example_count for sense in generated.senses):
-        raise InvalidOutputError("Word content cardinality differs from the configured counts")
-    sources = {str(source.id): (order, source) for order, source in enumerate(entry.senses)}
+        raise InvalidOutputError("invalid Word inventory") from exc
+    validate_inventory(inventory, target)
+    identity = inventory.model_dump(by_alias=True, exclude={"senses"})
+    semaphore = asyncio.Semaphore(4)
+
+    async def enrich(seed):
+        instruction, data = render_prompt(
+            "words/prompts/enrich_sense.jinja",
+            target=target,
+            word=identity,
+            sense=seed.model_dump(),
+            references=references,
+            examples_per_sense=example_count,
+        )
+        async with semaphore:
+            details = await llm.complete(instruction, data, SenseEnrichment)
+        try:
+            details = SenseEnrichment.model_validate(details)
+            output = SenseOutput.model_validate(
+                seed.model_dump() | details.model_dump(by_alias=True),
+            )
+        except ValueError as exc:
+            raise InvalidOutputError("invalid Sense enrichment") from exc
+        if len(output.examples) != example_count:
+            raise InvalidOutputError("Sense example cardinality differs from configured count")
+        return output
+
+    tasks = [asyncio.create_task(enrich(seed)) for seed in inventory.senses]
+    try:
+        senses = await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    generated = WordOutput.model_validate(
+        identity
+        | {
+            "senses": [sense.model_dump(by_alias=True) for sense in senses],
+        }
+    )
+    validate_evidence(generated, entry, supporting, target=target)
+    sources = {
+        key: (order, source) for order, (key, source) in enumerate(cambridge_sources.items())
+    }
     async with db.transaction(immediate=True) as session:
         word = await publish_identity(
-            session, entry.id, generated.lemma, generated.entry_type, generated.aliases
+            session, entry.id, generated.lemma, generated.type, generated.aliases
         )
         sense_rows = []
         for item in generated.senses:
-            cited = [
-                sources[ref.source_ref.lower().removeprefix("sense#")]
-                for ref in item.references
-                if ref.source == "cambridge"
-            ]
+            cited = [sources[ref] for ref in item.sources if ref in sources]
             matching = [
                 (order, source) for order, source in cited if normalize_pos(source.pos) == item.pos
             ]
@@ -128,9 +167,9 @@ async def generate_word(
             (
                 SenseReference,
                 [
-                    dict(sense_id=id, source=r.source, source_ref=r.source_ref)
+                    dict(sense_id=id, source=source_refs[ref][0], source_ref=source_refs[ref][1])
                     for id, item in groups
-                    for r in item.references
+                    for ref in item.sources
                 ],
             ),
         ):
