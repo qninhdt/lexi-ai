@@ -14,9 +14,9 @@ RELATION = "relations/prompts/resolve_sense_relations.json"
 @pytest.mark.parametrize(
     "kind,words",
     [
-        ("definition_to_word", "satisfy the definition"),
-        ("context_to_word", "fit the situation"),
-        ("cloze_to_word", "inserting the lexical expression"),
+        ("DEFINITION_TO_WORD", "satisfy the definition"),
+        ("CONTEXT_TO_WORD", "fit the situation"),
+        ("CLOZE_TO_WORD", "inserting the lexical expression"),
     ],
 )
 def test_task_specific_branch_and_untrusted_text_are_not_reinterpreted(kind, words):
@@ -32,7 +32,7 @@ def test_task_specific_branch_and_untrusted_text_are_not_reinterpreted(kind, wor
 
 
 def test_reduced_criteria_include_every_sense_without_mutating_cached_templates():
-    senses = [{"id": 1000 + i, "pos": "noun", "definition": f"meaning{i}"} for i in range(25)]
+    senses = [{"id": 1000 + i, "pos": "NOUN", "definition": f"meaning{i}"} for i in range(25)]
     for name, parameter in [
         ("grade_single_word_2.json", "matched_word"),
         ("grade_word_to_definition_1.json", "word"),
@@ -44,7 +44,7 @@ def test_reduced_criteria_include_every_sense_without_mutating_cached_templates(
         choice = next(iter(questions.values()))
         assert isinstance(choice, Choice)
         assert set(choice.criteria) == {"no_candidate", *(f"sense_{i}" for i in range(1000, 1025))}
-        assert choice.criteria["sense_1024"] == "${untrusted} - noun - meaning24"
+        assert choice.criteria["sense_1024"] == "${untrusted} - NOUN - meaning24"
         choice.criteria["injected"] = "unexpected"
         _, second = render_decision(
             GRADING + name,
@@ -58,12 +58,12 @@ def test_reduced_criteria_include_every_sense_without_mutating_cached_templates(
 @pytest.mark.parametrize(
     "kind,rule",
     [
-        ("synonym", "same lexicalized concept"),
-        ("antonym", "opposing meaning"),
-        ("hypernym", "source sense must denote a kind or type of the target"),
-        ("hyponym", "target sense must denote a kind or type of the source"),
-        ("meronym", "target sense must denote a part"),
-        ("holonym", "source sense denotes must be a part"),
+        ("SYNONYM", "same lexicalized concept"),
+        ("ANTONYM", "opposing meaning"),
+        ("HYPERNYM", "source sense must denote a kind or type of the target"),
+        ("HYPONYM", "target sense must denote a kind or type of the source"),
+        ("MERONYM", "target sense must denote a part"),
+        ("HOLONYM", "source sense denotes must be a part"),
     ],
 )
 def test_relation_direction_and_anonymous_candidate_keys(kind, rule):
@@ -74,14 +74,14 @@ def test_relation_direction_and_anonymous_candidate_keys(kind, rule):
         relation_type=kind,
         target_word="animal",
         target_gloss="living creature",
-        candidates=[{"index": i, "pos": "noun", "definition": f"meaning{i}"} for i in range(1, 26)],
+        candidates=[{"index": i, "pos": "NOUN", "definition": f"meaning{i}"} for i in range(1, 26)],
     )
     assert rule in state["relation"]["rule"]
     assert set(state) == {"source", "relation", "target"}
     criteria = questions["matched_sense"].criteria
     assert set(criteria) == {"no_candidate", *(f"candidate_{i}" for i in range(1, 26))}
     assert "satisfy `relation.rule`" in questions["matched_sense"].instructions
-    assert criteria["candidate_25"] == "animal - noun - meaning25"
+    assert criteria["candidate_25"] == "animal - NOUN - meaning25"
 
 
 def test_domain_prompts_are_valid_json_and_inference_owns_no_task_prompts():

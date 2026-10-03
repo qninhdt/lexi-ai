@@ -22,6 +22,18 @@ class InvalidResourceError(LexiconError):
     """A requested resource or parameter is invalid."""
 
 
+class QuestionNotFoundError(InvalidResourceError):
+    """The requested saved Question does not exist."""
+
+
+class QuestionBankChangedError(InvalidResourceError):
+    """A requested bank cannot supply the allocated number of Questions."""
+
+
+class UnsupportedQuestionFormatError(InvalidResourceError):
+    """A format is unsupported by the Question or the caller's allowed pairs."""
+
+
 class MissingProviderError(LexiconError):
     """A requested AI operation needs a provider that was not configured."""
 

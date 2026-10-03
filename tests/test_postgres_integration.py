@@ -24,7 +24,6 @@ from lexi_ai.migrations import get_migration_config, inspect_current, inspect_he
 from lexi_ai.relations.resolve import resolve_relations
 from lexi_ai.relations.storage import definition_hash, pending_relations
 from lexi_ai.schema import Base, Definition, Sense, SenseForm, SenseRelation, Word
-from lexi_ai.words.indexes import TRIGRAM_INDEXES
 from lexi_ai.words.search import search
 
 PG_URL = os.getenv("LEXI_TEST_PG_URL")
@@ -90,8 +89,6 @@ upgrade_to_head(os.environ['LEXI_TEST_PG_URL'], db_schema=sys.argv[1])
             columns, indexes, foreign_keys = reflected[name]
             assert columns == set(table.columns.keys())
             expected_indexes = {index.name for index in table.indexes}
-            if name in TRIGRAM_INDEXES:
-                expected_indexes.add(TRIGRAM_INDEXES[name])
             assert indexes == expected_indexes
             assert foreign_keys == {
                 ((column.name,), fk.column.table.name, fk.ondelete)
@@ -123,11 +120,11 @@ upgrade_to_head(os.environ['LEXI_TEST_PG_URL'], db_schema=sys.argv[1])
             async with db.transaction() as session:
                 assert await session.scalar(text("SELECT current_schema()")) == schema
                 word = Word(
-                    lemma="bank", match_key="bank", entry_type="word", generation_state="done"
+                    lemma="bank", match_key="bank", entry_type="WORD", generation_state="DONE"
                 )
                 session.add(word)
                 await session.flush()
-                sense = Sense(word_id=word.id, pos="noun", tier="core")
+                sense = Sense(word_id=word.id, pos="NOUN", tier="CORE")
                 session.add(sense)
                 await session.flush()
                 session.add(Definition(sense_id=sense.id, content="Money keeper"))
@@ -143,8 +140,8 @@ upgrade_to_head(os.environ['LEXI_TEST_PG_URL'], db_schema=sys.argv[1])
                 assert (actual.id, actual.word_id, actual.pos, actual.tier) == (
                     sense.id,
                     word.id,
-                    "noun",
-                    "core",
+                    "NOUN",
+                    "CORE",
                 )
                 columns = await connection.run_sync(
                     lambda conn: inspect(conn).get_columns("senses", schema=schema)
@@ -158,8 +155,8 @@ upgrade_to_head(os.environ['LEXI_TEST_PG_URL'], db_schema=sys.argv[1])
                         Word(
                             lemma="too long",
                             match_key="x" * 513,
-                            entry_type="word",
-                            generation_state="done",
+                            entry_type="WORD",
+                            generation_state="DONE",
                         )
                     )
                     await session.flush()
@@ -171,10 +168,10 @@ upgrade_to_head(os.environ['LEXI_TEST_PG_URL'], db_schema=sys.argv[1])
             await seed_links(db)
             assert await pending_relations(db, 20) == []
             async with db.transaction() as session:
-                session.add(SenseForm(sense_id=1, surface="ＴＯＯＫ　ＯＦＦ", inf="past"))
+                session.add(SenseForm(sense_id=1, surface="ＴＯＯＫ　ＯＦＦ", inf="PAST"))
                 await session.execute(text("UPDATE definitions SET content='themed' WHERE id=6"))
             assert await pending_relations(db, 20) == []
-            assert (await search(db, None, "TOOK OFF")).words[0].match_kind == "form"
+            assert (await search(db, None, "TOOK OFF")).words[0].match_kind == "FORM"
             with pytest.raises(RuntimeError):
                 async with db.transaction() as session:
                     await session.execute(
@@ -187,7 +184,7 @@ upgrade_to_head(os.environ['LEXI_TEST_PG_URL'], db_schema=sys.argv[1])
                 await session.execute(text("UPDATE definitions SET content='changed' WHERE id=2"))
             assert [link.edge_id for link in await pending_relations(db, 20)] == [1]
             decisions = await resolve_relations(db, Decision("candidate_1"))
-            assert [item.state for item in decisions] == ["resolved"]
+            assert [item.state for item in decisions] == ["RESOLVED"]
             async with db.transaction() as session:
                 edge = await session.get(SenseRelation, 1)
                 edge.to_sense_id = edge.target_hash = edge.resolve_attempted_at = None

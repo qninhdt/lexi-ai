@@ -68,7 +68,7 @@ async def test_baseline_upgrade_drift_downgrade_and_reupgrade(tmp_path):
     url = f"sqlite+aiosqlite:///{tmp_path / 'generated.db'}"
     config = migration_config(url)
     revisions = list(ScriptDirectory.from_config(config).walk_revisions())
-    assert [revision.revision for revision in revisions] == ["20260930_base"]
+    assert [revision.revision for revision in revisions] == ["20261003_base"]
     assert revisions[-1].down_revision is None
     await run_migration(config, url, command.upgrade, "head")
     actual = await snapshot(url)
@@ -137,14 +137,14 @@ async def test_packaged_migrations_are_idempotent_and_enforce_current_tiers(tmp_
         async with engine.begin() as connection:
             await connection.run_sync(lambda conn: upgrade_to_head(connection=conn))
             await connection.execute(
-                text("INSERT INTO words VALUES(1,'bank','bank','word','done')")
+                text("INSERT INTO words VALUES(1,'bank','bank','WORD','DONE')")
             )
             await connection.execute(
-                text("INSERT INTO senses(id,word_id,pos,tier) VALUES(1,1,'noun','less_common')")
+                text("INSERT INTO senses(id,word_id,pos,tier) VALUES(1,1,'NOUN','LESS_COMMON')")
             )
             with pytest.raises(IntegrityError):
                 await connection.execute(text("UPDATE senses SET tier='invalid' WHERE id=1"))
-            assert await connection.scalar(text("SELECT tier FROM senses")) == "less_common"
+            assert await connection.scalar(text("SELECT tier FROM senses")) == "LESS_COMMON"
             assert await connection.run_sync(lambda conn: inspect_current(connection=conn)) == (
                 inspect_head()
             )

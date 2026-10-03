@@ -6,18 +6,17 @@ import subprocess
 import sys
 
 import pytest
-from sqlalchemy import event, insert, text
+from sqlalchemy import event, insert
 from test_question_grading import CONFIG, Decision
 
 from lexi_ai import schema as row
 from lexi_ai.db.session import Database
 from lexi_ai.models import Option, Question, SearchResult, WordHit
-from lexi_ai.patterns import matches_pattern
 from lexi_ai.questions.grade import grade_answer
 from lexi_ai.questions.storage import append
 from lexi_ai.relations.storage import definition_hash
-from lexi_ai.text import answer_key, match_key
-from lexi_ai.words.search import search
+from lexi_ai.text import match_key
+from lexi_ai.words.search import Search, search
 from lexi_ai.words.storage import get_senses, get_word, meaning_inventory
 
 
@@ -31,68 +30,7 @@ assert not matches_pattern(pattern, 'say ' + 'a b ' * 50 + 'wrong')
     subprocess.run([sys.executable, "-c", script], check=True, timeout=2, capture_output=True)
 
 
-def brute_search(words, aliases, forms, patterns, query):
-    key = answer_key(query)
-    ranked = []
-    for word in words:
-        if word.generation_state != "done":
-            continue
-        candidates = []
-        if word.match_key == key:
-            candidates.append((0, 1.0, "lemma", word.lemma))
-        candidates += [
-            (1, 1.0, "alias", item.content)
-            for item in aliases
-            if item.word_id == word.id and item.match_key == key
-        ]
-        candidates += [
-            (2, 1.0, "form", item.surface)
-            for owner, item in forms
-            if owner == word.id and answer_key(item.surface) == key
-        ]
-        head, _, tail = answer_key(word.lemma).partition(" ")
-        for owner, pattern in patterns:
-            licensed = [
-                answer_key(item.surface).partition(" ")[0]
-                for form_owner, item in forms
-                if form_owner == word.id
-                and item.sense_id == pattern.sense_id
-                and answer_key(item.surface).partition(" ")[2] == tail
-            ]
-            if owner == word.id and matches_pattern(pattern.content, query, forms={head: licensed}):
-                candidates.append((3, 1.0, "pattern", pattern.content))
-        if word.match_key.startswith(key) and word.match_key != key:
-            candidates.append((4, 0.0, "prefix", word.lemma))
-        candidates += [
-            (4, 0.0, "prefix", item.content)
-            for item in aliases
-            if item.word_id == word.id and item.match_key.startswith(key) and item.match_key != key
-        ]
-        candidates += [
-            (4, 0.0, "prefix", item.surface)
-            for owner, item in forms
-            if owner == word.id
-            and answer_key(item.surface).startswith(key)
-            and answer_key(item.surface) != key
-        ]
-        if candidates:
-            rank, score, kind, surface = min(
-                candidates,
-                key=lambda item: (item[0], -item[1], item[3], item[2]),
-            )
-            ranked.append(
-                (
-                    rank,
-                    -score,
-                    word.lemma,
-                    word.id,
-                    WordHit(word.id, word.lemma, word.entry_type, kind, surface),
-                )
-            )
-    return [item[-1] for item in sorted(ranked)[:30]]
-
-
-async def test_indexed_search_preserves_lexical_ranking_on_reference_corpus(tmp_path):
+async def test_tantivy_ranking_and_licensed_patterns(tmp_path):
     db = Database(f"sqlite+aiosqlite:///{tmp_path / 'parity.db'}")
     try:
         await db.create_schema(row.Base.metadata)
@@ -105,8 +43,8 @@ async def test_indexed_search_preserves_lexical_ranking_on_reference_corpus(tmp_
                 row.Word(
                     lemma=name,
                     match_key=match_key(name),
-                    entry_type="word",
-                    generation_state="pending" if name == "pending" else "done",
+                    entry_type="WORD",
+                    generation_state="PENDING" if name == "pending" else "DONE",
                 )
                 for name in names
             ]
@@ -114,7 +52,7 @@ async def test_indexed_search_preserves_lexical_ranking_on_reference_corpus(tmp_
             await session.flush()
             by_name = {word.lemma: word for word in words}
             senses = {
-                word.id: row.Sense(word_id=word.id, pos="verb", tier="core") for word in words
+                word.id: row.Sense(word_id=word.id, pos="VERB", tier="CORE") for word in words
             }
             session.add_all(senses.values())
             await session.flush()
@@ -127,7 +65,7 @@ async def test_indexed_search_preserves_lexical_ranking_on_reference_corpus(tmp_
                 (
                     by_name[name].id,
                     row.SenseForm(
-                        sense_id=senses[by_name[name].id].id, surface=surface, inf="past"
+                        sense_id=senses[by_name[name].id].id, surface=surface, inf="PAST"
                     ),
                 )
                 for name, surface in [
@@ -157,29 +95,30 @@ async def test_indexed_search_preserves_lexical_ranking_on_reference_corpus(tmp_
                 for name, pattern in specifications
             ]
             session.add_all(aliases + [item for _, item in forms] + [item for _, item in patterns])
-        for query in [
-            "stone",
-            "ston",
-            "stane",
-            "stone X",
-            "TOOK IT OFF",
-            "lifted it off",
-            "i x",
-            "ı x",
-            "John says hello",
-            "premidfix",
-            "a_",
-            "a%",
-            "él",
-            "pending",
+        engine = Search(db, None)
+        for query, owner, kind in [
+            ("stone", "stone", "LEMMA"),
+            ("ston", "ston", "LEMMA"),
+            ("stane", "stane", "LEMMA"),
+            ("TOOK IT OFF", "take off", "PATTERN"),
+            ("lifted it off", "lift off", "PATTERN"),
+            ("John says hello", "Élan", "PATTERN"),
+            ("premidfix", "ßeta", "PATTERN"),
+            ("a_", "a_b", "PREFIX"),
+            ("a%", "a%b", "PREFIX"),
+            ("él", "Élan", "PREFIX"),
         ]:
-            assert (await search(db, None, query)).words == brute_search(
-                words,
-                aliases,
-                forms,
-                patterns,
-                query,
-            ), query
+            hits = (await engine.search(query)).words
+            assert (hits[0].word_id, hits[0].match_kind) == (by_name[owner].id, kind), query
+            assert len({hit.word_id for hit in hits}) == len(hits)
+        for query in ("i x", "ı x"):
+            assert {
+                hit.word_id
+                for hit in (await engine.search(query)).words
+                if hit.match_kind == "PATTERN"
+            } == {by_name[n].id for n in ("alpha", "ı")}
+        assert len((await engine.search("stone X")).words) == 30
+        assert (await engine.search("pending")).words == []
     finally:
         await db.close()
 
@@ -211,15 +150,15 @@ async def test_100000_word_search_has_no_id_window_and_narrows_patterns(tmp_path
                             "id": i,
                             "lemma": f"unrelated{i:06d}",
                             "match_key": f"unrelated{i:06d}",
-                            "entry_type": "word",
-                            "generation_state": "done",
+                            "entry_type": "WORD",
+                            "generation_state": "DONE",
                         }
                         for i in ids
                     ],
                 )
                 await session.execute(
                     insert(row.Sense),
-                    [{"id": i, "word_id": i, "pos": "noun", "tier": "core"} for i in ids],
+                    [{"id": i, "word_id": i, "pos": "NOUN", "tier": "CORE"} for i in ids],
                 )
                 await session.execute(
                     insert(row.SensePattern),
@@ -232,8 +171,8 @@ async def test_100000_word_search_has_no_id_window_and_narrows_patterns(tmp_path
                         "id": i,
                         "lemma": name,
                         "match_key": name,
-                        "entry_type": "word",
-                        "generation_state": "done",
+                        "entry_type": "WORD",
+                        "generation_state": "DONE",
                     }
                     for i, name in [
                         (100001, "needle"),
@@ -244,46 +183,26 @@ async def test_100000_word_search_has_no_id_window_and_narrows_patterns(tmp_path
             )
             await session.execute(
                 insert(row.Sense),
-                [{"id": 100003, "word_id": 100003, "pos": "verb", "tier": "core"}],
+                [{"id": 100003, "word_id": 100003, "pos": "VERB", "tier": "CORE"}],
             )
-            session.add(row.SenseForm(sense_id=100003, surface="took off", inf="past"))
+            session.add(row.SenseForm(sense_id=100003, surface="took off", inf="PAST"))
             session.add(row.SensePattern(sense_id=100003, content="take {sth} off"))
         event.listen(db.engine.sync_engine, "before_cursor_execute", count)
-        hits = (await search(db, None, "needle")).words
+        engine = Search(db, None)
+        hits = (await engine.search("needle")).words
         assert [(hit.word_id, hit.match_kind) for hit in hits[:2]] == [
-            (100001, "lemma"),
-            (100002, "prefix"),
+            (100001, "LEMMA"),
+            (100002, "PREFIX"),
         ]
-        assert len(statements) == 2
-        prefix_statement, parameters = statements[0]
-        async with db.engine.connect() as connection:
-            plan = (
-                await connection.exec_driver_sql(
-                    "EXPLAIN QUERY PLAN " + prefix_statement,
-                    parameters,
-                )
-            ).all()
-            assert "ix_words_match_key_prefix" in str(plan)
-            pattern_plan = (
-                await connection.execute(
-                    text(
-                        "EXPLAIN QUERY PLAN SELECT id FROM sense_patterns WHERE head_key='take' "
-                        "OR head_key IS NULL OR sense_id IN "
-                        "(SELECT sense_id FROM sense_forms WHERE head_key='took')"
-                    )
-                )
-            ).all()
-            assert "ix_sense_patterns_head_key" in str(pattern_plan)
-            assert "ix_sense_forms_head_key" in str(pattern_plan)
-        # SQLite is explicitly lexical-only: no fuzzy index or application scan.
-        assert (await search(db, None, "neadle")).words == []
+        assert len(statements) == 5  # Bulk projection only, never full payloads.
+        assert not any("definitions" in sql or "questions" in sql for sql, _ in statements)
         statements.clear()
         matched_patterns.clear()
-        hit = (await search(db, None, "took it off")).words[0]
-        assert (hit.word_id, hit.match_kind) == (100003, "pattern")
+        assert (await engine.search("neadle")).words[0].word_id == 100001
+        hit = (await engine.search("took it off")).words[0]
+        assert (hit.word_id, hit.match_kind) == (100003, "PATTERN")
         assert matched_patterns == ["take {sth} off"]
-        assert len(statements) == 2  # One lexical query and one Sense-scoped pattern/form page.
-        assert not any("definitions" in statement for statement, _ in statements)
+        assert statements == []  # Warm lexical and pattern searches stay in RAM.
     finally:
         if event.contains(db.engine.sync_engine, "before_cursor_execute", count):
             event.remove(db.engine.sync_engine, "before_cursor_execute", count)
@@ -307,8 +226,8 @@ async def test_grading_projects_neutral_meanings_in_two_queries(tmp_path, monkey
                         "id": i,
                         "lemma": f"word{i}",
                         "match_key": f"word{i}",
-                        "entry_type": "word",
-                        "generation_state": "done",
+                        "entry_type": "WORD",
+                        "generation_state": "DONE",
                     }
                     for i in range(1, 11)
                 ],
@@ -318,7 +237,7 @@ async def test_grading_projects_neutral_meanings_in_two_queries(tmp_path, monkey
             await session.execute(
                 insert(row.Sense),
                 [
-                    {"id": i * 10 + j, "word_id": i, "pos": "noun", "tier": "core"}
+                    {"id": i * 10 + j, "word_id": i, "pos": "NOUN", "tier": "CORE"}
                     for i in range(1, 11)
                     for j in range(3)
                 ],
@@ -340,7 +259,7 @@ async def test_grading_projects_neutral_meanings_in_two_queries(tmp_path, monkey
                         0,
                         10,
                         None,
-                        "cloze_to_word",
+                        "CLOZE_TO_WORD",
                         "Please _.",
                         Option("yes", "saved", "Fits"),
                         [],
@@ -352,7 +271,7 @@ async def test_grading_projects_neutral_meanings_in_two_queries(tmp_path, monkey
         async def ranked_search(_db, _source, _answer, *, limit):
             assert limit == 1
             return SearchResult(
-                [WordHit(i, f"word{i}", "word", "fuzzy", f"word{i}") for i in range(10, 0, -1)]
+                [WordHit(i, f"word{i}", "WORD", "FUZZY", f"word{i}") for i in range(10, 0, -1)]
             )
 
         monkeypatch.setattr("lexi_ai.questions.grade.search", ranked_search)
@@ -362,7 +281,7 @@ async def test_grading_projects_neutral_meanings_in_two_queries(tmp_path, monkey
             db,
             decision,
             question.id,
-            "single_word",
+            "SINGLE_WORD",
             "submitted",
             config=CONFIG,
         )
@@ -371,12 +290,12 @@ async def test_grading_projects_neutral_meanings_in_two_queries(tmp_path, monkey
         criteria = decision.calls[1][1]["matched_sense"].criteria
         assert len(criteria) == 4
         assert list(criteria)[1:] == ["sense_100", "sense_101", "sense_102"]
-        assert criteria["sense_100"] == "word10 - noun - meaning10-0"
+        assert criteria["sense_100"] == "word10 - NOUN - meaning10-0"
         assert not any(
             "examples" in statement or "sense_forms" in statement for statement in statements
         )
         statements.clear()
-        exact = await grade_answer(db, None, question.id, "single_word", "SAVED", config=CONFIG)
+        exact = await grade_answer(db, None, question.id, "SINGLE_WORD", "SAVED", config=CONFIG)
         assert exact.task_fit
         assert len(statements) == 1
         monkeypatch.setattr("lexi_ai.questions.grade.search", search)
@@ -385,12 +304,12 @@ async def test_grading_projects_neutral_meanings_in_two_queries(tmp_path, monkey
             db,
             Decision(choices={"matched_sense": "sense_10"}),
             question.id,
-            "single_word",
+            "SINGLE_WORD",
             "word",
             config=CONFIG,
         )
         assert actual.task_fit and actual.sense_id == 10
-        assert len(statements) == 4  # Saved artifact + lexical query + pattern page + projection.
+        assert len(statements) == 7  # Artifact + five cold projection reads + meaning inventory.
         with pytest.raises(ValueError):
             await meaning_inventory(db)
     finally:
@@ -421,8 +340,8 @@ async def test_reader_scope_order_namespace_and_shared_fingerprint(tmp_path, mon
                         "id": i,
                         "lemma": f"word{i}",
                         "match_key": f"word{i}",
-                        "entry_type": "word",
-                        "generation_state": "done",
+                        "entry_type": "WORD",
+                        "generation_state": "DONE",
                     }
                     for i in [1, 2]
                 ],
@@ -435,8 +354,8 @@ async def test_reader_scope_order_namespace_and_shared_fingerprint(tmp_path, mon
                     {
                         "id": i,
                         "word_id": 1 if i <= 501 else 2,
-                        "pos": "noun",
-                        "tier": "core",
+                        "pos": "NOUN",
+                        "tier": "CORE",
                     }
                     for i in range(1, 503)
                 ],
@@ -457,7 +376,7 @@ async def test_reader_scope_order_namespace_and_shared_fingerprint(tmp_path, mon
                         from_sense_id=i,
                         to_word_id=2,
                         to_sense_id=502,
-                        rel_type="synonym",
+                        rel_type="SYNONYM",
                         gloss="target",
                         target_hash=definition_hash("meaning502"),
                         resolve_attempted_at="2026-09-30",
@@ -473,7 +392,7 @@ async def test_reader_scope_order_namespace_and_shared_fingerprint(tmp_path, mon
             "meaning1",
             "meaning2",
         ]
-        assert all(sense.relations[0].resolution_state == "resolved" for sense in senses)
+        assert all(sense.relations[0].resolution_state == "RESOLVED" for sense in senses)
         assert hashes == ["meaning502"]
         assert len(statements) == 1
         assert "WHERE senses.id IN" in statements[0][0]

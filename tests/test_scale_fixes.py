@@ -20,15 +20,15 @@ async def seed_links(db):
                     id=i,
                     lemma=f"word{i}",
                     match_key=f"word{i}",
-                    entry_type="word",
-                    generation_state="done",
+                    entry_type="WORD",
+                    generation_state="DONE",
                 )
                 for i in range(1, 6)
             ]
         )
         session.add(row.Theme(id=1, key="test", name="Test", voice="Test", diction="Test"))
         await session.flush()
-        session.add_all([row.Sense(id=i, word_id=i, pos="verb", tier="core") for i in range(1, 6)])
+        session.add_all([row.Sense(id=i, word_id=i, pos="VERB", tier="CORE") for i in range(1, 6)])
         await session.flush()
         session.add_all(
             [row.Definition(id=i, sense_id=i, content=f"meaning{i}") for i in range(1, 6)]
@@ -42,7 +42,7 @@ async def seed_links(db):
                     from_sense_id=source,
                     to_word_id=target,
                     to_sense_id=target,
-                    rel_type="synonym",
+                    rel_type="SYNONYM",
                     gloss=f"meaning{target}",
                     target_hash=definition_hash(f"meaning{target}"),
                     resolve_attempted_at="2026-09-30T00:00:00Z",
@@ -58,7 +58,7 @@ async def test_form_keys_cover_unicode_spacing_updates_and_core_inserts(tmp_path
         await db.create_schema(row.Base.metadata)
         await seed_links(db)
         async with db.transaction() as session:
-            form = row.SenseForm(sense_id=1, surface="ＴＯＯＫ　ＯＦＦ", inf="past")
+            form = row.SenseForm(sense_id=1, surface="ＴＯＯＫ　ＯＦＦ", inf="PAST")
             session.add(form)
             await session.flush()
             form_id = form.id
@@ -66,11 +66,11 @@ async def test_form_keys_cover_unicode_spacing_updates_and_core_inserts(tmp_path
             await session.execute(
                 insert(row.SenseForm),
                 [
-                    {"sense_id": 1, "surface": "Straße", "inf": "base"},
+                    {"sense_id": 1, "surface": "Straße", "inf": "BASE"},
                 ],
             )
         hit = (await search(db, None, "TOOK OFF")).words[0]
-        assert (hit.word_id, hit.match_kind) == (1, "form")
+        assert (hit.word_id, hit.match_kind) == (1, "FORM")
         async with db.transaction() as session:
             assert (
                 await session.scalar(
@@ -79,7 +79,7 @@ async def test_form_keys_cover_unicode_spacing_updates_and_core_inserts(tmp_path
                 == "strasse"
             )
             (await session.get(row.SenseForm, form_id)).surface = "  Taken   Off "
-        assert (await search(db, None, "TAKEN OFF")).words[0].match_kind == "form"
+        assert (await search(db, None, "TAKEN OFF")).words[0].match_kind == "FORM"
         async with db.engine.connect() as connection:
             plan = (
                 await connection.execute(
@@ -160,13 +160,13 @@ async def test_relation_invalidation_is_targeted_and_ignores_themed_or_noop_chan
                     )
                     definition.theme_id = 1 if change == "neutral_to_theme" else None
             elif change == "add_sense":
-                session.add(row.Sense(word_id=2, pos="noun", tier="core"))
+                session.add(row.Sense(word_id=2, pos="NOUN", tier="CORE"))
             elif change == "delete_sense":
                 await session.delete(await session.get(row.Sense, 2))
             else:
                 sense = await session.get(row.Sense, 2)
                 if change == "sense_pos":
-                    sense.pos = "noun"
+                    sense.pos = "NOUN"
                 else:
                     sense.word_id = 5
         invalidated = change not in {"themed_update", "themed_delete", "themed_insert", "noop"}
@@ -228,7 +228,7 @@ async def test_changed_provider_evidence_is_not_written_as_a_completed_decision(
         async def decide(self, _state, _questions, **kwargs):
             async with db.transaction() as session:
                 if change == "inventory":
-                    sense = row.Sense(word_id=2, pos="verb", tier="core")
+                    sense = row.Sense(word_id=2, pos="VERB", tier="CORE")
                     session.add(sense)
                     await session.flush()
                     session.add(row.Definition(sense_id=sense.id, content="new candidate"))
@@ -247,7 +247,7 @@ async def test_changed_provider_evidence_is_not_written_as_a_completed_decision(
                 .values(to_sense_id=None, target_hash=None, resolve_attempted_at=None)
             )
         results = await resolve_relations(db, ChangingDecision())
-        assert [result.state for result in results] == ["noop"]
+        assert [result.state for result in results] == ["NOOP"]
         assert [link.edge_id for link in await pending_relations(db, 20)] == [1]
     finally:
         await db.close()
@@ -271,15 +271,15 @@ async def test_pending_lookup_skips_100000_fresh_resolutions(tmp_path):
                         "id": i,
                         "lemma": f"word{i}",
                         "match_key": f"word{i}",
-                        "entry_type": "word",
-                        "generation_state": "done",
+                        "entry_type": "WORD",
+                        "generation_state": "DONE",
                     }
                     for i in [1, 2]
                 ],
             )
             await session.execute(
                 insert(row.Sense),
-                [{"id": 200001, "word_id": 2, "pos": "verb", "tier": "core"}],
+                [{"id": 200001, "word_id": 2, "pos": "VERB", "tier": "CORE"}],
             )
             await session.execute(
                 insert(row.Definition), [{"sense_id": 200001, "content": "target"}]
@@ -288,7 +288,7 @@ async def test_pending_lookup_skips_100000_fresh_resolutions(tmp_path):
                 ids = range(first, min(first + 5000, 100002))
                 await session.execute(
                     insert(row.Sense),
-                    [{"id": i, "word_id": 1, "pos": "verb", "tier": "core"} for i in ids],
+                    [{"id": i, "word_id": 1, "pos": "VERB", "tier": "CORE"} for i in ids],
                 )
                 await session.execute(
                     insert(row.Definition), [{"sense_id": i, "content": "source"} for i in ids]
@@ -300,7 +300,7 @@ async def test_pending_lookup_skips_100000_fresh_resolutions(tmp_path):
                             "id": i,
                             "from_sense_id": i,
                             "to_word_id": 2,
-                            "rel_type": "synonym",
+                            "rel_type": "SYNONYM",
                             "gloss": "target",
                             "to_sense_id": 200001 if i <= 100000 else None,
                             "target_hash": fingerprint if i <= 100000 else None,

@@ -10,13 +10,44 @@ from test_db_optimization import sqlite_db as sqlite_db
 from typesafe_sdk import Choice, Noul
 
 from lexi_ai import schema as row
-from lexi_ai.errors import InvalidOutputError, InvalidResourceError, MissingProviderError
+from lexi_ai.cache import Cache
+from lexi_ai.errors import (
+    InvalidOutputError,
+    InvalidResourceError,
+    MissingProviderError,
+    QuestionNotFoundError,
+    UnsupportedQuestionFormatError,
+)
 from lexi_ai.inference.config import DecisionConfig, DecisionMode
 from lexi_ai.models import DefinitionGrade, Option, Question, SingleWordGrade, UsageGrade
 from lexi_ai.questions.grade import grade_answer
 from lexi_ai.questions.storage import append
 
 CONFIG = DecisionConfig(0.7)
+
+
+async def test_warm_native_grading_uses_artifact_cache_and_keeps_validation(bank):
+    db, questions = bank
+    db.question_cache = Cache(64 * 1024)
+    single = questions[0]
+    await grade_answer(db, None, single.id, "SINGLE_CHOICE", "yes", config=CONFIG)
+    statements = []
+
+    def capture(_conn, _cursor, sql, _parameters, _context, _many):
+        statements.append(sql)
+
+    event.listen(db.engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        assert (
+            await grade_answer(db, None, single.id, "SINGLE_CHOICE", "yes", config=CONFIG)
+        ).task_fit
+        with pytest.raises(UnsupportedQuestionFormatError):
+            await grade_answer(
+                db, None, single.id, "SINGLE_CHOICE", "yes", config=CONFIG, allowed_pairs=set()
+            )
+        assert statements == []
+    finally:
+        event.remove(db.engine.sync_engine, "before_cursor_execute", capture)
 
 
 class Decision:
@@ -65,24 +96,24 @@ async def bank(optimized_db):
             insert(row.Word),
             [
                 dict(
-                    id=1, lemma="bank", match_key="bank", entry_type="word", generation_state="done"
+                    id=1, lemma="bank", match_key="bank", entry_type="WORD", generation_state="DONE"
                 ),
                 dict(
                     id=2,
                     lemma="lender",
                     match_key="lender",
-                    entry_type="word",
-                    generation_state="done",
+                    entry_type="WORD",
+                    generation_state="DONE",
                 ),
             ],
         )
         await session.execute(
             insert(row.Sense),
             [
-                dict(id=1, word_id=1, pos="noun", tier="core"),
-                dict(id=2, word_id=1, pos="noun", tier="common"),
+                dict(id=1, word_id=1, pos="NOUN", tier="CORE"),
+                dict(id=2, word_id=1, pos="NOUN", tier="COMMON"),
             ]
-            + [dict(id=200 + i, word_id=2, pos="noun", tier="core") for i in range(20)],
+            + [dict(id=200 + i, word_id=2, pos="NOUN", tier="CORE") for i in range(20)],
         )
         await session.execute(
             insert(row.Definition),
@@ -99,7 +130,7 @@ async def bank(optimized_db):
                 0,
                 1,
                 None,
-                "definition_to_word",
+                "DEFINITION_TO_WORD",
                 "Financial institution",
                 Option("yes", "bank", "Fits"),
                 [Option("no", "ship", "Wrong")],
@@ -108,7 +139,7 @@ async def bank(optimized_db):
                 0,
                 1,
                 None,
-                "word_to_definition",
+                "WORD_TO_DEFINITION",
                 '<t inf="base">bank</t>',
                 Option("yes", "Financial institution", "Fits"),
                 [],
@@ -117,7 +148,7 @@ async def bank(optimized_db):
                 0,
                 1,
                 None,
-                "word_to_usage",
+                "WORD_TO_USAGE",
                 '<t inf="base">bank</t> — Financial institution',
                 Option("yes", "The bank opens.", "Fits"),
                 [],
@@ -130,20 +161,26 @@ async def bank(optimized_db):
 async def test_choice_and_saved_surface_are_provider_free(bank):
     db, (single, _, _) = bank
     assert await grade_answer(
-        db, None, single.id, "single_choice", "yes", config=CONFIG
+        db, None, single.id, "SINGLE_CHOICE", "yes", config=CONFIG
     ) == SingleWordGrade(True, False, 1)
     assert await grade_answer(
-        db, None, single.id, "single_choice", "no", config=CONFIG
+        db, None, single.id, "SINGLE_CHOICE", "no", config=CONFIG
     ) == SingleWordGrade(False, False, None)
     assert await grade_answer(
-        db, None, single.id, "single_word", " BANK ", config=CONFIG
+        db, None, single.id, "SINGLE_WORD", " BANK ", config=CONFIG
     ) == SingleWordGrade(True, False, 1)
     with pytest.raises(InvalidResourceError, match="option ID"):
-        await grade_answer(db, None, single.id, "single_choice", "forged", config=CONFIG)
+        await grade_answer(db, None, single.id, "SINGLE_CHOICE", "forged", config=CONFIG)
     with pytest.raises(InvalidResourceError, match="unsupported"):
-        await grade_answer(db, None, single.id, "short_answer", "bank", config=CONFIG)
+        await grade_answer(db, None, single.id, "SHORT_ANSWER", "bank", config=CONFIG)
     with pytest.raises(MissingProviderError):
-        await grade_answer(db, None, single.id, "single_word", "other", config=CONFIG)
+        await grade_answer(db, None, single.id, "SINGLE_WORD", "other", config=CONFIG)
+    with pytest.raises(QuestionNotFoundError):
+        await grade_answer(db, None, 999999, "SINGLE_WORD", "bank", config=CONFIG)
+    with pytest.raises(UnsupportedQuestionFormatError):
+        await grade_answer(
+            db, None, single.id, "SINGLE_WORD", "bank", config=CONFIG, allowed_pairs=set()
+        )
 
 
 @pytest.mark.parametrize("fit,typo", [(False, False), (False, True), (True, True)])
@@ -159,7 +196,7 @@ async def test_single_word_diagnostics_are_independent_and_gate_search(
     model = Decision(
         nouls={"task_fit": 0.9 if fit else 0.1, "spelling_error": 0.9 if typo else 0.1}
     )
-    result = await grade_answer(db, model, single.id, "single_word", "dgo", config=CONFIG)
+    result = await grade_answer(db, model, single.id, "SINGLE_WORD", "dgo", config=CONFIG)
     assert asdict(result) == {"task_fit": fit, "spelling_error": typo, "sense_id": None}
     assert len(model.calls) == 1
     assert set(model.calls[0][1]) == {"task_fit", "spelling_error"}
@@ -169,7 +206,7 @@ async def test_single_word_diagnostics_are_independent_and_gate_search(
 async def test_single_word_searches_top_one_and_passes_all_its_senses(bank):
     db, (single, _, _) = bank
     model = Decision(choices={"matched_sense": "sense_219"})
-    result = await grade_answer(db, model, single.id, "single_word", "lender", config=CONFIG)
+    result = await grade_answer(db, model, single.id, "SINGLE_WORD", "lender", config=CONFIG)
     assert result == SingleWordGrade(True, False, 219)
     assert len(model.calls) == 2
     criteria = model.calls[1][1]["matched_sense"].criteria
@@ -180,11 +217,11 @@ async def test_single_word_searches_top_one_and_passes_all_its_senses(bank):
 async def test_missing_dictionary_sense_does_not_change_correctness(bank):
     db, (single, _, _) = bank
     model = Decision()
-    result = await grade_answer(db, model, single.id, "single_word", "lender", config=CONFIG)
+    result = await grade_answer(db, model, single.id, "SINGLE_WORD", "lender", config=CONFIG)
     assert result == SingleWordGrade(True, False, None)
     assert len(model.calls) == 2
     model = Decision()
-    result = await grade_answer(db, model, single.id, "single_word", "zzzzzzzzz", config=CONFIG)
+    result = await grade_answer(db, model, single.id, "SINGLE_WORD", "zzzzzzzzz", config=CONFIG)
     assert result == SingleWordGrade(True, False, None)
     assert len(model.calls) == 1
 
@@ -195,9 +232,9 @@ async def test_definition_resolves_intent_then_grades_only_selected_meaning(bank
         choices={"defined_meaning": "sense_2", "accuracy": "mixed", "coverage": "partial"}
     )
     result = await grade_answer(
-        db, model, definition.id, "short_answer", "a shore, sometimes water", config=CONFIG
+        db, model, definition.id, "SHORT_ANSWER", "a shore, sometimes water", config=CONFIG
     )
-    assert result == DefinitionGrade(2, "mixed", "partial")
+    assert result == DefinitionGrade(2, "MIXED", "PARTIAL")
     assert len(model.calls) == 2
     assert set(model.calls[0][1]) == {"defined_meaning"}
     assert set(model.calls[0][1]["defined_meaning"].criteria) == {
@@ -226,9 +263,9 @@ async def test_explicit_mode_is_forwarded_to_each_grading_stage(bank, mode):
     selected_mode = mode
     model = RoutedDecision(choices={"defined_meaning": "sense_1"})
     for question, fmt, answer in (
-        (single, "single_word", "lender"),
-        (definition, "short_answer", "A financial institution"),
-        (usage, "short_answer", "The bank opens early."),
+        (single, "SINGLE_WORD", "lender"),
+        (definition, "SHORT_ANSWER", "A financial institution"),
+        (usage, "SHORT_ANSWER", "The bank opens early."),
     ):
         await grade_answer(db, model, question.id, fmt, answer, config=CONFIG, mode=mode)
     assert len(model.calls) == 6
@@ -238,7 +275,7 @@ async def test_unidentified_definition_stops_before_diagnostic_query(bank):
     db, (_, definition, _) = bank
     model = Decision()
     assert await grade_answer(
-        db, model, definition.id, "short_answer", "unrelated", config=CONFIG
+        db, model, definition.id, "SHORT_ANSWER", "unrelated", config=CONFIG
     ) == DefinitionGrade(None, None, None)
     assert len(model.calls) == 1
 
@@ -247,7 +284,7 @@ async def test_usage_gate_stops_without_dictionary_or_second_model_call(bank):
     db, (_, _, usage) = bank
     model = Decision(nouls={"used": 0.2})
     assert await grade_answer(
-        db, model, usage.id, "short_answer", "a lender opens", config=CONFIG
+        db, model, usage.id, "SHORT_ANSWER", "a lender opens", config=CONFIG
     ) == UsageGrade(False, None, None, None, None, None)
     assert len(model.calls) == 1
     assert set(model.calls[0][1]) == {"used"}
@@ -278,11 +315,11 @@ async def test_usage_preserves_all_diagnostics_and_saved_anchor(bank):
     event.listen(db.engine.sync_engine, "before_cursor_execute", count)
     try:
         result = await grade_answer(
-            db, model, usage.id, "short_answer", "The banck grew tall.", config=CONFIG
+            db, model, usage.id, "SHORT_ANSWER", "The banck grew tall.", config=CONFIG
         )
     finally:
         event.remove(db.engine.sync_engine, "before_cursor_execute", count)
-    assert result == UsageGrade(True, "wrong", "spelling_error", False, "acceptable", "marked")
+    assert result == UsageGrade(True, "WRONG", "SPELLING_ERROR", False, "ACCEPTABLE", "MARKED")
     assert len(statements) == 1
     assert model.calls[1][0]["meaning"] == "Financial institution"
     assert set(model.calls[1][1]) == {
@@ -309,7 +346,7 @@ async def test_invalid_sense_choice_is_not_silently_no_candidate(bank):
             db,
             Decision(choices={"defined_meaning": "sense_999"}),
             definition.id,
-            "short_answer",
+            "SHORT_ANSWER",
             "shore",
             config=CONFIG,
         )
@@ -319,10 +356,10 @@ async def test_threshold_boundary_is_inclusive_and_typo_is_not_correctness(bank)
     db, (single, _, usage) = bank
     model = Decision(nouls={"task_fit": 0.7, "spelling_error": 0.7})
     assert await grade_answer(
-        db, model, single.id, "single_word", "banck", config=CONFIG
+        db, model, single.id, "SINGLE_WORD", "banck", config=CONFIG
     ) == SingleWordGrade(True, True, None)
     model = Decision(nouls={"used": 0.7, "construction": 0.7})
     result = await grade_answer(
-        db, model, usage.id, "short_answer", "The bank opens.", config=CONFIG
+        db, model, usage.id, "SHORT_ANSWER", "The bank opens.", config=CONFIG
     )
     assert result.used and result.construction

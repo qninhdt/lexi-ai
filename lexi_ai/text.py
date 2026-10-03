@@ -6,7 +6,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from .config import MAX_LEMMA_LENGTH, MAX_TEXT_LENGTH
-from .vocab import INFLECTIONS, SLOTS
+from .vocab import SLOTS, Inflection
 
 _SPACES = re.compile(r"\s+")
 _BRACES = re.compile(r"\{[^{}]*\}")
@@ -54,7 +54,7 @@ def content_hash(content: str) -> str:
 @dataclass(frozen=True)
 class Span:
     surface: str
-    inf: str
+    inf: Inflection
     start: int
     end: int
 
@@ -74,7 +74,12 @@ def parse_marked_example(content: str) -> tuple[str, list[Span]]:
         result.append(prefix)
         clean_length += len(prefix)
         inf, surface = match.groups()
-        if inf not in INFLECTIONS or not surface.strip():
+        # Markup is a source-text protocol: its lowercase tags stay intact.
+        try:
+            inf = Inflection(inf.upper())
+        except ValueError as exc:
+            raise ValueError("invalid target inflection") from exc
+        if not surface.strip():
             raise ValueError("invalid target inflection")
         spans.append(Span(surface, inf, clean_length, clean_length + len(surface)))
         result.append(surface)

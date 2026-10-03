@@ -5,11 +5,23 @@ from lexi_ai.errors import (
     InvalidOutputError,
     InvalidResourceError,
     MissingProviderError,
+    QuestionNotFoundError,
+    UnsupportedQuestionFormatError,
 )
 from lexi_ai.inference.config import DecisionConfig, DecisionMode
 from lexi_ai.inference.prompting import render_decision
 from lexi_ai.models import DefinitionGrade, SingleWordGrade, UsageGrade
 from lexi_ai.text import answer_key, parse_marked_example
+from lexi_ai.vocab import (
+    DefinitionAccuracy,
+    DefinitionCoverage,
+    QuestionType,
+    ResponseFormat,
+    UsageAppropriacy,
+    UsageCollocation,
+    UsageForm,
+    UsageMeaning,
+)
 from lexi_ai.words.search import search
 from lexi_ai.words.storage import meaning_inventory
 
@@ -88,8 +100,8 @@ async def _definition(db, model, question, answer, options):
     )
     return DefinitionGrade(
         sense["id"],
-        response.choices["accuracy"].choice,
-        response.choices["coverage"].choice,
+        DefinitionAccuracy(response.choices["accuracy"].choice.upper()),
+        DefinitionCoverage(response.choices["coverage"].choice.upper()),
     )
 
 
@@ -123,11 +135,11 @@ async def _usage(model, question, answer, config, options):
     )
     return UsageGrade(
         True,
-        response.choices["meaning"].choice,
-        response.choices["form"].choice,
+        UsageMeaning(response.choices["meaning"].choice.upper()),
+        UsageForm(response.choices["form"].choice.upper()),
         config.accepts(response.nouls["construction"].noul),
-        response.choices["collocation"].choice,
-        response.choices["appropriacy"].choice,
+        UsageCollocation(response.choices["collocation"].choice.upper()),
+        UsageAppropriacy(response.choices["appropriacy"].choice.upper()),
     )
 
 
@@ -140,26 +152,37 @@ async def grade_answer(
     *,
     config: DecisionConfig,
     mode: DecisionMode = DecisionMode.LLM_FALLBACK,
+    allowed_pairs: set[tuple[QuestionType, ResponseFormat]] | None = None,
 ):
     mode = DecisionMode(mode)
+    try:
+        fmt = ResponseFormat(fmt)
+    except ValueError as exc:
+        raise InvalidResourceError("unsupported response format") from exc
     options = {"mode": mode}
     if not isinstance(answer, str) or not answer.strip() or len(answer) > MAX_TEXT_LENGTH:
         raise InvalidResourceError("invalid answer")
     question = await get_question(db, question_id)
-    if question is None or not question.supports(fmt):
-        raise InvalidResourceError("unknown Question or unsupported response format")
-    if fmt == "single_choice":
+    if question is None:
+        raise QuestionNotFoundError("unknown Question")
+    if not question.supports(fmt) or (
+        allowed_pairs is not None and (question.question_type, fmt) not in allowed_pairs
+    ):
+        raise UnsupportedQuestionFormatError("unsupported response format")
+    if fmt is ResponseFormat.SINGLE_CHOICE:
         if answer == question.correct.id:
             return SingleWordGrade(True, False, question.sense_id)
         if any(answer == option.id for option in question.distractors):
             return SingleWordGrade(False, False, None)
         raise InvalidResourceError("unknown saved option ID")
-    if fmt == "single_word" and answer_key(answer) == answer_key(question.correct.content):
+    if fmt is ResponseFormat.SINGLE_WORD and answer_key(answer) == answer_key(
+        question.correct.content
+    ):
         return SingleWordGrade(True, False, question.sense_id)
     if decision_model is None:
         raise MissingProviderError("free-text grading requires a decision provider")
-    if fmt == "single_word":
+    if fmt is ResponseFormat.SINGLE_WORD:
         return await _single_word(db, decision_model, question, answer, config, options)
-    if question.question_type == "word_to_definition":
+    if question.question_type is QuestionType.WORD_TO_DEFINITION:
         return await _definition(db, decision_model, question, answer, options)
     return await _usage(decision_model, question, answer, config, options)

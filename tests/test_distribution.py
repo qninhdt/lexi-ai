@@ -58,19 +58,19 @@ from lexi_ai.inference.prompting import render_prompt, render_decision
 system, user = render_prompt('words/prompts/inventory.jinja', target='bank', references=[])
 assert system.strip() and 'bank' in user
 system, user = render_prompt('words/prompts/enrich_sense.jinja',
-                            target='bank', word={}, sense={'definition': 'Money', 'pos': 'noun'},
+                            target='bank', word={}, sense={'definition': 'Money', 'pos': 'NOUN'},
                             examples_per_sense=1, references=[])
 assert system.strip() and '<sense_request>' in user
 state, questions = render_decision('questions/prompts/decision/grade_single_word_1.json',
                                   question='question', answer='answer',
-                                  question_type='cloze_to_word')
+                                  question_type='CLOZE_TO_WORD')
 assert set(questions) == {'task_fit', 'spelling_error'}
 system, user = render_prompt('questions/prompts/generate_question.jinja',
-                            question_type='cloze_to_word',
+                            question_type='CLOZE_TO_WORD',
                             theme=None, context={'word': 'bank'})
 assert system.strip() and 'bank' in user
 system, user = render_prompt('questions/prompts/generate_question.jinja',
-                            question_type='dialogue_completion',
+                            question_type='DIALOGUE_COMPLETION',
                             theme=None, context={'word': 'bank'})
 assert system.strip() and user.strip()
 system, user = render_prompt('translation/prompts/translate.jinja',

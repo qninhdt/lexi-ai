@@ -9,7 +9,6 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from lexi_ai.config import MAX_QUERY_LENGTH
 from lexi_ai.errors import InvalidHandleError, InvalidResourceError
 
 
@@ -123,26 +122,24 @@ class Cambridge:
             raise InvalidHandleError("invalid source entry")
         return await asyncio.to_thread(self._fetch, entry_id)
 
-    def _search(self, query: str, limit: int) -> list[SourceHit]:
-        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    def _projection(self) -> list[tuple[SourceHit, list[str]]]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
-                "SELECT w.id, COALESCE(w.display_form, w.word) AS display, w.entry_type "
+                "SELECT w.id, w.word, COALESCE(w.display_form, w.word) AS display, w.entry_type, "
+                "(SELECT json_group_array(alternative_word) FROM word_alternatives "
+                "WHERE word_id=w.id) AS aliases "
                 "FROM words w WHERE w.status = 'done' "
-                "AND (LOWER(w.display_form) LIKE ? ESCAPE '\\' OR "
-                "LOWER(w.word) LIKE ? ESCAPE '\\') "
                 "AND EXISTS (SELECT 1 FROM entries e JOIN senses s ON s.entry_id = e.id "
-                "WHERE e.word_id = w.id) "
-                "ORDER BY CASE WHEN LOWER(w.display_form) = ? OR LOWER(w.word) = ? THEN 0 "
-                "WHEN LOWER(w.display_form) LIKE ? ESCAPE '\\' "
-                "OR LOWER(w.word) LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, w.id LIMIT ?",
-                (f"%{escaped}%", f"%{escaped}%", query, query, f"{escaped}%", f"{escaped}%", limit),
+                "WHERE e.word_id = w.id) ORDER BY w.id"
             ).fetchall()
-            return [SourceHit(item["id"], item["display"], item["entry_type"]) for item in rows]
+            return [
+                (
+                    SourceHit(item["id"], item["display"], item["entry_type"]),
+                    [item["word"], item["display"], *json.loads(item["aliases"])],
+                )
+                for item in rows
+            ]
 
-    async def search(self, query: str, limit: int = 20) -> list[SourceHit]:
-        if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_LENGTH:
-            raise InvalidResourceError("invalid search query")
-        if not 1 <= limit <= 100:
-            raise InvalidResourceError("invalid search limit")
-        return await asyncio.to_thread(self._search, query.strip().lower(), limit)
+    async def projection(self) -> list[tuple[SourceHit, list[str]]]:
+        """Only searchable identity/surfaces; never hydrate the reference senses."""
+        return await asyncio.to_thread(self._projection)

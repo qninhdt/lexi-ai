@@ -55,7 +55,7 @@ Set `LLM_API_KEY` in your application's environment, then run:
 import asyncio
 import os
 
-from lexi_ai import Lexicon, LLMConfig
+from lexi_ai import Lexicon, LLMConfig, QuestionType, ResponseFormat
 
 
 async def main():
@@ -85,11 +85,11 @@ async def main():
 
         questions = await lexicon.generate_questions(
             word.senses[0].id,
-            "definition_to_word",
+            QuestionType.DEFINITION_TO_WORD,
             count=2,
             distractor_count=3,
         )
-        grade = await lexicon.grade_answer(questions[0].id, "single_word", "bank")
+        grade = await lexicon.grade_answer(questions[0].id, ResponseFormat.SINGLE_WORD, "bank")
         print(grade)
         print(await lexicon.translate_text("I went to the bank.", "vi"))
     finally:
@@ -102,20 +102,27 @@ asyncio.run(main())
 Generation reuses an already-generated selected entry. Stored reads never generate
 content, while each `generate_questions()` call appends new questions.
 
-**Question objects contain answers and explanations.** Keep them on your server;
-send learners only the prompt and, for multiple choice, shuffled option IDs and text.
+**Question objects contain answers and explanations.** Consumers choose the visibility
+policy: self-learning applications may deliver saved keys for offline practice; exam
+applications should conceal them. Shuffling options must preserve their saved IDs.
 
 ## Questions and grading
 
 | Question type | Response formats |
 | --- | --- |
-| `definition_to_word` | `single_choice`, `single_word` |
-| `context_to_word` | `single_choice`, `single_word` |
-| `cloze_to_word` | `single_choice`, `single_word` |
-| `word_to_definition` | `single_choice`, `short_answer` |
-| `word_to_usage` | `single_choice`, `short_answer` |
-| `dialogue_completion` | `single_choice` |
-| `meaning_in_context` | `single_choice` |
+| `DEFINITION_TO_WORD` | `SINGLE_CHOICE`, `SINGLE_WORD` |
+| `CONTEXT_TO_WORD` | `SINGLE_CHOICE`, `SINGLE_WORD` |
+| `CLOZE_TO_WORD` | `SINGLE_CHOICE`, `SINGLE_WORD` |
+| `WORD_TO_DEFINITION` | `SINGLE_CHOICE`, `SHORT_ANSWER` |
+| `WORD_TO_USAGE` | `SINGLE_CHOICE`, `SHORT_ANSWER` |
+| `DIALOGUE_COMPLETION` | `SINGLE_CHOICE` |
+| `MEANING_IN_CONTEXT` | `SINGLE_CHOICE` |
+
+Import `QuestionType`, `ResponseFormat`, `TargetPlacement` and the lexical/diagnostic
+enums from `lexi_ai`; inspect native capabilities through `QUESTION_FORMATS` or
+`ALLOWED_PAIRS`, rather than maintaining a separate consumer vocabulary. Canonical
+public/storage tokens are uppercase. The single `20261003_base` baseline initializes
+fresh generated dictionaries; there is no upgrade path for older schemas.
 
 `grade_answer()` returns task-specific diagnostics:
 

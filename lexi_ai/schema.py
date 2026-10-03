@@ -23,11 +23,11 @@ from lexi_ai.vocab import (
     SENSE_REL_TYPES,
     TIERS,
     WORD_REL_TYPES,
+    GenerationState,
 )
 
 from .questions.positions import install_positions, remove_positions
 from .relations.invalidation import install_relation_triggers, remove_relation_triggers
-from .words.indexes import install_search_index, remove_search_index
 
 
 def _choice(column: str, values: set[str] | frozenset[str] | tuple[str, ...]) -> CheckConstraint:
@@ -55,7 +55,9 @@ class Word(Base):
     lemma: Mapped[str] = mapped_column(Text, nullable=False)
     match_key: Mapped[str] = mapped_column(String(512), unique=True, nullable=False)
     entry_type: Mapped[str | None] = mapped_column(String(32))
-    generation_state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    generation_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=GenerationState.PENDING
+    )
 
 
 class WordAlias(Base):
@@ -319,11 +321,9 @@ class Translation(Base):
 def _install_domain_triggers(_metadata, connection, **_kwargs):
     install_positions(connection)
     install_relation_triggers(connection)
-    install_search_index(connection)
 
 
 @event.listens_for(Base.metadata, "before_drop")
 def _remove_domain_triggers(_metadata, connection, **_kwargs):
     remove_positions(connection)
-    remove_search_index(connection)
     remove_relation_triggers(connection)

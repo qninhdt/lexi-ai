@@ -8,7 +8,7 @@ from sqlalchemy import and_, select, true, update
 
 from lexi_ai.db.collections import collection
 from lexi_ai.schema import Definition, Sense, SenseRelation, Word
-from lexi_ai.vocab import POS_TAGS
+from lexi_ai.vocab import POS_TAGS, GenerationState
 
 
 @dataclass(frozen=True)
@@ -92,7 +92,7 @@ def _projection(*, with_candidates=False):
         )
     )
     statement = statement.where(
-        target.c.generation_state == "done",
+        target.c.generation_state == GenerationState.DONE,
         _has_senses(target.c.id),
     )
     if with_candidates:
@@ -134,7 +134,7 @@ def _pending_ids(last_id, size, *, postgres):
     ready = (
         select(targets.c.word_id.label("id"))
         .where(
-            target_state == "done",
+            target_state == GenerationState.DONE,
             _has_senses(targets.c.word_id),
         )
         .cte("ready_targets")
@@ -301,4 +301,6 @@ async def apply_resolution(db, edge_id, candidate, *, expected=None):
                 resolve_attempted_at=datetime.now(UTC).isoformat(),
             )
         )
-        return True
+    if db.content_cache is not None:
+        db.content_cache.clear()
+    return True

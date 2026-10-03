@@ -31,14 +31,14 @@ class LLM:
             return stage_payload(
                 {
                     "lemma": "bank",
-                    "type": "word",
+                    "type": "WORD",
                     "aliases": [],
                     "related": [],
                     "senses": [
                         {
                             "definition": "A place to keep money",
-                            "pos": "noun",
-                            "tier": "core",
+                            "pos": "NOUN",
+                            "tier": "CORE",
                             "cefr_level": "A1",
                             "register": None,
                             "examples": ['The <t inf="base">bank</t> opened.'],
@@ -48,7 +48,7 @@ class LLM:
                             "relations": [
                                 {
                                     "lemma": "vault",
-                                    "rel_type": "synonym",
+                                    "rel_type": "SYNONYM",
                                     "gloss": "place to keep money",
                                 }
                             ],
@@ -74,7 +74,7 @@ class LLM:
             context = prompt_context(data)
             kind = context["question_type"]
             content = bound_content(context)
-            if kind == "word_to_usage":
+            if kind == "WORD_TO_USAGE":
                 correct = 'The <t inf="base">bank</t> opened.'
             else:
                 correct = "bank"
@@ -156,11 +156,11 @@ async def verify_consumer_flow(url, source, *, db_schema=None, session=None):
     try:
         async with ai.db.transaction() as session:
             target = Word(
-                lemma="vault", match_key="vault", entry_type="word", generation_state="done"
+                lemma="vault", match_key="vault", entry_type="WORD", generation_state="DONE"
             )
             session.add(target)
             await session.flush()
-            target_sense = Sense(word_id=target.id, pos="noun", tier="core")
+            target_sense = Sense(word_id=target.id, pos="NOUN", tier="CORE")
             session.add(target_sense)
             await session.flush()
             session.add(Definition(sense_id=target_sense.id, content="secure place for valuables"))
@@ -181,10 +181,10 @@ async def verify_consumer_flow(url, source, *, db_schema=None, session=None):
             "A place to keep money"
         )
         generated = await ai.generate_questions(
-            sense_id, "definition_to_word", 2, distractor_count=3, theme=theme.key
+            sense_id, "DEFINITION_TO_WORD", 2, distractor_count=3, theme=theme.key
         )
         await ai.generate_questions(
-            sense_id, "definition_to_word", 2, distractor_count=3, theme=theme.key
+            sense_id, "DEFINITION_TO_WORD", 2, distractor_count=3, theme=theme.key
         )
         assert len(await ai.list_questions(sense_id, theme=theme.key)) == 4
         assert await ai.list_questions(sense_id) == []
@@ -192,15 +192,15 @@ async def verify_consumer_flow(url, source, *, db_schema=None, session=None):
             item.id for item in await ai.list_questions(sense_id, theme=theme.key)
         }
         assert (
-            await ai.grade_answer(generated[0].id, "single_choice", generated[0].correct.id)
+            await ai.grade_answer(generated[0].id, "SINGLE_CHOICE", generated[0].correct.id)
         ).task_fit
-        assert (await ai.grade_answer(generated[0].id, "single_word", "BANK")).task_fit
-        usage = (await ai.generate_questions(sense_id, "word_to_usage", 1, distractor_count=3))[0]
+        assert (await ai.grade_answer(generated[0].id, "SINGLE_WORD", "BANK")).task_fit
+        usage = (await ai.generate_questions(sense_id, "WORD_TO_USAGE", 1, distractor_count=3))[0]
         assert (
-            await ai.grade_answer(usage.id, "short_answer", "The bank safeguards our money.")
+            await ai.grade_answer(usage.id, "SHORT_ANSWER", "The bank safeguards our money.")
         ).used
         assert decision.calls == 2
-        assert (await ai.resolve_relations())[0].state == "resolved"
+        assert (await ai.resolve_relations())[0].state == "RESOLVED"
         assert (await ai.get_word(word.id)).senses[0].relations[0].to_sense_id == target_sense.id
         assert decision.calls == 3
         assert await ai.translate_text("bank", "vi") == "ngân hàng"
@@ -273,12 +273,12 @@ async def test_last_invalid_themed_sense_rolls_back_entire_namespace(tmp_path):
     try:
         await db.create_schema(Base.metadata)
         async with db.transaction() as session:
-            word = Word(lemma="bank", match_key="bank", entry_type="word", generation_state="done")
+            word = Word(lemma="bank", match_key="bank", entry_type="WORD", generation_state="DONE")
             theme = Theme(key="pirate", name="Pirate", voice="Captain", diction="nautical")
             session.add_all([word, theme])
             await session.flush()
             for index in range(2):
-                sense = Sense(word_id=word.id, pos="noun", tier="core")
+                sense = Sense(word_id=word.id, pos="NOUN", tier="CORE")
                 session.add(sense)
                 await session.flush()
                 session.add_all(

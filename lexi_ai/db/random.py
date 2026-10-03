@@ -20,10 +20,10 @@ def _random_sqlite(element, compiler, **kwargs):
     return "((random() & 9007199254740991) / 9007199254740992.0)"
 
 
-def random_position(table, slot, *scope, scope_order=(), correlate=()):
+def last_position(table, slot, *scope, scope_order=(), correlate=()):
     # Include nullable scope keys in the ordering. IS NULL alone does not let
     # PostgreSQL infer that an index ordered by (scope, slot) orders by slot alone.
-    last = (
+    return (
         select(slot)
         .select_from(table)
         .where(*scope)
@@ -32,6 +32,10 @@ def random_position(table, slot, *scope, scope_order=(), correlate=()):
         .correlate(*correlate)
         .scalar_subquery()
     )
+
+
+def random_position(table, slot, *scope, scope_order=(), correlate=()):
+    last = last_position(table, slot, *scope, scope_order=scope_order, correlate=correlate)
     # FLOOR before INTEGER cast: PostgreSQL float->integer rounds rather than truncates.
     return (
         select(cast(func.floor(RandomFraction() * func.coalesce(last, 0)), Integer) + 1)

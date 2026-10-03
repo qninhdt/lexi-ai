@@ -33,12 +33,12 @@ async def test_theme_delete_cascades_without_neutral_relabel(tmp_path):
         await db.create_schema(Base.metadata)
         async with db.transaction() as session:
             word = Word(
-                lemma="glisten", match_key="glisten", entry_type="word", generation_state="done"
+                lemma="glisten", match_key="glisten", entry_type="WORD", generation_state="DONE"
             )
             theme = Theme(key="pirate", name="Pirate", voice="captain", diction="nautical")
             session.add_all([word, theme])
             await session.flush()
-            sense = Sense(word_id=word.id, pos="verb", tier="common")
+            sense = Sense(word_id=word.id, pos="VERB", tier="COMMON")
             session.add(sense)
             await session.flush()
             session.add_all(
@@ -49,7 +49,7 @@ async def test_theme_delete_cascades_without_neutral_relabel(tmp_path):
                     Question(
                         sense_id=sense.id,
                         theme_id=theme.id,
-                        question_type="meaning_in_context",
+                        question_type="MEANING_IN_CONTEXT",
                         payload="{}",
                     ),
                 ]

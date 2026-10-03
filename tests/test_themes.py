@@ -1,7 +1,12 @@
+import pytest
 from sqlalchemy import select
 from test_prompting import prompt_context
 
+from lexi_ai.cache import Cache
 from lexi_ai.db.session import Database
+from lexi_ai.errors import InvalidResourceError
+from lexi_ai.models import Option, Question
+from lexi_ai.questions.storage import append, get
 from lexi_ai.schema import Base, Definition, Example, Sense, Word
 from lexi_ai.themes.service import create_theme, delete_theme, ensure_word_theme, update_theme
 from lexi_ai.words.storage import get_word
@@ -30,14 +35,16 @@ class LLM:
 
 async def test_crud_delete_and_generate_reuse(tmp_path):
     db = Database(f"sqlite+aiosqlite:///{tmp_path / 'dictionary.db'}")
+    db.content_cache = Cache(64 * 1024)
+    db.question_cache = Cache(64 * 1024)
     llm = LLM()
     try:
         await db.create_schema(Base.metadata)
         async with db.transaction() as session:
-            word = Word(lemma="bank", match_key="bank", entry_type="word", generation_state="done")
+            word = Word(lemma="bank", match_key="bank", entry_type="WORD", generation_state="DONE")
             session.add(word)
             await session.flush()
-            sense = Sense(word_id=word.id, pos="noun", tier="core")
+            sense = Sense(word_id=word.id, pos="NOUN", tier="CORE")
             session.add(sense)
             await session.flush()
             session.add_all(
@@ -57,7 +64,27 @@ async def test_crud_delete_and_generate_reuse(tmp_path):
         assert (await get_word(db, word.id, theme.id)).senses[0].definition.content == (
             "A safe place for coin"
         )
+        question = (
+            await append(
+                db,
+                [
+                    Question(
+                        0,
+                        sense.id,
+                        theme.id,
+                        "DEFINITION_TO_WORD",
+                        "Prompt",
+                        Option("yes", "bank", "Fits"),
+                        [],
+                    )
+                ],
+            )
+        )[0]
+        assert await get(db, question.id) == question
         assert await delete_theme(db, "pirate")
+        assert await get(db, question.id) is None
+        with pytest.raises(InvalidResourceError, match="unknown Theme"):
+            await get_word(db, word.id, theme.id)
         assert (await get_word(db, word.id)).senses[0].definition.content == (
             "A financial institution"
         )
@@ -72,10 +99,10 @@ async def test_theme_uses_single_neutral_meaning(tmp_path):
     try:
         await db.create_schema(Base.metadata)
         async with db.transaction() as session:
-            word = Word(lemma="bank", match_key="bank", entry_type="word", generation_state="done")
+            word = Word(lemma="bank", match_key="bank", entry_type="WORD", generation_state="DONE")
             session.add(word)
             await session.flush()
-            sense = Sense(word_id=word.id, pos="noun", tier="core")
+            sense = Sense(word_id=word.id, pos="NOUN", tier="CORE")
             session.add(sense)
             await session.flush()
             session.add_all(

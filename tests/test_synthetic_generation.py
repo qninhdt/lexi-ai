@@ -106,11 +106,11 @@ def test_default_coverage_is_60_questions_180_answers_not_cross_product():
     assert len(settings.entries) == 24
     assert len(plan) == 60
     assert Counter(job["question_type"] for job in plan) == {
-        "definition_to_word": 12,
-        "context_to_word": 12,
-        "cloze_to_word": 12,
-        "word_to_definition": 12,
-        "word_to_usage": 12,
+        "DEFINITION_TO_WORD": 12,
+        "CONTEXT_TO_WORD": 12,
+        "CLOZE_TO_WORD": 12,
+        "WORD_TO_DEFINITION": 12,
+        "WORD_TO_USAGE": 12,
     }
     assert settings.themes == []
     assert Counter(job["theme"] for job in plan) == {None: 60}
@@ -174,7 +174,7 @@ def test_blueprint_prose_is_rendered_from_jinja_not_python():
     instruction, data = render_prompt(
         "questions/prompts/generate_synthetic_answers.jinja",
         context={"target": "bank", "definition": "A place for money", "answer_types": kinds},
-        question_type="definition_to_word",
+        question_type="DEFINITION_TO_WORD",
     )
     assert prompt_context(data, "synthetic_context")["answer_types"] == kinds
     assert all(f"- {kind}: " in instruction for kind in kinds)
@@ -239,9 +239,9 @@ class GeneratorLLM:
                 )
                 # Fixed strings deliberately ignore requested types: grading must
                 # label the actual answer, not assume the allocation was followed.
-                if "to a word_to_definition question." in instruction:
+                if "to a WORD_TO_DEFINITION question." in instruction:
                     entries = ["A place for money", "An unrelated remark", "Money keeper"]
-                elif "to a word_to_usage question." in instruction:
+                elif "to a WORD_TO_USAGE question." in instruction:
                     entries = ["The bank opens.", "I kept my money safe.", "The bank closed."]
                 else:
                     entries = ["bank", "bnak", "mountain"]
@@ -427,14 +427,14 @@ async def test_failed_synthesis_keeps_questions_for_resume(tmp_path, lexicon):
 
 
 def test_usage_anchor_is_saved_question_not_current_definition():
-    word = Word(1, "bank", "word", "done")
-    sense = Sense(1, 1, "noun", "core", definition=Definition(1, "Changed definition"))
+    word = Word(1, "bank", "WORD", "DONE")
+    sense = Sense(1, 1, "NOUN", "CORE", definition=Definition(1, "Changed definition"))
     word = replace(word, senses=[sense])
     question = Question(
         1,
         1,
         None,
-        "word_to_usage",
+        "WORD_TO_USAGE",
         '<t inf="base">bank</t> — Saved meaning',
         Option("correct", "The bank opens.", "Fits"),
         [],
@@ -458,7 +458,7 @@ async def test_synthesis_rejects_wrong_count_blank_and_nonstring_outputs(structu
                 "definition": "Money keeper",
                 "answer_types": ["canonical", "typo", "wrong_meaning"],
             },
-            question_type="definition_to_word",
+            question_type="DEFINITION_TO_WORD",
             structured_outputs=structured,
         )
 
@@ -485,7 +485,7 @@ async def test_synthesis_returns_only_k_strings_and_renders_only_selected_types(
     texts, usage = await synthesize(
         LLM(),
         context,
-        question_type="definition_to_word",
+        question_type="DEFINITION_TO_WORD",
         structured_outputs=structured,
     )
     assert texts == ["bank", "bnak"] and usage == []
@@ -526,7 +526,7 @@ async def test_text_transport_parses_json_array_without_object_wrapper():
             "definition": "A financial institution",
             "answer_types": ["canonical", "typo"],
         },
-        question_type="definition_to_word",
+        question_type="DEFINITION_TO_WORD",
         structured_outputs=False,
     )
     assert texts == ["bank", "bnak"]
@@ -536,22 +536,22 @@ async def test_text_transport_parses_json_array_without_object_wrapper():
 @pytest.mark.parametrize(
     "kind,content,correct,expected",
     [
-        ("definition_to_word", "A money keeper", "bank", {"definition": "A money keeper"}),
-        ("context_to_word", "Deposit savings here", "bank", {"context": "Deposit savings here"}),
+        ("DEFINITION_TO_WORD", "A money keeper", "bank", {"definition": "A money keeper"}),
+        ("CONTEXT_TO_WORD", "Deposit savings here", "bank", {"context": "Deposit savings here"}),
         (
-            "cloze_to_word",
+            "CLOZE_TO_WORD",
             "Several _ offer savings",
             "banks",
             {"target": "banks", "sentence": "Several _ offer savings"},
         ),
         (
-            "word_to_definition",
+            "WORD_TO_DEFINITION",
             '<t inf="base">bank</t>',
             "A money keeper",
             {"definition": "A money keeper"},
         ),
         (
-            "word_to_usage",
+            "WORD_TO_USAGE",
             '<t inf="base">bank</t> — Saved meaning',
             "The bank opens.",
             {"definition": "Saved meaning"},
@@ -560,7 +560,7 @@ async def test_text_transport_parses_json_array_without_object_wrapper():
 )
 def test_minimal_synthesis_input_per_question_type(kind, content, correct, expected):
     question = Question(1, 1, None, kind, content, Option("correct", correct, "Not sent"), [])
-    word = Word(1, "bank", "word", "done")
+    word = Word(1, "bank", "WORD", "DONE")
     assert synthesis_context(question, word, ["canonical"]) == {
         "target": "bank",
         "answer_types": ["canonical"],
@@ -593,13 +593,13 @@ async def test_grading_failure_preserves_answers_and_resume_does_not_regenerate(
 
 
 async def test_single_word_grading_uses_search_candidate_full_inventory(monkeypatch):
-    owner_sense = Sense(1, 1, "noun", "core", definition=Definition(1, "A financial institution"))
-    word = Word(1, "bank", "word", "done", senses=[owner_sense])
+    owner_sense = Sense(1, 1, "NOUN", "CORE", definition=Definition(1, "A financial institution"))
+    word = Word(1, "bank", "WORD", "DONE", senses=[owner_sense])
     question = Question(
         1,
         1,
         None,
-        "definition_to_word",
+        "DEFINITION_TO_WORD",
         "A financial institution",
         Option("correct", "bank", "Not sent"),
         [],
@@ -607,8 +607,8 @@ async def test_single_word_grading_uses_search_candidate_full_inventory(monkeypa
     matched = {
         "lemma": "credit union",
         "senses": [
-            {"id": 41, "pos": "noun", "definition": "A member-owned financial institution"},
-            {"id": 42, "pos": "noun", "definition": "An extended meaning"},
+            {"id": 41, "pos": "NOUN", "definition": "A member-owned financial institution"},
+            {"id": 42, "pos": "NOUN", "definition": "An extended meaning"},
         ],
     }
     database = object()
@@ -653,15 +653,15 @@ async def test_single_word_grading_uses_search_candidate_full_inventory(monkeypa
 
 async def test_definition_grading_selects_another_sense_from_full_inventory():
     senses = [
-        Sense(1, 1, "noun", "core", definition=Definition(1, "A financial institution")),
-        Sense(2, 1, "noun", "rare", definition=Definition(2, "Land beside a river")),
+        Sense(1, 1, "NOUN", "CORE", definition=Definition(1, "A financial institution")),
+        Sense(2, 1, "NOUN", "RARE", definition=Definition(2, "Land beside a river")),
     ]
-    word = Word(1, "bank", "word", "done", senses=senses)
+    word = Word(1, "bank", "WORD", "DONE", senses=senses)
     question = Question(
         1,
         1,
         None,
-        "word_to_definition",
+        "WORD_TO_DEFINITION",
         '<t inf="base">bank</t>',
         Option("correct", "A financial institution", "Not sent"),
         [],
@@ -696,13 +696,13 @@ async def test_definition_grading_selects_another_sense_from_full_inventory():
 
 
 async def test_unknown_grading_sense_rejected_before_export():
-    sense = Sense(1, 1, "noun", "core", definition=Definition(1, "A financial institution"))
-    word = Word(1, "bank", "word", "done", senses=[sense])
+    sense = Sense(1, 1, "NOUN", "CORE", definition=Definition(1, "A financial institution"))
+    word = Word(1, "bank", "WORD", "DONE", senses=[sense])
     question = Question(
         1,
         1,
         None,
-        "word_to_definition",
+        "WORD_TO_DEFINITION",
         '<t inf="base">bank</t>',
         Option("correct", "A financial institution", "Not sent"),
         [],

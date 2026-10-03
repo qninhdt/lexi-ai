@@ -1,4 +1,3 @@
-{% set target_placement = target_placement | default("dialogue") %}
 ## Dialogue Completion
 
 ### Dialogue Construction
@@ -26,7 +25,7 @@
 - Keep options comparable in conversational register, fluency, and level of detail. Do not reveal the correct answer through superficial differences.
 - Explain why the correct reply appropriately continues the exchange and identify the specific misunderstanding or usage problem behind each distractor.
 
-{% if target_placement == "dialogue" %}
+{% if target_placement | default("DIALOGUE", true) == "DIALOGUE" %}
 ### Target in Dialogue
 
 - Include the complete target expression in at least one visible spoken turn, accurately using the selected Sense and applying Target Expression Tagging.
@@ -35,7 +34,7 @@
 - Do not make the correct response identifiable through superficial repetition of the target expression.
 - Answer options are not required to contain the target; prioritize natural conversational responses.
 
-{% elif target_placement == "options" %}
+{% elif target_placement == "OPTIONS" %}
 ### Target in Options
 
 - Establish a dialogue that naturally creates an opportunity to use the selected target expression in the missing reply.

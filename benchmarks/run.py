@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,7 +20,7 @@ from examples._config import DEFAULT_ENV_FILE, load_provider_values, provider_op
 from lexi_ai import DecisionConfig, DecisionMode, LLMConfig, TokenUsage
 from lexi_ai.inference.decision import DecisionModel
 from lexi_ai.inference.prompting import render_decision
-from lexi_ai.vocab import POS_TAGS, QUESTION_FORMATS
+from lexi_ai.vocab import POS_TAGS, QUESTION_FORMATS, ResponseFormat
 
 from .scoring import summarize, validate_pricing
 from .workers import map_workers, validate_workers
@@ -52,13 +53,26 @@ def prepare_case(case):
     expected = case.get("expected")
     if not isinstance(context, dict) or not isinstance(expected, dict):
         raise ValueError("case.input and case.expected must be objects")
+    # Historical benchmark evidence is immutable. Adapt only lexical tokens on a
+    # detached input at ingestion, never the stored case or the public Lexi API.
+    context = deepcopy(context)
+    if isinstance(context.get("question_type"), str):
+        context["question_type"] = context["question_type"].upper()
+    for field in ("word", "matched_word"):
+        word = context.get(field)
+        if isinstance(word, dict) and isinstance(word.get("senses"), list):
+            for sense in word["senses"]:
+                if isinstance(sense, dict) and isinstance(sense.get("pos"), str):
+                    sense["pos"] = sense["pos"].upper()
     for field in ("answer", "question", "meaning"):
         if field == "answer" or field in context:
             if not _text(context.get(field)):
                 raise ValueError(f"input.{field} must be a nonempty string")
     if task == "grade_single_word_1":
         if not _text(context.get("question")) or context.get("question_type") not in {
-            kind for kind, formats in QUESTION_FORMATS.items() if "single_word" in formats
+            kind
+            for kind, formats in QUESTION_FORMATS.items()
+            if ResponseFormat.SINGLE_WORD in formats
         }:
             raise ValueError("input requires question and a single-word question_type")
     elif task == "grade_single_word_2" and not _text(context.get("question")):
@@ -138,7 +152,9 @@ def load_settings(path, benchmark):
     validate_workers(config.get("workers", 4))
     if any(field in config for field in ("api_key", "base_url", "model")):
         raise ValueError("provider key/URL/model belong in the root .env, not benchmark config")
-    mode = DecisionMode(config.get("mode"))
+    # The benchmark file is a retained evidence protocol, not a public API DTO.
+    mode = DecisionMode(str(config.get("mode")).upper())
+    config["mode"] = mode
     if mode not in MODES:
         raise ValueError("benchmark mode must be decision_only or llm_only")
     if "structured_outputs" in config:

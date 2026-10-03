@@ -1,6 +1,6 @@
 """Word identity/publication writes and one-statement dictionary reads."""
 
-from sqlalchemy import insert, literal, select
+from sqlalchemy import and_, insert, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from lexi_ai import schema as row
@@ -18,13 +18,14 @@ from lexi_ai.relations.storage import definition_hash
 from lexi_ai.schema import Word, WordAlias, WordSource
 from lexi_ai.text import match_key
 from lexi_ai.themes.namespace import theme_scope
+from lexi_ai.vocab import GenerationState, ResolutionState
 
 
 async def consumed_word(session: AsyncSession, source_id: int, *, theme_key=None) -> int | None:
     consumed = (
         select(Word.id)
         .join(WordSource)
-        .where(WordSource.source_id == source_id, Word.generation_state == "done")
+        .where(WordSource.source_id == source_id, Word.generation_state == GenerationState.DONE)
         .scalar_subquery()
     )
     _, valid = theme_scope(theme_key=theme_key)
@@ -37,13 +38,18 @@ async def consumed_word(session: AsyncSession, source_id: int, *, theme_key=None
 async def publish_identity(session, source_id, lemma, entry_type, aliases) -> Word:
     key = match_key(lemma)
     word = await session.scalar(select(Word).where(Word.match_key == key))
-    if word is not None and word.generation_state == "done":
+    if word is not None and word.generation_state == GenerationState.DONE:
         raise WordCollisionError("selected entry collides with a completed Word")
     association = await session.scalar(select(WordSource).where(WordSource.source_id == source_id))
     if association is not None and (word is None or association.word_id != word.id):
         raise WordCollisionError("source entry is already associated with another Word")
     if word is None:
-        word = Word(lemma=lemma, match_key=key, entry_type=entry_type, generation_state="pending")
+        word = Word(
+            lemma=lemma,
+            match_key=key,
+            entry_type=entry_type,
+            generation_state=GenerationState.PENDING,
+        )
         session.add(word)
         await session.flush()
     else:
@@ -87,7 +93,7 @@ async def target_words(session, lemmas):
         ).all()
     )
     missing = [
-        dict(match_key=key, lemma=lemma, generation_state="pending")
+        dict(match_key=key, lemma=lemma, generation_state=GenerationState.PENDING)
         for key, lemma in normalized.items()
         if key not in found
     ]
@@ -169,19 +175,19 @@ def sense_view(data, fingerprints=None):
         if identifier is not None:
             fingerprint = fingerprints.get(identifier)
             state = (
-                "resolved"
+                ResolutionState.RESOLVED
                 if fingerprint is not None and fingerprint == edge["target_hash"]
-                else "pending"
+                else ResolutionState.PENDING
             )
         else:
-            state = "unresolvable" if edge["attempted"] else "pending"
+            state = ResolutionState.UNRESOLVABLE if edge["attempted"] else ResolutionState.PENDING
         relations.append(
             RelationView(
                 edge["rel_type"],
                 edge["to_word_id"],
                 edge["to_word_lemma"],
                 state,
-                identifier if state == "resolved" else None,
+                identifier if state is ResolutionState.RESOLVED else None,
             )
         )
     return SenseView(**data, relations=relations)
@@ -220,7 +226,11 @@ def aliases(word_id, *, correlate=()):
 
 async def get_word(db, word_id, theme_id=None, *, theme_key=None):
     identifier, valid = theme_scope(theme_id, theme_key)
-    scopes = [Word.id == word_id, Word.generation_state == "done"]
+    cache = db.content_cache
+    cache_key = ("word", word_id, theme_id, theme_key)
+    if cache is not None and (cached := cache.get(cache_key, WordView)) is not None:
+        return cached
+    scopes = [Word.id == word_id, Word.generation_state == GenerationState.DONE]
     scopes.append(select(row.Sense.id).where(row.Sense.word_id == Word.id).exists())
     if theme_id is not None or theme_key is not None:
         missing = (
@@ -283,15 +293,29 @@ async def get_word(db, word_id, theme_id=None, *, theme_key=None):
     data["aliases"] = [item["content"] for item in data["aliases"]]
     data["related"] = [WordRelationView(**item) for item in data["related"]]
     data["type"] = data.pop("entry_type")
-    return WordView(**data)
+    word = WordView(**data)
+    if cache is not None:
+        cache.put(cache_key, word)
+        if theme_id is None and theme_key is None:
+            for sense in word.senses:
+                cache.put(("sense", sense.id, None), sense)
+    return word
 
 
 async def get_senses(db, ids, theme_id=None):
     if not ids:
         return []
-    by_id = {}
+    cache = db.content_cache
+    by_id = {
+        identifier: cached
+        for identifier in ids
+        if cache is not None
+        and (cached := cache.get(("sense", identifier, theme_id), SenseView)) is not None
+    }
     # Only requested IDs are queried; chunking bounds SQL parameter counts.
-    unique_ids = list(dict.fromkeys(ids))
+    unique_ids = list(dict.fromkeys(identifier for identifier in ids if identifier not in by_id))
+    if not unique_ids:
+        return [by_id[identifier] for identifier in ids]
     fields = sense_fields(theme_id)
     async with db.read() as connection:
         for start in range(0, len(unique_ids), 500):
@@ -303,7 +327,60 @@ async def get_senses(db, ids, theme_id=None):
             senses, evidence = (await connection.execute(statement)).one()
             fingerprints = evidence_fingerprints(evidence)
             for data in senses:
-                by_id[data["id"]] = sense_view(data, fingerprints)
+                sense = sense_view(data, fingerprints)
+                by_id[sense.id] = sense
+                if cache is not None:
+                    cache.put(("sense", sense.id, theme_id), sense)
+    return [by_id[identifier] for identifier in ids if identifier in by_id]
+
+
+async def get_sense_previews(db, ids):
+    """Bulk neutral UI facts, without examples, graph or Question hydration."""
+    cache = db.content_cache
+    by_id = {
+        identifier: cached
+        for identifier in ids
+        if cache is not None and (cached := cache.get(("preview", identifier))) is not None
+    }
+    missing = list(dict.fromkeys(identifier for identifier in ids if identifier not in by_id))
+    if missing:
+        async with db.read() as connection:
+            for start in range(0, len(missing), 500):
+                records = (
+                    (
+                        await connection.execute(
+                            select(
+                                row.Sense.id.label("sense_id"),
+                                row.Sense.word_id,
+                                row.Word.lemma,
+                                row.Word.entry_type,
+                                row.Sense.pos,
+                                row.Sense.tier,
+                                row.Sense.cefr_level,
+                                row.Sense.register,
+                                row.Sense.ipa_uk,
+                                row.Sense.ipa_us,
+                                row.Definition.content.label("definition"),
+                            )
+                            .join(row.Word, row.Word.id == row.Sense.word_id)
+                            .outerjoin(
+                                row.Definition,
+                                and_(
+                                    row.Definition.sense_id == row.Sense.id,
+                                    row.Definition.theme_id.is_(None),
+                                ),
+                            )
+                            .where(row.Sense.id.in_(missing[start : start + 500]))
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+                for record in records:
+                    value = dict(record)
+                    by_id[record.sense_id] = value
+                    if cache is not None:
+                        cache.put(("preview", record.sense_id), value)
     return [by_id[identifier] for identifier in ids if identifier in by_id]
 
 
@@ -331,7 +408,7 @@ async def meaning_inventory(db, *, word_id=None, owner_of=None):
             (
                 await connection.execute(
                     select(Word.id, Word.lemma, meanings.label("senses")).where(
-                        Word.id == identifier, Word.generation_state == "done"
+                        Word.id == identifier, Word.generation_state == GenerationState.DONE
                     )
                 )
             )

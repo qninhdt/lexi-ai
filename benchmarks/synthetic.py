@@ -12,17 +12,18 @@ from lexi_ai.config import MAX_QUERY_LENGTH
 from lexi_ai.inference.prompting import render_decision, render_prompt
 from lexi_ai.inference.usage import merge_usage
 from lexi_ai.text import strip_markup
+from lexi_ai.vocab import EntryType, QuestionType
 from lexi_ai.words.search import search
 from lexi_ai.words.storage import meaning_inventory
 
 from .run import PROMPTS, prepare_case
 
 QUESTION_TYPES = (
-    "definition_to_word",
-    "context_to_word",
-    "cloze_to_word",
-    "word_to_definition",
-    "word_to_usage",
+    QuestionType.DEFINITION_TO_WORD,
+    QuestionType.CONTEXT_TO_WORD,
+    QuestionType.CLOZE_TO_WORD,
+    QuestionType.WORD_TO_DEFINITION,
+    QuestionType.WORD_TO_USAGE,
 )
 GROUP_WEIGHTS = {"word": 30, "phrasal_verb": 12, "idiom": 9, "phrase": 6, "expression": 3}
 
@@ -134,12 +135,12 @@ def answer_types(job, word, sense):
     pool = (
         SINGLE_WORD
         if kind in QUESTION_TYPES[:3]
-        else (DEFINITION if kind == "word_to_definition" else USAGE)
+        else (DEFINITION if kind == QuestionType.WORD_TO_DEFINITION else USAGE)
     )
     pool = list(pool)
-    if sense.forms and kind != "word_to_definition":
+    if sense.forms and kind != QuestionType.WORD_TO_DEFINITION:
         pool.append("inflection")
-    if word.type == "phrasal_verb" and kind in QUESTION_TYPES[:3]:
+    if word.type == EntryType.PHRASAL_VERB and kind in QUESTION_TYPES[:3]:
         pool.append("particle")
     if len(word.senses) < 2:
         pool = [item for item in pool if item != "other_sense"]
@@ -164,16 +165,16 @@ class AnswerList(RootModel[list[AnswerText]]):
 def synthesis_context(question, word, kinds):
     context = {"target": word.lemma, "answer_types": kinds}
     kind = question.question_type
-    if kind == "definition_to_word":
+    if kind == QuestionType.DEFINITION_TO_WORD:
         context["definition"] = question.content
-    elif kind == "context_to_word":
+    elif kind == QuestionType.CONTEXT_TO_WORD:
         context["context"] = question.content
-    elif kind == "cloze_to_word":
+    elif kind == QuestionType.CLOZE_TO_WORD:
         context["target"] = strip_markup(question.correct.content)
         context["sentence"] = question.content
-    elif kind == "word_to_definition":
+    elif kind == QuestionType.WORD_TO_DEFINITION:
         context["definition"] = question.correct.content
-    elif kind == "word_to_usage":
+    elif kind == QuestionType.WORD_TO_USAGE:
         tagged, separator, meaning = question.content.partition("</t> — ")
         if not separator or not meaning:
             raise ValueError("Question has no saved Word/meaning anchor")
@@ -227,7 +228,7 @@ def stage_contexts(question, word, sense):
                 "matched_word": meanings,
             },
         }
-    if question.question_type == "word_to_definition":
+    if question.question_type == QuestionType.WORD_TO_DEFINITION:
         return {
             "grade_word_to_definition_1": {**base, "word": meanings},
             "grade_word_to_definition_2": {

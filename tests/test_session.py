@@ -45,7 +45,7 @@ async def test_parallel_relation_inference_serializes_borrowed_session_sql(
         lexicon = Lexicon(session=session, llm=object(), decision_model=Decision("candidate_1"))
         try:
             results = await lexicon.resolve_relations(batch_size=3)
-            assert [result.state for result in results] == ["resolved"] * 3
+            assert [result.state for result in results] == ["RESOLVED"] * 3
             assert peak == 1
             await session.rollback()
         finally:
@@ -88,10 +88,13 @@ async def test_host_session_keeps_transaction_and_lifecycle_ownership(tmp_path):
         async with db.sessions() as session:
             adapter = SessionDatabase(session)
             lexicon = Lexicon(session=session, llm=object())
+            assert lexicon.db.content_cache is None and lexicon.db.question_cache is None
+            with pytest.raises(ValueError, match="borrowed transaction"):
+                await lexicon.start()
             async with session.begin():
                 async with adapter.transaction() as borrowed:
                     assert borrowed is session
-                    borrowed.add(Word(lemma="bank", match_key="bank", generation_state="done"))
+                    borrowed.add(Word(lemma="bank", match_key="bank", generation_state="DONE"))
                     await borrowed.flush()
                 await lexicon.close()
                 assert session.in_transaction()
@@ -144,8 +147,8 @@ async def test_transaction_rolls_back_partial_publish(tmp_path):
                     Word(
                         lemma="glisten",
                         match_key="glisten",
-                        entry_type="word",
-                        generation_state="done",
+                        entry_type="WORD",
+                        generation_state="DONE",
                     )
                 )
                 await session.flush()

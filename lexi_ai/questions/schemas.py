@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from lexi_ai.errors import InvalidOutputError
 from lexi_ai.models import Sense, Word
 from lexi_ai.text import answer_key, parse_marked_example, strip_markup
-from lexi_ai.vocab import QUESTION_TYPES
+from lexi_ai.vocab import QUESTION_TYPES, QuestionType, TargetPlacement
 
 
 class Strict(BaseModel):
@@ -36,7 +36,13 @@ class AnchoredQuestionBatch(Strict):
     questions: list[AnchoredQuestion]
 
 
-ANCHORED_QUESTION_TYPES = frozenset({"definition_to_word", "word_to_definition", "context_to_word"})
+ANCHORED_QUESTION_TYPES = frozenset(
+    {
+        QuestionType.DEFINITION_TO_WORD,
+        QuestionType.WORD_TO_DEFINITION,
+        QuestionType.CONTEXT_TO_WORD,
+    }
+)
 
 
 class GeneratedQuestion(Strict):
@@ -61,11 +67,11 @@ _NAME = re.compile(r"[A-Za-z][a-z]+(?:-[A-Za-z][a-z]+)?\Z")
 
 def validate_batch(
     batch: QuestionBatch,
-    kind: str,
+    kind: QuestionType,
     count: int,
     distractor_count: int,
     *,
-    target_placement: str | None = None,
+    target_placement: TargetPlacement | None = None,
 ) -> None:
     if kind not in QUESTION_TYPES or len(batch.questions) != count:
         raise InvalidOutputError("Question batch has an unexpected type or size")
@@ -78,8 +84,8 @@ def validate_batch(
         if len({answer_key(strip_markup(o.content)) for o in options}) != len(options):
             raise InvalidOutputError("correct or distractor option repeated")
         content = question.content
-        if kind == "dialogue_completion":
-            if target_placement not in {"dialogue", "options"}:
+        if kind == QuestionType.DIALOGUE_COMPLETION:
+            if target_placement not in set(TargetPlacement):
                 raise InvalidOutputError("invalid dialogue target placement")
             if (
                 not isinstance(content, list)
@@ -94,9 +100,9 @@ def validate_batch(
                 raise InvalidOutputError("dialogue must have named turns and one missing reply")
             texts = [turn.text for turn in content if turn.text is not None]
             marked = [bool(parse_marked_example(text)[1]) for text in texts]
-            if target_placement == "dialogue" and not any(marked):
+            if target_placement == TargetPlacement.DIALOGUE and not any(marked):
                 raise InvalidOutputError("dialogue does not mark the target")
-            if target_placement == "options":
+            if target_placement == TargetPlacement.OPTIONS:
                 if any(marked):
                     raise InvalidOutputError(
                         "dialogue must hide the target when placement is options"
@@ -108,10 +114,14 @@ def validate_batch(
             continue
         if not isinstance(content, str) or not content.strip() or _INSTRUCTION.match(content):
             raise InvalidOutputError("invalid learner-facing Question content")
-        if kind == "cloze_to_word" and content.count("_") != 1:
+        if kind == QuestionType.CLOZE_TO_WORD and content.count("_") != 1:
             raise InvalidOutputError("cloze requires exactly one full-answer blank")
         spans = parse_marked_example(content)[1]
-        if kind in {"word_to_definition", "word_to_usage", "meaning_in_context"}:
+        if kind in {
+            QuestionType.WORD_TO_DEFINITION,
+            QuestionType.WORD_TO_USAGE,
+            QuestionType.MEANING_IN_CONTEXT,
+        }:
             if not spans:
                 raise InvalidOutputError("target surface is not marked")
 
@@ -161,28 +171,30 @@ def _reveals_target(text: str, sequences: set[tuple[str, ...]]) -> bool:
 
 def validate_targets(
     question: GeneratedQuestion,
-    kind: str,
+    kind: QuestionType,
     word: Word,
     sense: Sense,
     *,
-    target_placement: str | None,
+    target_placement: TargetPlacement | None,
 ) -> None:
     sequences = _target_sequences(word, sense)
-    if kind == "dialogue_completion":
+    if kind == QuestionType.DIALOGUE_COMPLETION:
         for turn in question.content:
             if turn.text is None:
                 continue
-            if target_placement == "options" and _reveals_target(turn.text, sequences):
+            if target_placement == TargetPlacement.OPTIONS and _reveals_target(
+                turn.text, sequences
+            ):
                 raise InvalidOutputError("dialogue reveals the target when placement is options")
             _validate_marked_target(turn.text, sequences, required=False)
         for option in [question.correct, *question.distractors]:
             _validate_marked_target(
-                option.content, sequences, required=target_placement == "options"
+                option.content, sequences, required=target_placement == TargetPlacement.OPTIONS
             )
-    if kind == "word_to_definition":
+    if kind == QuestionType.WORD_TO_DEFINITION:
         valid = {answer_key(sense.definition.content)} if sense.definition is not None else set()
         if any(answer_key(option.content) in valid for option in question.distractors):
             raise InvalidOutputError("distractor repeats a trusted definition")
-    if kind in {"definition_to_word", "context_to_word"}:
+    if kind in {QuestionType.DEFINITION_TO_WORD, QuestionType.CONTEXT_TO_WORD}:
         if any(_components(option.content) in sequences for option in question.distractors):
             raise InvalidOutputError("distractor repeats a licensed target expression")

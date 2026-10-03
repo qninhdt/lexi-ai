@@ -19,14 +19,14 @@ class LLM:
             return stage_payload(
                 {
                     "lemma": "bank",
-                    "type": "word",
+                    "type": "WORD",
                     "aliases": [],
                     "related": [],
                     "senses": [
                         {
                             "definition": "A place to keep money",
-                            "pos": "noun",
-                            "tier": "core",
+                            "pos": "NOUN",
+                            "tier": "CORE",
                             "cefr_level": "A1",
                             "register": None,
                             "examples": ['The <t inf="base">bank</t> opens early.'],
@@ -61,7 +61,7 @@ async def test_selected_search_generate_read_and_close(tmp_path, source):
         assert len(available) == 1
         word = await ai.generate(available[0].available_id, target="bank", example_count=1)
         assert word.lemma == "bank"
-        assert word.type == "word"
+        assert word.type == "WORD"
         assert (await ai.get_word(word.id)).senses[0].definition.content == (
             "A place to keep money"
         )
@@ -237,21 +237,21 @@ async def test_decision_only_requires_credentials_only_for_inference(tmp_path, s
         return SimpleNamespace(
             sense_id=1,
             content="Financial institution",
-            question_type="definition_to_word",
+            question_type="DEFINITION_TO_WORD",
             correct=SimpleNamespace(id="yes", content="bank"),
             distractors=[],
-            supports=lambda fmt: fmt in {"single_choice", "single_word"},
+            supports=lambda fmt: fmt in {"SINGLE_CHOICE", "SINGLE_WORD"},
         )
 
     monkeypatch.setattr("lexi_ai.questions.grade.get_question", question)
     try:
-        for fmt, answer in (("single_word", " BANK "), ("single_choice", "yes")):
+        for fmt, answer in (("SINGLE_WORD", " BANK "), ("SINGLE_CHOICE", "yes")):
             grade, usage = await lexicon.grade_answer(
                 1, fmt, answer, mode=DecisionMode.DECISION_ONLY, with_usage=True
             )
             assert grade.task_fit is True and usage == []
         with pytest.raises(MissingProviderError, match="decision model credentials"):
-            await lexicon.grade_answer(1, "single_word", "answer", mode=DecisionMode.DECISION_ONLY)
+            await lexicon.grade_answer(1, "SINGLE_WORD", "answer", mode=DecisionMode.DECISION_ONLY)
         await lexicon.db.create_schema(Base.metadata)
         assert await lexicon.resolve_relations(mode=DecisionMode.DECISION_ONLY) == []
         assert lexicon.decision_model.primary is None and lexicon.llm is None
@@ -271,18 +271,64 @@ async def test_public_grading_defaults_to_llm_without_jev(tmp_path, source, monk
     async def question(*args):
         return SimpleNamespace(
             content="A financial institution",
-            question_type="definition_to_word",
+            question_type="DEFINITION_TO_WORD",
             correct=SimpleNamespace(content="bank"),
-            supports=lambda fmt: fmt == "single_word",
+            supports=lambda fmt: fmt == "SINGLE_WORD",
         )
 
     monkeypatch.setattr("lexi_ai.questions.grade.get_question", question)
     try:
-        grade, usage = await lexicon.grade_answer(1, "single_word", "tree", with_usage=True)
+        grade, usage = await lexicon.grade_answer(1, "SINGLE_WORD", "tree", with_usage=True)
         assert grade.task_fit is False and grade.spelling_error is False
         assert grade.sense_id is None
         assert len(fallback.calls) == 1
         assert lexicon.decision_model.primary is None
         assert len(usage) == 1 and usage[0].input_tokens is None
+    finally:
+        await lexicon.close()
+
+
+async def test_public_api_list_questions_for_senses(tmp_path, source):
+    llm = LLM()
+    lexicon = Lexicon(
+        f"sqlite+aiosqlite:///{tmp_path / 'batch_api.db'}",
+        str(source),
+        llm=llm,
+    )
+    try:
+        from lexi_ai.models import Option, Question
+        from lexi_ai.questions.storage import append
+        from lexi_ai.schema import Base, Sense, Word
+
+        await lexicon.db.create_schema(Base.metadata)
+        async with lexicon.db.transaction() as session:
+            word = Word(lemma="coin", match_key="coin", entry_type="WORD", generation_state="DONE")
+            session.add(word)
+            await session.flush()
+            sense = Sense(word_id=word.id, pos="NOUN", tier="CORE")
+            session.add(sense)
+            await session.flush()
+
+        q = Question(
+            0,
+            sense.id,
+            None,
+            "DEFINITION_TO_WORD",
+            "A metal currency",
+            Option("1", "coin", "exp"),
+            [],
+        )
+        await append(lexicon.db, [q])
+
+        res = await lexicon.list_questions_for_senses([sense.id])
+        assert len(res) == 1
+        assert res[0].sense_id == sense.id
+        assert res[0].question_type == "DEFINITION_TO_WORD"
+        from lexi_ai import QuestionType
+
+        selected = await lexicon.retrieve_questions(
+            [(sense.id, QuestionType.DEFINITION_TO_WORD, 1)]
+        )
+        assert selected == res
     finally:
         await lexicon.close()

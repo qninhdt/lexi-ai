@@ -15,11 +15,11 @@ def prompt_context(data, tag="question_context"):
 
 def bound_content(context):
     kind = context["question_type"]
-    if kind == "definition_to_word":
+    if kind == "DEFINITION_TO_WORD":
         return context["definition"]
-    if kind == "word_to_definition":
+    if kind == "WORD_TO_DEFINITION":
         return f'<t inf="base">{context["word"]}</t>'
-    if kind == "word_to_usage":
+    if kind == "WORD_TO_USAGE":
         return f'<t inf="base">{context["word"]}</t> — {context["definition"]}'
     return None
 
@@ -32,6 +32,7 @@ def test_question_templates_render_instructions_separate_from_untrusted_content(
         question_type=kind,
         theme={"voice": "pirate", "diction": "nautical"},
         context={"word": marker},
+        target_placement=None,
     )
     assert marker not in instruction
     assert prompt_context(data) == {"word": marker}
@@ -43,26 +44,26 @@ def test_word_template_keeps_evidence_out_of_system_role():
         "words/prompts/inventory.jinja",
         target="bank",
         examples_per_sense=2,
-        references=[{"id": "c1", "pos": "noun", "definition": "untrusted content"}],
+        references=[{"id": "c1", "pos": "NOUN", "definition": "untrusted content"}],
     )
     assert "untrusted content" not in instruction
     assert prompt_context(data, "word_request") == {
         "target": "bank",
-        "references": [{"id": "c1", "pos": "noun", "definition": "untrusted content"}],
+        "references": [{"id": "c1", "pos": "NOUN", "definition": "untrusted content"}],
     }
 
 
-@pytest.mark.parametrize("placement", [None, "dialogue", "options"])
+@pytest.mark.parametrize("placement", [None, "DIALOGUE", "OPTIONS"])
 def test_dialogue_target_placement_defaults_to_visible_dialogue(placement):
     context = {} if placement is None else {"target_placement": placement}
     instruction, _ = render_prompt(
         "questions/prompts/generate_question.jinja",
-        question_type="dialogue_completion",
+        question_type="DIALOGUE_COMPLETION",
         theme=None,
         context={},
         **context,
     )
-    expected = "Target in Options" if placement == "options" else "Target in Dialogue"
+    expected = "Target in Options" if placement == "OPTIONS" else "Target in Dialogue"
     assert expected in instruction
 
 

@@ -109,19 +109,19 @@ The input contains the reference target, the task's definition or context, and a
 Generate exactly {{ context.answer_types | length }} nonblank strings, one per answer type in the supplied order. These types are writing requirements, not labels to return.
 
 # Understand the question
-{% if question_type == "definition_to_word" %}
+{% if question_type == "DEFINITION_TO_WORD" %}
 - The learner must name the lexical expression described by `definition`. `target` is the reference expression.
 - Use the whole definition, including important distinguishing details. A word with only a related meaning is not automatically a valid answer.
 - Unless the requested answer type says otherwise, return just the word or multi-word expression, not a definition, explanation, or sentence.
-{% elif question_type == "context_to_word" %}
+{% elif question_type == "CONTEXT_TO_WORD" %}
 - The learner must supply a lexical expression that fits the situation in `context`. `target` is the reference expression.
 - Interpret the situation as a whole: the answer must make semantic sense and fit the implied role or action, not merely share its topic.
 - Unless the requested answer type says otherwise, return only the lexical expression. Do not rewrite the context or invent a different situation to make an answer fit.
-{% elif question_type == "cloze_to_word" %}
+{% elif question_type == "CLOZE_TO_WORD" %}
 - The learner must fill the blank in `sentence`. `target` is the correctly inflected reference answer for that blank, not necessarily a dictionary base form.
 - Mentally insert each answer into the original sentence. Number, tense, word order, required particles, and the intended meaning must fit unless the requested type deliberately changes one of them.
 - Normally return only the missing expression. Do not edit surrounding words to accommodate it or return the completed sentence unless the answer type requests a whole sentence.
-{% elif question_type == "word_to_definition" %}
+{% elif question_type == "WORD_TO_DEFINITION" %}
 - The learner must explain the meaning of `target`. `definition` is the reference meaning for this writing task, not wording the learner must copy.
 - A sufficient definition preserves the identifying semantic components; it can be short, paraphrased, or a precise equivalent. Mere length does not determine completeness.
 - Distinguish leaving information out from stating something false. A surface spelling or grammar error need not alter the meaning of the definition.

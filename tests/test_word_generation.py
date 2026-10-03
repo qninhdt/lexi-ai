@@ -24,14 +24,14 @@ from lexi_ai.words.storage import get_word
 def payload(lemma="bank", source_ref="c1"):
     return {
         "lemma": lemma,
-        "type": "word",
+        "type": "WORD",
         "aliases": [],
         "related": [],
         "senses": [
             {
                 "definition": "A place for money",
-                "pos": "noun",
-                "tier": "core",
+                "pos": "NOUN",
+                "tier": "CORE",
                 "cefr_level": "A1",
                 "register": None,
                 "examples": ['I went to the <t inf="base">bank</t>.'],
@@ -110,7 +110,7 @@ def test_source_hyphen_is_not_rewritten_as_whitespace():
             SourceSense(101, "verb", "find information"),
         ],
     )
-    output = WordOutput.model_validate(payload(lemma="look up") | {"type": "phrasal_verb"})
+    output = WordOutput.model_validate(payload(lemma="look up") | {"type": "PHRASAL_VERB"})
     output.senses[0].pos = "verb"
     validate_evidence(output, phrasal, [], target="look up")
 
@@ -119,12 +119,12 @@ def test_generation_schemas_split_inventory_and_enrichment_with_strict_objects()
     from openai.lib._pydantic import to_strict_json_schema
 
     schema = to_strict_json_schema(InventoryOutput)
-    assert set(schema["properties"]["type"]["enum"]) == {
-        "word",
-        "phrasal_verb",
-        "idiom",
-        "phrase",
-        "expression",
+    assert set(schema["$defs"]["EntryType"]["enum"]) == {
+        "WORD",
+        "PHRASAL_VERB",
+        "IDIOM",
+        "PHRASE",
+        "EXPRESSION",
     }
     assert schema["additionalProperties"] is False
     assert schema["$defs"]["InventorySense"]["additionalProperties"] is False
@@ -132,7 +132,7 @@ def test_generation_schemas_split_inventory_and_enrichment_with_strict_objects()
     assert schema["properties"]["senses"]["minItems"] == 1
     enrichment = to_strict_json_schema(SenseEnrichment)
     assert enrichment["additionalProperties"] is False
-    assert "enum" in enrichment["$defs"]["SenseRelationOutput"]["properties"]["rel_type"]
+    assert "enum" in enrichment["$defs"]["SenseRelationType"]
     sense_fields = enrichment["properties"]
     assert not {"definition", "pos", "lemma", "senses"} & sense_fields.keys()
     assert sense_fields["sources"]["items"]["type"] == "string"
@@ -187,7 +187,7 @@ async def test_publish_reuse_and_atomic_rollback(db):
     assert llm.calls == 2
     assert source.calls == 1
     async with db.transaction() as session:
-        assert (await session.get(Word, first)).generation_state == "done"
+        assert (await session.get(Word, first)).generation_state == "DONE"
         assert len((await session.scalars(select(Definition))).all()) == 1
         assert len((await session.scalars(select(Sense))).all()) == 1
         assert len((await session.scalars(select(WordSource))).all()) == 1
@@ -202,7 +202,7 @@ async def test_collision_does_not_overwrite_done_word(db):
     with pytest.raises(WordCollisionError):
         await generate_word(db, second, LLM(payload()), encode_available_id(2), 1, target="bank")
     async with db.transaction() as session:
-        assert (await session.get(Word, word_id)).generation_state == "done"
+        assert (await session.get(Word, word_id)).generation_state == "DONE"
         assert len((await session.scalars(select(WordSource))).all()) == 1
 
 
@@ -239,7 +239,7 @@ async def test_multi_pos_pronunciation_and_system_derived_phrase_family(db):
     noun = output["senses"][0]
     verb = dict(
         noun,
-        pos="verb",
+        pos="VERB",
         sources=["c2"],
         definition="Turn an aircraft",
     )
@@ -252,15 +252,15 @@ async def test_multi_pos_pronunciation_and_system_derived_phrase_family(db):
             await session.scalars(select(Sense).where(Sense.word_id == word_id).order_by(Sense.id))
         ).all()
         assert [(s.pos, s.ipa_uk, s.ipa_us) for s in senses] == [
-            ("noun", "bæŋk", "bæŋk"),
-            ("verb", "verb-uk", "verb-us"),
+            ("NOUN", "bæŋk", "bæŋk"),
+            ("VERB", "verb-uk", "verb-us"),
         ]
         relation = await session.scalar(
             select(WordRelation).where(WordRelation.from_word_id == word_id)
         )
-        assert relation.rel_type == "part_of_phrasal_family"
+        assert relation.rel_type == "PART_OF_PHRASAL_FAMILY"
         target = await session.get(Word, relation.to_word_id)
-        assert (target.lemma, target.generation_state) == ("bank on", "pending")
+        assert (target.lemma, target.generation_state) == ("bank on", "PENDING")
 
 
 async def test_selected_failures_leave_no_partial_publication(db):
@@ -324,15 +324,15 @@ async def test_flat_minimal_evidence_and_local_provenance(db, monkeypatch):
             common = {
                 "target": "bank",
                 "references": [
-                    {"id": "c1", "pos": "noun", "definition": "Money", "cefr_level": "A1"},
+                    {"id": "c1", "pos": "NOUN", "definition": "Money", "cefr_level": "A1"},
                     {
                         "id": "c2",
-                        "pos": "verb",
+                        "pos": "VERB",
                         "definition": "Tilt an aircraft",
                         "cefr_level": "C1",
                     },
-                    {"id": "w1", "pos": "n", "definition": "Money storage"},
-                    {"id": "w2", "pos": "v", "definition": "Tilt"},
+                    {"id": "w1", "pos": "NOUN", "definition": "Money storage"},
+                    {"id": "w2", "pos": "VERB", "definition": "Tilt"},
                 ],
             }
             if schema is InventoryOutput:
@@ -340,7 +340,7 @@ async def test_flat_minimal_evidence_and_local_provenance(db, monkeypatch):
             else:
                 assert request == common | {
                     "word": {k: output[k] for k in ("lemma", "type", "aliases", "related")},
-                    "sense": {"definition": "A place for money", "pos": "noun"},
+                    "sense": {"definition": "A place for money", "pos": "NOUN"},
                     "examples_per_sense": 1,
                 }
             for noise in (
@@ -394,15 +394,15 @@ def test_duplicate_citations_rejected_and_empty_citations_allowed():
 
 async def test_generated_type_independent_of_source_and_alias_identity(db):
     entry = SourceEntry(1, "colour", "colour", "phrase", [SourceSense(101, "noun", "Hue")])
-    output = payload(lemma="color") | {"aliases": ["colour"], "type": "word"}
+    output = payload(lemma="color") | {"aliases": ["colour"], "type": "WORD"}
     output["senses"][0]["examples"] = ['It has a bright <t inf="base">color</t>.']
     word_id = await generate_word(
         db, Source(entry), LLM(output), encode_available_id(1), 1, target="colour"
     )
     word = await get_word(db, word_id)
-    assert (word.lemma, word.type, word.aliases) == ("color", "word", ["colour"])
+    assert (word.lemma, word.type, word.aliases) == ("color", "WORD", ["colour"])
     async with db.read() as connection:
-        assert (await connection.scalar(select(Word.entry_type))) == "word"
+        assert (await connection.scalar(select(Word.entry_type))) == "WORD"
 
 
 @pytest.mark.parametrize("target", ["", " ", None, 1, "bank" * 1000])
@@ -423,7 +423,7 @@ def test_source_headword_notation_does_not_block_clean_lemma():
         "idiom",
         [SourceSense(101, "adjective", "Responsible for something")],
     )
-    output = WordOutput.model_validate(payload(lemma="in charge of") | {"type": "phrase"})
+    output = WordOutput.model_validate(payload(lemma="in charge of") | {"type": "PHRASE"})
     validate_evidence(output, entry, [], target="in charge of")
 
 
@@ -450,7 +450,7 @@ async def test_generation_passes_explicit_target_to_evidence_validation(db):
         "phrasal_verb",
         [SourceSense(101, "verb", "Exhaust")],
     )
-    output = payload(lemma="run out of") | {"type": "phrasal_verb"}
+    output = payload(lemma="run out of") | {"type": "PHRASAL_VERB"}
     output["senses"][0]["examples"] = ['We <t inf="past">ran out of</t> milk.']
     word_id = await generate_word(
         db,
@@ -472,14 +472,14 @@ async def test_usage_note_and_new_metadata_round_trip(db):
         "phrasal_verb",
         [SourceSense(101, "verb", "Postpone", cefr_level="B1")],
     )
-    output = payload(lemma="put off") | {"type": "phrasal_verb"}
+    output = payload(lemma="put off") | {"type": "PHRASAL_VERB"}
     sense = output["senses"][0]
     sense.update(
-        pos="verb",
+        pos="VERB",
         definition="Postpone",
-        tier="less_common",
+        tier="LESS_COMMON",
         cefr_level="B1",
-        register="informal",
+        register="INFORMAL",
         usage_note=note,
         examples=['We <t inf="base">put</t> it <t inf="base">off</t>.'],
     )
@@ -494,9 +494,9 @@ async def test_usage_note_and_new_metadata_round_trip(db):
         word.senses[0].register,
     ) == (
         note,
-        "less_common",
+        "LESS_COMMON",
         "B1",
-        "informal",
+        "INFORMAL",
     )
     output["senses"][0]["cefr_level"] = "B3"
     with pytest.raises(ValueError):
@@ -506,8 +506,8 @@ async def test_usage_note_and_new_metadata_round_trip(db):
 @pytest.mark.parametrize(
     "field,values",
     [
-        ("tier", ["core", "common", "less_common", "rare"]),
-        ("register", [None, "formal", "informal", "slang", "literary", "specialist"]),
+        ("tier", ["CORE", "COMMON", "LESS_COMMON", "RARE"]),
+        ("register", [None, "FORMAL", "INFORMAL", "SLANG", "LITERARY", "SPECIALIST"]),
         ("cefr_level", ["A1", "A2", "B1", "B2", "C1", "C2"]),
     ],
 )
@@ -557,11 +557,11 @@ def test_text_and_native_schemas_share_required_metadata_contract():
         sense = schema["$defs"]["SenseOutput"]
         properties = sense["properties"]
         assert {"tier", "register", "cefr_level"} <= set(sense["required"])
-        assert properties["tier"]["enum"] == ["core", "common", "less_common", "rare"]
-        assert properties["cefr_level"]["enum"] == ["A1", "A2", "B1", "B2", "C1", "C2"]
+        assert schema["$defs"]["Tier"]["enum"] == ["CORE", "COMMON", "LESS_COMMON", "RARE"]
+        assert schema["$defs"]["CEFRLevel"]["enum"] == ["A1", "A2", "B1", "B2", "C1", "C2"]
         assert "anyOf" not in properties["cefr_level"]
         assert properties["register"]["anyOf"] == [
-            {"enum": ["formal", "informal", "slang", "literary", "specialist"], "type": "string"},
+            {"$ref": "#/$defs/Register"},
             {"type": "null"},
         ]
 

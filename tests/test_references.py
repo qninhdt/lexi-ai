@@ -53,11 +53,10 @@ async def test_fetch_by_id_is_exact_and_read_only(source):
     assert hashlib.sha256(source.read_bytes()).hexdigest() == before
 
 
-async def test_search_preserves_distinct_eligible_ids(source):
-    found = await Cambridge(source).search("bank")
-    assert [item.id for item in found] == [1, 2]
-    assert await Cambridge(source).search("empty") == []
-    assert await Cambridge(source).search("pending") == []
+async def test_projection_preserves_distinct_eligible_ids(source):
+    found = await Cambridge(source).projection()
+    assert [item.id for item, _ in found] == [1, 2]
+    assert all(surfaces == ["bank", "bank"] for _, surfaces in found)
     assert await lookup("not/a/citation") == []
 
 

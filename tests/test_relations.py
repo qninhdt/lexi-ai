@@ -27,19 +27,19 @@ async def test_candidate_pos_filter_before_cap_and_explicit_resolution(tmp_path)
         await db.create_schema(Base.metadata)
         async with db.transaction() as session:
             source = Word(
-                lemma="glisten", match_key="glisten", entry_type="word", generation_state="done"
+                lemma="glisten", match_key="glisten", entry_type="WORD", generation_state="DONE"
             )
             target = Word(
-                lemma="shine", match_key="shine", entry_type="word", generation_state="done"
+                lemma="shine", match_key="shine", entry_type="WORD", generation_state="DONE"
             )
             session.add_all([source, target])
             await session.flush()
-            from_sense = Sense(word_id=source.id, pos="verb", tier="core")
+            from_sense = Sense(word_id=source.id, pos="VERB", tier="CORE")
             session.add(from_sense)
             for _ in range(12):
-                session.add(Sense(word_id=target.id, pos="noun", tier="common"))
+                session.add(Sense(word_id=target.id, pos="NOUN", tier="COMMON"))
             await session.flush()
-            verb = Sense(word_id=target.id, pos="verb", tier="common")
+            verb = Sense(word_id=target.id, pos="VERB", tier="COMMON")
             session.add(verb)
             await session.flush()
             session.add_all(
@@ -49,7 +49,7 @@ async def test_candidate_pos_filter_before_cap_and_explicit_resolution(tmp_path)
                     SenseRelation(
                         from_sense_id=from_sense.id,
                         to_word_id=target.id,
-                        rel_type="synonym",
+                        rel_type="SYNONYM",
                         gloss="emit light",
                     ),
                 ]
@@ -58,25 +58,25 @@ async def test_candidate_pos_filter_before_cap_and_explicit_resolution(tmp_path)
         assert [candidate.id for candidate in queued[0].candidates] == [verb.id]
         judge = Decision("candidate_1")
         outcome = await resolve_relations(db, judge)
-        assert outcome[0].state == "resolved"
+        assert outcome[0].state == "RESOLVED"
         state, questions = judge.calls[0]
         assert state == {
             "source": {"word": "glisten", "definition": "to give off small flashes"},
             "relation": {
-                "type": "synonym",
+                "type": "SYNONYM",
                 "rule": "The target sense must express essentially the same lexicalized concept "
                 "as the source sense.",
             },
             "target": {"word": "shine", "gloss": "emit light"},
         }
         assert set(questions["matched_sense"].criteria) == {"no_candidate", "candidate_1"}
-        assert (await get_word(db, source.id)).senses[0].relations[0].resolution_state == "resolved"
+        assert (await get_word(db, source.id)).senses[0].relations[0].resolution_state == "RESOLVED"
         async with db.transaction() as session:
             definition = await session.scalar(
                 select(Definition).where(Definition.sense_id == verb.id)
             )
             definition.content = "different meaning"
-        assert (await get_word(db, source.id)).senses[0].relations[0].resolution_state == "pending"
+        assert (await get_word(db, source.id)).senses[0].relations[0].resolution_state == "PENDING"
         assert len(await pending_relations(db, 20)) == 1
     finally:
         await db.close()
@@ -94,8 +94,8 @@ async def test_incomplete_evidence_errors_only_its_edge(tmp_path, missing):
                         id=i,
                         lemma=f"word{i}",
                         match_key=f"word{i}",
-                        entry_type="word",
-                        generation_state="done",
+                        entry_type="WORD",
+                        generation_state="DONE",
                     )
                     for i in range(1, 4)
                 ]
@@ -103,7 +103,7 @@ async def test_incomplete_evidence_errors_only_its_edge(tmp_path, missing):
             await session.flush()
             session.add_all(
                 [
-                    Sense(id=i, word_id=1 if i <= 2 else i - 1, pos="noun", tier="core")
+                    Sense(id=i, word_id=1 if i <= 2 else i - 1, pos="NOUN", tier="CORE")
                     for i in range(1, 5)
                 ]
             )
@@ -120,16 +120,16 @@ async def test_incomplete_evidence_errors_only_its_edge(tmp_path, missing):
             session.add_all(
                 [
                     SenseRelation(
-                        id=1, from_sense_id=1, to_word_id=2, rel_type="synonym", gloss="bad"
+                        id=1, from_sense_id=1, to_word_id=2, rel_type="SYNONYM", gloss="bad"
                     ),
                     SenseRelation(
-                        id=2, from_sense_id=2, to_word_id=3, rel_type="synonym", gloss="good"
+                        id=2, from_sense_id=2, to_word_id=3, rel_type="SYNONYM", gloss="good"
                     ),
                 ]
             )
         model = Decision("candidate_1")
         results = await resolve_relations(db, model)
-        assert [result.state for result in results] == ["error", "resolved"]
+        assert [result.state for result in results] == ["ERROR", "RESOLVED"]
         assert "neutral" in results[0].error
         assert len(model.calls) == 1
         async with db.read() as connection:
@@ -147,20 +147,20 @@ async def ready_relation(tmp_path):
     try:
         await db.create_schema(Base.metadata)
         async with db.transaction() as session:
-            source = Word(lemma="run", match_key="run", entry_type="word", generation_state="done")
+            source = Word(lemma="run", match_key="run", entry_type="WORD", generation_state="DONE")
             target = Word(
-                lemma="race", match_key="race", entry_type="word", generation_state="done"
+                lemma="race", match_key="race", entry_type="WORD", generation_state="DONE"
             )
             session.add_all([source, target])
             await session.flush()
-            source_sense = Sense(word_id=source.id, pos="verb", tier="core")
-            target_sense = Sense(word_id=target.id, pos="verb", tier="core")
+            source_sense = Sense(word_id=source.id, pos="VERB", tier="CORE")
+            target_sense = Sense(word_id=target.id, pos="VERB", tier="CORE")
             session.add_all([source_sense, target_sense])
             await session.flush()
             edge = SenseRelation(
                 from_sense_id=source_sense.id,
                 to_word_id=target.id,
-                rel_type="synonym",
+                rel_type="SYNONYM",
                 gloss="move quickly",
             )
             session.add_all(
@@ -194,11 +194,11 @@ async def test_resolution_revalidates_eligibility_before_writing(ready_relation,
         async def decide(self, state, questions, **kwargs):
             async with db.transaction() as session:
                 if change in {"target_state", "zero_target_state"}:
-                    (await session.get(Word, target_id)).generation_state = "pending"
+                    (await session.get(Word, target_id)).generation_state = "PENDING"
                 elif change == "target_pos":
-                    (await session.get(Sense, candidate_id)).pos = "noun"
+                    (await session.get(Sense, candidate_id)).pos = "NOUN"
                 elif change == "source_pos":
-                    (await session.get(Sense, source_id)).pos = "noun"
+                    (await session.get(Sense, source_id)).pos = "NOUN"
                 elif change == "target_owner":
                     source = await session.get(Sense, source_id)
                     candidate = await session.get(Sense, candidate_id)
@@ -217,7 +217,7 @@ async def test_resolution_revalidates_eligibility_before_writing(ready_relation,
             )
 
     results = await resolve_relations(db, ChangingDecision())
-    assert [result.state for result in results] == ["noop"]
+    assert [result.state for result in results] == ["NOOP"]
     async with db.transaction() as session:
         edge = await session.get(SenseRelation, edge_id)
         assert edge.to_sense_id is None
@@ -241,14 +241,14 @@ async def test_no_same_pos_decides_zero_without_decision_model(tmp_path):
     try:
         await db.create_schema(Base.metadata)
         async with db.transaction() as session:
-            source = Word(lemma="run", match_key="run", entry_type="word", generation_state="done")
+            source = Word(lemma="run", match_key="run", entry_type="WORD", generation_state="DONE")
             target = Word(
-                lemma="marathon", match_key="marathon", entry_type="word", generation_state="done"
+                lemma="marathon", match_key="marathon", entry_type="WORD", generation_state="DONE"
             )
             session.add_all([source, target])
             await session.flush()
-            verb = Sense(word_id=source.id, pos="verb", tier="common")
-            noun = Sense(word_id=target.id, pos="noun", tier="common")
+            verb = Sense(word_id=source.id, pos="VERB", tier="COMMON")
+            noun = Sense(word_id=target.id, pos="NOUN", tier="COMMON")
             session.add_all([verb, noun])
             await session.flush()
             session.add_all(
@@ -258,17 +258,17 @@ async def test_no_same_pos_decides_zero_without_decision_model(tmp_path):
                     SenseRelation(
                         from_sense_id=verb.id,
                         to_word_id=target.id,
-                        rel_type="synonym",
+                        rel_type="SYNONYM",
                         gloss="a race",
                     ),
                 ]
             )
         judge = Decision("999")
-        assert (await resolve_relations(db, judge))[0].state == "unresolvable"
+        assert (await resolve_relations(db, judge))[0].state == "UNRESOLVABLE"
         assert judge.calls == []
         assert (await get_word(db, source.id)).senses[0].relations[
             0
-        ].resolution_state == "unresolvable"
+        ].resolution_state == "UNRESOLVABLE"
     finally:
         await db.close()
 
@@ -278,14 +278,14 @@ async def test_resolved_edges_before_batch_do_not_starve_pending_edge(tmp_path):
     try:
         await db.create_schema(Base.metadata)
         async with db.transaction() as session:
-            source = Word(lemma="run", match_key="run", entry_type="word", generation_state="done")
+            source = Word(lemma="run", match_key="run", entry_type="WORD", generation_state="DONE")
             target = Word(
-                lemma="race", match_key="race", entry_type="word", generation_state="done"
+                lemma="race", match_key="race", entry_type="WORD", generation_state="DONE"
             )
             session.add_all([source, target])
             await session.flush()
-            target_sense = Sense(word_id=target.id, pos="verb", tier="core")
-            source_senses = [Sense(word_id=source.id, pos="verb", tier="core") for _ in range(51)]
+            target_sense = Sense(word_id=target.id, pos="VERB", tier="CORE")
+            source_senses = [Sense(word_id=source.id, pos="VERB", tier="CORE") for _ in range(51)]
             session.add_all([target_sense, *source_senses])
             await session.flush()
             session.add(Definition(sense_id=target_sense.id, content="move quickly"))
@@ -297,7 +297,7 @@ async def test_resolved_edges_before_batch_do_not_starve_pending_edge(tmp_path):
                         from_sense_id=sense.id,
                         to_word_id=target.id,
                         to_sense_id=target_sense.id,
-                        rel_type="synonym",
+                        rel_type="SYNONYM",
                         gloss="move quickly",
                         target_hash=definition_hash("move quickly"),
                         resolve_attempted_at="2026-09-29T00:00:00Z",
@@ -306,7 +306,7 @@ async def test_resolved_edges_before_batch_do_not_starve_pending_edge(tmp_path):
             pending = SenseRelation(
                 from_sense_id=source_senses[-1].id,
                 to_word_id=target.id,
-                rel_type="synonym",
+                rel_type="SYNONYM",
                 gloss="move quickly",
             )
             session.add(pending)
@@ -315,7 +315,7 @@ async def test_resolved_edges_before_batch_do_not_starve_pending_edge(tmp_path):
         assert [link.edge_id for link in queued] == [pending.id]
         assert (await resolve_relations(db, Decision("candidate_1"), batch_size=1))[
             0
-        ].state == "resolved"
+        ].state == "RESOLVED"
     finally:
         await db.close()
 
@@ -341,28 +341,28 @@ async def test_parallel_resolution_isolates_invalid_verdict_and_transport_error(
     try:
         await db.create_schema(Base.metadata)
         async with db.transaction() as session:
-            source = Word(lemma="run", match_key="run", entry_type="word", generation_state="done")
+            source = Word(lemma="run", match_key="run", entry_type="WORD", generation_state="DONE")
             target = Word(
-                lemma="race", match_key="race", entry_type="word", generation_state="done"
+                lemma="race", match_key="race", entry_type="WORD", generation_state="DONE"
             )
             session.add_all([source, target])
             await session.flush()
-            senses = [Sense(word_id=source.id, pos="verb", tier="core") for _ in range(2)]
-            target_sense = Sense(word_id=target.id, pos="verb", tier="core")
+            senses = [Sense(word_id=source.id, pos="VERB", tier="CORE") for _ in range(2)]
+            target_sense = Sense(word_id=target.id, pos="VERB", tier="CORE")
             session.add_all([*senses, target_sense])
             await session.flush()
             for sense in [*senses, target_sense]:
                 session.add(Definition(sense_id=sense.id, content="move quickly"))
             edges = [
                 SenseRelation(
-                    from_sense_id=sense.id, to_word_id=target.id, rel_type="synonym", gloss=gloss
+                    from_sense_id=sense.id, to_word_id=target.id, rel_type="SYNONYM", gloss=gloss
                 )
                 for sense, gloss in zip(senses, ["bad", "good"], strict=True)
             ]
             session.add_all(edges)
             await session.flush()
         results = await resolve_relations(db, IndependentDecisions())
-        assert [item.state for item in results] == ["error", "resolved"]
+        assert [item.state for item in results] == ["ERROR", "RESOLVED"]
         async with db.transaction() as session:
             bad, good = [await session.get(SenseRelation, edge.id) for edge in edges]
             assert bad.to_sense_id is None and bad.resolve_attempted_at is None

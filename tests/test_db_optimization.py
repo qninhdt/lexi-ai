@@ -9,10 +9,11 @@ from sqlalchemy import delete, event, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from lexi_ai import schema as row
+from lexi_ai.cache import Cache
 from lexi_ai.db.session import Database
 from lexi_ai.errors import InvalidResourceError
 from lexi_ai.models import Option, Question
-from lexi_ai.questions.storage import append, generation_context, retrieve
+from lexi_ai.questions.storage import append, generation_context, get_many, retrieve
 from lexi_ai.references.cambridge import SourceEntry, SourceSense, encode_available_id
 from lexi_ai.relations.storage import apply_resolution, pending_relations
 from lexi_ai.words.generate import generate_word
@@ -43,8 +44,8 @@ async def seed(db):
                     id=i,
                     lemma=f"word{i}",
                     match_key=f"word{i}",
-                    entry_type="word",
-                    generation_state="done",
+                    entry_type="WORD",
+                    generation_state="DONE",
                 )
                 for i in (1, 2)
             ],
@@ -57,7 +58,7 @@ async def seed(db):
             ],
         )
         await session.execute(
-            insert(row.Sense), [dict(id=i, word_id=i, pos="noun", tier="core") for i in (1, 2)]
+            insert(row.Sense), [dict(id=i, word_id=i, pos="NOUN", tier="CORE") for i in (1, 2)]
         )
         await session.execute(
             insert(row.Definition), [dict(sense_id=i, content=f"meaning{i}") for i in (1, 2)]
@@ -86,7 +87,7 @@ async def test_dense_slots_raw_sql_moves_deletes_and_cascades(optimized_db):
                     id=i,
                     sense_id=1,
                     theme_id=None if i < 7 else 1,
-                    question_type="definition_to_word" if i % 2 else "word_to_definition",
+                    question_type="DEFINITION_TO_WORD" if i % 2 else "WORD_TO_DEFINITION",
                     payload="{}",
                     position=999,
                     type_position=999,
@@ -100,7 +101,7 @@ async def test_dense_slots_raw_sql_moves_deletes_and_cascades(optimized_db):
         await session.execute(
             update(row.Question)
             .where(row.Question.id == 2)
-            .values(question_type="definition_to_word")
+            .values(question_type="DEFINITION_TO_WORD")
         )
         await session.execute(update(row.Question).where(row.Question.id == 5).values(theme_id=1))
         await session.execute(
@@ -141,7 +142,7 @@ async def test_single_definition_uniqueness_and_exact_style(optimized_db):
         assert word.senses[0].definition.theme_id == style
 
 
-async def test_random_retrieval_one_indexed_statement_and_namespace(optimized_db):
+async def test_warm_random_retrieval_one_indexed_statement_and_namespace(optimized_db):
     db = optimized_db
     await seed(db)
     artifacts = await append(
@@ -149,10 +150,12 @@ async def test_random_retrieval_one_indexed_statement_and_namespace(optimized_db
         [
             Question(0, 1, style, kind, str(i), Option("yes", "word1", "Fits"), [])
             for style in (None, 1)
-            for kind in ("definition_to_word", "word_to_definition")
+            for kind in ("DEFINITION_TO_WORD", "WORD_TO_DEFINITION")
             for i in range(4)
         ],
     )
+    db.question_cache = Cache(64 * 1024)
+    await get_many(db, [q.id for q in artifacts])
     statements = []
 
     def capture(_conn, _cursor, statement, parameters, _context, _many):
@@ -162,8 +165,8 @@ async def test_random_retrieval_one_indexed_statement_and_namespace(optimized_db
     try:
         seen = Counter()
         for _ in range(160):
-            question = await retrieve(db, 1, "definition_to_word", 1)
-            assert question.theme_id == 1 and question.question_type == "definition_to_word"
+            question = await retrieve(db, 1, "DEFINITION_TO_WORD", 1)
+            assert question.theme_id == 1 and question.question_type == "DEFINITION_TO_WORD"
             seen[question.id] += 1
         assert len(seen) == 4
         assert len(statements) == 160
@@ -197,7 +200,7 @@ async def test_read_and_sense_linking_query_budgets(optimized_db):
     await seed(db)
     async with db.transaction() as session:
         session.add(
-            row.SenseRelation(from_sense_id=1, to_word_id=2, rel_type="synonym", gloss="meaning2")
+            row.SenseRelation(from_sense_id=1, to_word_id=2, rel_type="SYNONYM", gloss="meaning2")
         )
     statements = []
 
@@ -245,7 +248,7 @@ async def test_large_bank_deserializes_only_one_question_and_validates_theme(
         await session.execute(
             insert(row.Question),
             [
-                dict(sense_id=1, theme_id=1, question_type="definition_to_word", payload=payload)
+                dict(sense_id=1, theme_id=1, question_type="DEFINITION_TO_WORD", payload=payload)
                 for _ in range(1000)
             ],
         )
@@ -275,7 +278,7 @@ async def test_postgres_concurrent_question_inserts(pg_db):
             await session.execute(
                 insert(row.Question),
                 [
-                    dict(sense_id=1, question_type="definition_to_word", payload=str(number))
+                    dict(sense_id=1, question_type="DEFINITION_TO_WORD", payload=str(number))
                     for _ in range(10)
                 ],
             )
@@ -297,17 +300,17 @@ async def test_publication_is_batched_not_per_sense(optimized_db, monkeypatch, s
         "bank",
         "bank",
         "word",
-        [SourceSense(101 + i, "noun", f"meaning{i}") for i in range(size)],
+        [SourceSense(101 + i, "NOUN", f"meaning{i}") for i in range(size)],
     )
     output = payload()
     output["senses"] = []
     for i in range(size):
         sense = payload(source_ref=f"c{i + 1}")["senses"][0]
         sense["definition"] = f"meaning{i}"
-        sense["forms"] = [{"surface": "banks", "inf": "plural"}]
+        sense["forms"] = [{"surface": "banks", "inf": "PLURAL"}]
         sense["patterns"] = ["bank {sth}"]
         sense["collocations"] = ["central bank"]
-        sense["relations"] = [{"lemma": "vault", "rel_type": "synonym", "gloss": "money keeper"}]
+        sense["relations"] = [{"lemma": "vault", "rel_type": "SYNONYM", "gloss": "money keeper"}]
         output["senses"].append(sense)
 
     class Source:

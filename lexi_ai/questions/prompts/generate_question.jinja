@@ -69,7 +69,7 @@ Each question must provide a meaningful learning opportunity through lexical ret
 
 {% include "words/prompts/target_expression_tagging.jinja" %}
 
-{% include "questions/prompts/types/" ~ question_type ~ ".jinja" %}
+{% include "questions/prompts/types/" ~ question_type | lower ~ ".jinja" %}
 
 {% if theme %}
 {% include "questions/prompts/types/theme.jinja" %}

@@ -12,6 +12,7 @@ from lexi_ai.inference.prompting import render_prompt
 from lexi_ai.models import Theme
 from lexi_ai.schema import Theme as ThemeRow
 from lexi_ai.text import parse_marked_example
+from lexi_ai.vocab import GenerationState
 from lexi_ai.words.storage import get_word, insert_contents
 
 from .namespace import normalize_key
@@ -121,7 +122,12 @@ async def update_theme(db, key: str, *, name=None, voice=None, diction=None) -> 
 async def delete_theme(db, key: str) -> bool:
     async with db.transaction() as session:
         result = await session.execute(delete(ThemeRow).where(ThemeRow.key == normalize_key(key)))
-        return bool(result.rowcount)
+        removed = bool(result.rowcount)
+    if removed:
+        for cache in (db.content_cache, db.question_cache):
+            if cache is not None:
+                cache.clear()
+    return removed
 
 
 async def ensure_word_theme(db, llm, word_id: int, key: str, example_count: int):
@@ -155,7 +161,7 @@ async def ensure_word_theme(db, llm, word_id: int, key: str, example_count: int)
         select(row.Word.lemma, ThemeRow.id, ThemeRow.voice, ThemeRow.diction, senses_projection)
         .select_from(row.Word)
         .join(ThemeRow, ThemeRow.key == normalize_key(key))
-        .where(row.Word.id == word_id, row.Word.generation_state == "done")
+        .where(row.Word.id == word_id, row.Word.generation_state == GenerationState.DONE)
     )
     async with db.read() as connection:
         context = (await connection.execute(statement)).first()
@@ -192,4 +198,6 @@ async def ensure_word_theme(db, llm, word_id: int, key: str, example_count: int)
             ],
             theme_id,
         )
+    if db.content_cache is not None:
+        db.content_cache.clear()
     return await get_word(db, word_id, theme_id)

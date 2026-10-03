@@ -20,7 +20,7 @@ from lexi_ai.schema import (
     WordRelation,
 )
 from lexi_ai.text import match_key, validate_lemma
-from lexi_ai.vocab import normalize_pos
+from lexi_ai.vocab import GenerationState, WordRelationType, normalize_pos
 
 from .schemas import (
     InventoryOutput,
@@ -59,13 +59,13 @@ async def generate_word(
     references = [
         {
             "id": key,
-            "pos": sense.pos,
+            "pos": normalize_pos(sense.pos),
             "definition": sense.definition,
             "cefr_level": sense.cefr_level,
         }
         for key, sense in cambridge_sources.items()
     ] + [
-        {"id": f"w{index}", "pos": sense.pos, "definition": sense.definition}
+        {"id": f"w{index}", "pos": normalize_pos(sense.pos), "definition": sense.definition}
         for index, sense in enumerate(supporting, 1)
     ]
     instruction, data = render_prompt(
@@ -185,7 +185,7 @@ async def generate_word(
                 # normalization or a second generation path for ambiguous titles.
                 continue
         word_edges = [(item.lemma, item.rel_type) for item in generated.related] + [
-            (lemma, "part_of_phrasal_family") for lemma in sorted(phrase_lemmas)
+            (lemma, WordRelationType.PART_OF_PHRASAL_FAMILY) for lemma in sorted(phrase_lemmas)
         ]
         sense_edges = [(id, relation) for id, item in groups for relation in item.relations]
         targets = await target_words(
@@ -215,6 +215,10 @@ async def generate_word(
         ):
             await insert_rows(session, table, rows)
         await session.execute(
-            update(Word).where(Word.id == word.id).values(generation_state="done")
+            update(Word).where(Word.id == word.id).values(generation_state=GenerationState.DONE)
         )
-        return word.id
+        identifier = word.id
+    if db.content_cache is not None:
+        # Publication can also change the displayed identity of relation targets.
+        db.content_cache.clear()
+    return identifier

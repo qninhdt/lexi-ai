@@ -362,14 +362,14 @@ async def test_public_generation_theme_and_question_usage_and_cached_reads(lexic
     assert stored == word and usage == []
     questions, usage = await lexicon.generate_questions(
         word.senses[0].id,
-        "definition_to_word",
+        "DEFINITION_TO_WORD",
         2,
         distractor_count=3,
         with_usage=True,
     )
     assert len(questions) == 2 and usage == [LLM_USAGE]
     question = questions[0]
-    for fmt, answer in [("single_choice", question.correct.id), ("single_word", "BANK")]:
+    for fmt, answer in [("SINGLE_CHOICE", question.correct.id), ("SINGLE_WORD", "BANK")]:
         grade, usage = await lexicon.grade_answer(question.id, fmt, answer, with_usage=True)
         assert grade.task_fit and usage == []
 
@@ -380,14 +380,14 @@ async def test_multistage_grading_totals_and_provider_free_empty_relations(lexic
     question = (
         await lexicon.generate_questions(
             word.senses[0].id,
-            "word_to_usage",
+            "WORD_TO_USAGE",
             1,
             distractor_count=3,
         )
     )[0]
     grade, usage = await lexicon.grade_answer(
         question.id,
-        "short_answer",
+        "SHORT_ANSWER",
         "The bank opens early.",
         with_usage=True,
     )
@@ -399,10 +399,10 @@ async def test_multistage_grading_totals_and_provider_free_empty_relations(lexic
 @pytest.mark.parametrize(
     "kind,fmt,answer,stages",
     [
-        ("definition_to_word", "single_word", "lender", 2),
-        ("word_to_definition", "short_answer", "A financial institution", 2),
-        ("word_to_usage", "short_answer", "The bank opens early.", 2),
-        ("word_to_usage", "short_answer", "We went home.", 1),
+        ("DEFINITION_TO_WORD", "SINGLE_WORD", "lender", 2),
+        ("WORD_TO_DEFINITION", "SHORT_ANSWER", "A financial institution", 2),
+        ("WORD_TO_USAGE", "SHORT_ANSWER", "The bank opens early.", 2),
+        ("WORD_TO_USAGE", "SHORT_ANSWER", "We went home.", 1),
     ],
 )
 async def test_all_grading_stages_and_gates_collect_only_their_own_calls(
@@ -413,6 +413,8 @@ async def test_all_grading_stages_and_gates_collect_only_their_own_calls(
     _, word = await generate_bank(lexicon)
     async with lexicon.db.transaction() as session:
         session.add(row.WordAlias(word_id=word.id, content="lender", match_key="lender"))
+    # Direct fixture writes bypass native publication; preload the final projection.
+    await lexicon.start()
     question = (await lexicon.generate_questions(word.senses[0].id, kind, 1, distractor_count=3))[0]
 
     class GradingDecision:
@@ -437,7 +439,7 @@ async def test_all_grading_stages_and_gates_collect_only_their_own_calls(
     assert lexicon.decision_model.calls == stages
     if stages == 1:
         assert not grade.used and grade.meaning is None
-    elif fmt == "single_word" or kind == "word_to_definition":
+    elif fmt == "SINGLE_WORD" or kind == "WORD_TO_DEFINITION":
         assert grade.sense_id == word.senses[0].id
 
 
@@ -502,14 +504,14 @@ async def test_parallel_relation_error_preserves_usage_without_canceling_success
                     id=i,
                     lemma=f"word{i}",
                     match_key=f"word{i}",
-                    entry_type="word",
-                    generation_state="done",
+                    entry_type="WORD",
+                    generation_state="DONE",
                 )
                 for i in range(1, 4)
             ],
         )
         await session.execute(
-            insert(row.Sense), [dict(id=i, word_id=i, pos="noun", tier="core") for i in range(1, 4)]
+            insert(row.Sense), [dict(id=i, word_id=i, pos="NOUN", tier="CORE") for i in range(1, 4)]
         )
         await session.execute(
             insert(row.Definition), [dict(sense_id=i, content=f"meaning{i}") for i in range(1, 4)]
@@ -517,7 +519,7 @@ async def test_parallel_relation_error_preserves_usage_without_canceling_success
         await session.execute(
             insert(row.SenseRelation),
             [
-                dict(id=i, from_sense_id=1, to_word_id=i + 1, rel_type="synonym", gloss="target")
+                dict(id=i, from_sense_id=1, to_word_id=i + 1, rel_type="SYNONYM", gloss="target")
                 for i in (1, 2)
             ],
         )
@@ -536,7 +538,7 @@ async def test_parallel_relation_error_preserves_usage_without_canceling_success
 
     lexicon.decision_model = PartialDecision()
     results, usage = await lexicon.resolve_relations(with_usage=True)
-    assert [result.state for result in results] == ["error", "resolved"]
+    assert [result.state for result in results] == ["ERROR", "RESOLVED"]
     assert usage == [TokenUsage("actual-decision", 40, None, None, 8)]
     async with lexicon.db.read() as connection:
         attempted = await connection.scalar(

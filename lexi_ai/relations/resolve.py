@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from lexi_ai.errors import MissingProviderError
 from lexi_ai.inference.config import DecisionMode
 from lexi_ai.inference.prompting import render_decision
-from lexi_ai.vocab import POS_TAGS
+from lexi_ai.vocab import POS_TAGS, ResolutionState
 
 from .storage import apply_resolution, pending_relations
 
@@ -14,7 +14,7 @@ from .storage import apply_resolution, pending_relations
 @dataclass(frozen=True)
 class Resolution:
     edge_id: int
-    state: str
+    state: ResolutionState
     error: str | None = None
 
 
@@ -63,11 +63,13 @@ async def resolve_relations(
             applied = await apply_resolution(db, link.edge_id, selected, expected=link)
             return Resolution(
                 link.edge_id,
-                "noop" if not applied else ("resolved" if selected else "unresolvable"),
+                ResolutionState.NOOP
+                if not applied
+                else (ResolutionState.RESOLVED if selected else ResolutionState.UNRESOLVABLE),
             )
         except Exception as exc:
             # This is the per-link job boundary: transport and DB failures must
             # not cancel independent links. asyncio cancellation still propagates.
-            return Resolution(link.edge_id, "error", str(exc))
+            return Resolution(link.edge_id, ResolutionState.ERROR, str(exc))
 
     return list(await asyncio.gather(*(one(link) for link in links)))

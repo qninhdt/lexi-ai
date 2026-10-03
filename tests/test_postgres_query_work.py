@@ -11,7 +11,7 @@ from test_query_work import shared_target
 from lexi_ai import schema as row
 from lexi_ai.questions.storage import list_for_sense, retrieve
 from lexi_ai.relations.storage import _pending_page, definition_hash, pending_relations
-from lexi_ai.words.search import _patterns
+from lexi_ai.words.search import Search
 
 
 def plan_nodes(node):
@@ -70,7 +70,7 @@ async def test_question_read_and_trigger_seek_scope_without_forced_planner(pg_db
             text("""
             INSERT INTO questions(id,sense_id,theme_id,question_type,payload,position,type_position)
             SELECT n,1,CASE WHEN n<=20000 THEN NULL ELSE 1 END,
-              CASE WHEN n%2=0 THEN 'definition_to_word' ELSE 'word_to_definition' END,
+              CASE WHEN n%2=0 THEN 'DEFINITION_TO_WORD' ELSE 'WORD_TO_DEFINITION' END,
               '{}',CASE WHEN n<=20000 THEN n ELSE n-20000 END,
               CASE WHEN n<=20000 THEN (n+1)/2 ELSE (n-20000+1)/2 END
             FROM generate_series(1,40000) n
@@ -84,7 +84,7 @@ async def test_question_read_and_trigger_seek_scope_without_forced_planner(pg_db
         captured.append((sql, parameters))
 
     for theme in (None, 1):
-        for kind in (None, "definition_to_word"):
+        for kind in (None, "DEFINITION_TO_WORD"):
             event.listen(pg_db.engine.sync_engine, "before_cursor_execute", capture)
             try:
                 with pytest.raises(KeyError):  # Fixture payloads omit artifact fields.
@@ -116,7 +116,7 @@ async def test_question_read_and_trigger_seek_scope_without_forced_planner(pg_db
             await session.execute(
                 text("""
                 INSERT INTO questions(id,sense_id,theme_id,question_type,payload)
-                VALUES(:id,1,:theme,'definition_to_word','{}')
+                VALUES(:id,1,:theme,'DEFINITION_TO_WORD','{}')
             """),
                 {"id": 50000 if theme is None else 50001, "theme": theme},
             )
@@ -140,7 +140,7 @@ async def test_definition_batch_updates_each_relation_once(pg_db):
     async with pg_db.transaction() as session:
         await session.execute(
             insert(row.Sense).values(
-                [dict(id=2000 + i, word_id=2, pos="noun", tier="core") for i in range(20)]
+                [dict(id=2000 + i, word_id=2, pos="NOUN", tier="CORE") for i in range(20)]
             )
         )
         async with nested_plans(session) as plans:
@@ -160,7 +160,7 @@ async def test_pending_page_skips_deferred_edges_and_reuses_target_candidates(pg
     async with pg_db.transaction() as session:
         await session.execute(
             insert(row.Sense).values(
-                [dict(id=1000 + i, word_id=2, pos="noun", tier="core") for i in range(12, 25)]
+                [dict(id=1000 + i, word_id=2, pos="NOUN", tier="CORE") for i in range(12, 25)]
             )
         )
         await session.execute(
@@ -172,19 +172,19 @@ async def test_pending_page_skips_deferred_edges_and_reuses_target_candidates(pg
         await session.execute(
             text(
                 "INSERT INTO words(id,lemma,match_key,generation_state) "
-                "VALUES(3,'later','later','pending')"
+                "VALUES(3,'later','later','PENDING')"
             )
         )
         await session.execute(
             text("""
             INSERT INTO words(id,lemma,match_key,generation_state)
-            SELECT 200000+n,'unrelated'||n,'unrelated'||n,'done' FROM generate_series(1,10000)n
+            SELECT 200000+n,'unrelated'||n,'unrelated'||n,'DONE' FROM generate_series(1,10000)n
         """)
         )
         await session.execute(
             text("""
             INSERT INTO senses(id,word_id,pos,tier)
-            SELECT 10000+n,1,'noun','core' FROM generate_series(1,100000)n
+            SELECT 10000+n,1,'NOUN','CORE' FROM generate_series(1,100000)n
         """)
         )
         await session.execute(
@@ -196,7 +196,7 @@ async def test_pending_page_skips_deferred_edges_and_reuses_target_candidates(pg
         await session.execute(
             text("""
             INSERT INTO sense_relations(id,from_sense_id,to_word_id,rel_type,gloss)
-            SELECT n,10000+n,3,'synonym','deferred' FROM generate_series(1,100000)n
+            SELECT n,10000+n,3,'SYNONYM','deferred' FROM generate_series(1,100000)n
         """)
         )
         await session.execute(text("ANALYZE"))
@@ -222,9 +222,9 @@ async def test_pending_page_skips_deferred_edges_and_reuses_target_candidates(pg
     # Deferred work becomes eligible after publication; it must not be lost to a cursor/cap.
     async with pg_db.transaction() as session:
         await session.execute(
-            text("INSERT INTO senses(id,word_id,pos,tier) VALUES(200000,3,'verb','core')")
+            text("INSERT INTO senses(id,word_id,pos,tier) VALUES(200000,3,'VERB','CORE')")
         )
-        await session.execute(text("UPDATE words SET generation_state='done' WHERE id=3"))
+        await session.execute(text("UPDATE words SET generation_state='DONE' WHERE id=3"))
     assert [link.edge_id for link in await pending_relations(pg_db, 1)] == [1]
 
 
@@ -266,7 +266,7 @@ async def test_transition_invalidation_keeps_namespace_and_noop_rules(pg_db, cha
             "content": "UPDATE definitions SET content='different' WHERE sense_id=1000",
             "neutral_to_theme": "UPDATE definitions SET theme_id=1 WHERE sense_id=1000",
             "theme_to_neutral": "DELETE FROM definitions WHERE sense_id=1001 AND theme_id IS NULL",
-            "sense_pos": "UPDATE senses SET pos='verb' WHERE id=1000",
+            "sense_pos": "UPDATE senses SET pos='VERB' WHERE id=1000",
             "sense_owner": "UPDATE senses SET word_id=1 WHERE id=1000",
             "sense_delete": "DELETE FROM senses WHERE id=1000",
             "definition_delete": "DELETE FROM definitions WHERE sense_id=1000",
@@ -281,7 +281,7 @@ async def test_transition_invalidation_keeps_namespace_and_noop_rules(pg_db, cha
     assert (attempted is None) == (change not in {"definition_noop", "sense_noop", "themed"})
 
 
-async def test_pattern_forms_aggregate_once_per_sense(pg_db):
+async def test_pattern_projection_loads_once_then_matches_in_ram(pg_db):
     await seed(pg_db)
     async with pg_db.transaction() as session:
         await session.execute(
@@ -291,7 +291,7 @@ async def test_pattern_forms_aggregate_once_per_sense(pg_db):
         )
         await session.execute(
             insert(row.SenseForm.__table__).values(
-                [dict(sense_id=1, surface=f"word1x{i}", inf="base") for i in range(20)]
+                [dict(sense_id=1, surface=f"word1x{i}", inf="BASE") for i in range(20)]
             )
         )
         await session.execute(text("ANALYZE"))
@@ -302,15 +302,12 @@ async def test_pattern_forms_aggregate_once_per_sense(pg_db):
 
     event.listen(pg_db.engine.sync_engine, "before_cursor_execute", capture)
     try:
-        async with pg_db.transaction() as session:
-            await _patterns(session, "word1 thing fixed1", "word1 thing fixed1", {})
+        engine = Search(pg_db, None)
+        await engine.reload()
+        assert len(captured) == 5
+        assert all("definitions" not in sql and "questions" not in sql for sql, _ in captured)
+        captured.clear()
+        assert (await engine.search("word1 thing fixed1")).words[0].match_kind == "PATTERN"
+        assert captured == []
     finally:
         event.remove(pg_db.engine.sync_engine, "before_cursor_execute", capture)
-    assert len(captured) == 1
-    plan = await explain(pg_db, *captured[0])
-    scans = [
-        n
-        for n in plan_nodes(plan["Plan"])
-        if n.get("Relation Name") == "sense_forms" and n["Actual Loops"]
-    ]
-    assert sum(n["Actual Rows"] * n["Actual Loops"] for n in scans) == 20

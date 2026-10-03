@@ -6,9 +6,9 @@ from enum import StrEnum
 
 
 class DecisionMode(StrEnum):
-    LLM_FALLBACK = "llm_fallback"
-    DECISION_ONLY = "decision_only"
-    LLM_ONLY = "llm_only"
+    LLM_FALLBACK = "LLM_FALLBACK"
+    DECISION_ONLY = "DECISION_ONLY"
+    LLM_ONLY = "LLM_ONLY"
 
 
 @dataclass(frozen=True)

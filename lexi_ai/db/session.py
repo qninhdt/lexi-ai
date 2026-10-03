@@ -17,6 +17,9 @@ from lexi_ai.config import database_schema_name
 
 class Database:
     def __init__(self, url: str, *, schema: str | None = None):
+        self.content_cache = None
+        self.question_cache = None
+        self.search_index = None
         if not url.startswith(("sqlite+aiosqlite://", "postgresql+asyncpg://")):
             raise ValueError("expected an async generated-dictionary database URL")
         schema = database_schema_name(schema)
@@ -88,6 +91,10 @@ class SessionDatabase:
     """Borrow a host session; serialize SQL within parallel Sense Linking work."""
 
     def __init__(self, session: AsyncSession) -> None:
+        # Borrowed transactions must see their own uncommitted writes and rollback.
+        self.content_cache = None
+        self.question_cache = None
+        self.search_index = None
         self.session = session
         self.engine = session.bind
         self._lock = asyncio.Lock()

@@ -10,6 +10,16 @@ from lexi_ai.patterns import validate_pattern
 from lexi_ai.references.cambridge import SourceEntry
 from lexi_ai.references.wordnet import Synset
 from lexi_ai.text import match_key, parse_marked_example, validate_lemma
+from lexi_ai.vocab import (
+    CEFRLevel,
+    EntryType,
+    Inflection,
+    PartOfSpeech,
+    Register,
+    SenseRelationType,
+    Tier,
+    WordRelationType,
+)
 
 
 class Strict(BaseModel):
@@ -18,21 +28,12 @@ class Strict(BaseModel):
 
 class FormOutput(Strict):
     surface: str
-    inf: Literal[
-        "base",
-        "past",
-        "past_participle",
-        "present_3sg",
-        "ing",
-        "plural",
-        "comparative",
-        "superlative",
-    ]
+    inf: Inflection
 
 
 class WordRelationOutput(Strict):
     lemma: str
-    rel_type: Literal["word_family", "confused_with"]
+    rel_type: Literal[WordRelationType.WORD_FAMILY, WordRelationType.CONFUSED_WITH]
 
     @model_validator(mode="after")
     def check(self):
@@ -42,7 +43,7 @@ class WordRelationOutput(Strict):
 
 class SenseRelationOutput(Strict):
     lemma: str = Field(description="Stable citation lemma of the related lexical item.")
-    rel_type: Literal["synonym", "antonym", "hypernym", "hyponym", "meronym", "holonym"]
+    rel_type: SenseRelationType
     gloss: str = Field(
         description="Short, discriminative meaning of the target lemma, not the source Sense."
     )
@@ -57,20 +58,7 @@ class InventorySense(Strict):
     definition: str = Field(
         min_length=1, max_length=16000, description="The single learner definition for this Sense"
     )
-    pos: Literal[
-        "noun",
-        "verb",
-        "adjective",
-        "adverb",
-        "pronoun",
-        "preposition",
-        "conjunction",
-        "determiner",
-        "interjection",
-        "numeral",
-        "article",
-        "auxiliary",
-    ]
+    pos: PartOfSpeech
 
     @model_validator(mode="after")
     def check_definition(self):
@@ -80,17 +68,15 @@ class InventorySense(Strict):
 
 
 class SenseEnrichment(Strict):
-    tier: Literal["core", "common", "less_common", "rare"]
+    tier: Tier
     examples: list[str] = Field(description="Natural use; mark target with <t inf=...>...</t>")
     forms: list[FormOutput]
     patterns: list[str]
     collocations: list[str]
     relations: list[SenseRelationOutput]
     sources: list[str] = Field(description="Supplied local evidence IDs, e.g. c1, c2, w1")
-    cefr_level: Literal["A1", "A2", "B1", "B2", "C1", "C2"]
-    register_: Literal["formal", "informal", "slang", "literary", "specialist"] | None = Field(
-        alias="register"
-    )
+    cefr_level: CEFRLevel
+    register_: Register | None = Field(alias="register")
     usage_note: str | None = None
 
     @model_validator(mode="after")
@@ -110,7 +96,7 @@ class SenseOutput(InventorySense, SenseEnrichment):
 
 class InventoryOutput(Strict):
     lemma: str = Field(description="One stable citation lemma for the selected lexical item")
-    type: Literal["word", "phrasal_verb", "idiom", "phrase", "expression"]
+    type: EntryType
     aliases: list[str]
     related: list[WordRelationOutput]
     senses: list[InventorySense] = Field(min_length=1)

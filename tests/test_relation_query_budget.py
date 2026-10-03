@@ -30,21 +30,21 @@ async def test_pending_relations_uses_one_query_per_page(tmp_path, batch_size):
                         "id": i + 1,
                         "lemma": f"word{i}",
                         "match_key": f"word{i}",
-                        "entry_type": "word",
-                        "generation_state": "done",
+                        "entry_type": "WORD",
+                        "generation_state": "DONE",
                     }
                     for i in range(51)
                 ],
             )
             await session.execute(
                 insert(row.Sense),
-                [{"id": i + 1, "word_id": 1, "pos": "verb", "tier": "core"} for i in range(50)]
+                [{"id": i + 1, "word_id": 1, "pos": "VERB", "tier": "CORE"} for i in range(50)]
                 + [
                     {
                         "id": 1000 + i * 20 + j,
                         "word_id": i + 2,
-                        "pos": "noun" if j == 0 else "verb",
-                        "tier": "core",
+                        "pos": "NOUN" if j == 0 else "VERB",
+                        "tier": "CORE",
                     }
                     for i in range(50)
                     for j in range(14)
@@ -74,7 +74,7 @@ async def test_pending_relations_uses_one_query_per_page(tmp_path, batch_size):
                         "id": i + 1,
                         "from_sense_id": i + 1,
                         "to_word_id": i + 2,
-                        "rel_type": "synonym",
+                        "rel_type": "SYNONYM",
                         "gloss": "target",
                     }
                     for i in range(50)

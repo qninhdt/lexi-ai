@@ -472,12 +472,12 @@ async def test_text_decision_repair_preserves_schema_raw_trace_and_usage(
     }
     try:
         if valid:
-            result, usage = await model.decide({}, questions, mode="llm_only", with_usage=True)
+            result, usage = await model.decide({}, questions, mode="LLM_ONLY", with_usage=True)
             assert result.choices["match"].choice == "0" and result.nouls["fit"].noul == 1
             debug = result.debug
         else:
             with pytest.raises(TypeSafeAPIResponseValidationError) as caught:
-                await model.decide({}, questions, mode="llm_only", with_usage=True)
+                await model.decide({}, questions, mode="LLM_ONLY", with_usage=True)
             usage, debug = caught.value.usage, caught.value.debug
         assert repair_calls == [content] and len(requests) == 1
         assert usage[0].input_tokens == 10 and usage[0].output_tokens == 20

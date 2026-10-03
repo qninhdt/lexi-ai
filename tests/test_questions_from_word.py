@@ -19,20 +19,20 @@ class LLM:
         context = prompt_context(data)
         kind = context["question_type"]
         content = bound_content(context)
-        if kind == "dialogue_completion":
+        if kind == "DIALOGUE_COMPLETION":
             content = [
                 {"speaker": "Maya", "text": 'The <t inf="base">bank</t> is closed.'},
                 {"speaker": "Leo", "text": None},
             ]
-        elif kind == "meaning_in_context":
+        elif kind == "MEANING_IN_CONTEXT":
             content = 'The <t inf="base">bank</t> kept my savings safe.'
-        elif kind == "context_to_word":
+        elif kind == "CONTEXT_TO_WORD":
             content = "I went there to deposit money."
-        elif kind == "cloze_to_word":
+        elif kind == "CLOZE_TO_WORD":
             content = "I visited the _ to deposit money."
         correct = (
             context["definition"]
-            if kind == "word_to_definition"
+            if kind == "WORD_TO_DEFINITION"
             else (
                 "bank" if kind.endswith("_to_word") else 'The <t inf="base">bank</t> opens at nine.'
             )
@@ -62,17 +62,17 @@ def test_exactly_twelve_question_response_pairs():
     expected = (
         {
             (kind, fmt)
-            for kind in ("definition_to_word", "context_to_word", "cloze_to_word")
-            for fmt in ("single_choice", "single_word")
+            for kind in ("DEFINITION_TO_WORD", "CONTEXT_TO_WORD", "CLOZE_TO_WORD")
+            for fmt in ("SINGLE_CHOICE", "SINGLE_WORD")
         }
         | {
             (kind, fmt)
-            for kind in ("word_to_definition", "word_to_usage")
-            for fmt in ("single_choice", "short_answer")
+            for kind in ("WORD_TO_DEFINITION", "WORD_TO_USAGE")
+            for fmt in ("SINGLE_CHOICE", "SHORT_ANSWER")
         }
         | {
-            ("dialogue_completion", "single_choice"),
-            ("meaning_in_context", "single_choice"),
+            ("DIALOGUE_COMPLETION", "SINGLE_CHOICE"),
+            ("MEANING_IN_CONTEXT", "SINGLE_CHOICE"),
         }
     )
     assert ALLOWED_PAIRS == expected
@@ -89,11 +89,11 @@ async def test_every_type_batches_into_exact_namespace(kind, themed, tmp_path):
     try:
         await db.create_schema(Base.metadata)
         async with db.transaction() as session:
-            word = Word(lemma="bank", match_key="bank", entry_type="word", generation_state="done")
+            word = Word(lemma="bank", match_key="bank", entry_type="WORD", generation_state="DONE")
             theme = Theme(key="pirate", name="Pirate", voice="Captain", diction="nautical")
             session.add_all([word, theme])
             await session.flush()
-            sense = Sense(word_id=word.id, pos="noun", tier="core")
+            sense = Sense(word_id=word.id, pos="NOUN", tier="CORE")
             session.add(sense)
             await session.flush()
             session.add_all(

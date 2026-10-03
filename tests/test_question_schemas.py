@@ -18,8 +18,8 @@ from lexi_ai.questions.schemas import QuestionBatch, validate_batch, validate_ta
     ],
 )
 def test_dialogue_target_preserves_all_fixed_components_in_order(target, valid):
-    sense = Sense(1, 1, 0, "verb", "core", forms=[Form("brought", "past")])
-    word = Word(1, "bring up", "phrasal_verb", "done", senses=[sense])
+    sense = Sense(1, 1, "VERB", "CORE", forms=[Form("brought", "PAST")])
+    word = Word(1, "bring up", "PHRASAL_VERB", "DONE", senses=[sense])
     batch = QuestionBatch.model_validate(
         {
             "questions": [
@@ -37,13 +37,13 @@ def test_dialogue_target_preserves_all_fixed_components_in_order(target, valid):
             ]
         }
     )
-    validate_batch(batch, "dialogue_completion", 1, 3, target_placement="dialogue")
+    validate_batch(batch, "DIALOGUE_COMPLETION", 1, 3, target_placement="DIALOGUE")
     if valid:
         validate_targets(
-            batch.questions[0], "dialogue_completion", word, sense, target_placement="dialogue"
+            batch.questions[0], "DIALOGUE_COMPLETION", word, sense, target_placement="DIALOGUE"
         )
     else:
         with pytest.raises(InvalidOutputError, match="complete licensed target"):
             validate_targets(
-                batch.questions[0], "dialogue_completion", word, sense, target_placement="dialogue"
+                batch.questions[0], "DIALOGUE_COMPLETION", word, sense, target_placement="DIALOGUE"
             )

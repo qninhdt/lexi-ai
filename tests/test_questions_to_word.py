@@ -24,10 +24,10 @@ class LLM:
         if content is None:
             content = (
                 "The plane _ at dawn."
-                if kind == "cloze_to_word"
+                if kind == "CLOZE_TO_WORD"
                 else "A situation calling for the target Word."
             )
-        correct = "bank" if kind == "definition_to_word" else "took off"
+        correct = "bank" if kind == "DEFINITION_TO_WORD" else "took off"
         questions = [
             {
                 "content": content,
@@ -53,10 +53,10 @@ async def setup(tmp_path):
     db = Database(f"sqlite+aiosqlite:///{tmp_path / 'generated.db'}")
     await db.create_schema(Base.metadata)
     async with db.transaction() as session:
-        word = Word(lemma="bank", match_key="bank", entry_type="word", generation_state="done")
+        word = Word(lemma="bank", match_key="bank", entry_type="WORD", generation_state="DONE")
         session.add(word)
         await session.flush()
-        sense = Sense(word_id=word.id, pos="noun", tier="core")
+        sense = Sense(word_id=word.id, pos="NOUN", tier="CORE")
         session.add(sense)
         await session.flush()
         session.add_all(
@@ -72,21 +72,21 @@ async def setup(tmp_path):
 async def test_batch_append_reuses_artifact_across_formats(setup):
     db, sense_id = setup
     llm = LLM()
-    first = await generate_questions(db, llm, sense_id, "definition_to_word", 2, distractor_count=4)
+    first = await generate_questions(db, llm, sense_id, "DEFINITION_TO_WORD", 2, distractor_count=4)
     second = await generate_questions(
-        db, llm, sense_id, "definition_to_word", 2, distractor_count=4
+        db, llm, sense_id, "DEFINITION_TO_WORD", 2, distractor_count=4
     )
     assert len({q.id for q in [*first, *second]}) == 4
     assert llm.calls == 2
     assert len(await list_for_sense(db, sense_id)) == 4
-    assert first[0].supports("single_choice") and first[0].supports("single_word")
+    assert first[0].supports("SINGLE_CHOICE") and first[0].supports("SINGLE_WORD")
 
 
 async def test_last_invalid_question_rolls_back(setup):
     db, sense_id = setup
     with pytest.raises(InvalidOutputError):
         await generate_questions(
-            db, LLM(invalid_last=True), sense_id, "definition_to_word", 2, distractor_count=3
+            db, LLM(invalid_last=True), sense_id, "DEFINITION_TO_WORD", 2, distractor_count=3
         )
     assert await list_for_sense(db, sense_id) == []
 
@@ -94,7 +94,7 @@ async def test_last_invalid_question_rolls_back(setup):
 async def test_cloze_saves_inflected_answer_not_headword(setup):
     db, sense_id = setup
     question = (
-        await generate_questions(db, LLM(), sense_id, "cloze_to_word", 1, distractor_count=3)
+        await generate_questions(db, LLM(), sense_id, "CLOZE_TO_WORD", 1, distractor_count=3)
     )[0]
     assert question.content.count("_") == 1
     assert question.correct.content == "took off"
@@ -106,7 +106,7 @@ async def test_definition_question_uses_current_single_definition(setup):
         definition = await session.scalar(select(Definition).where(Definition.sense_id == sense_id))
         definition.content = "An edge beside a river"
     question = (
-        await generate_questions(db, LLM(), sense_id, "definition_to_word", 1, distractor_count=3)
+        await generate_questions(db, LLM(), sense_id, "DEFINITION_TO_WORD", 1, distractor_count=3)
     )[0]
     assert question.content == "An edge beside a river"
     assert (await list_for_sense(db, sense_id))[0].content == question.content
@@ -121,14 +121,14 @@ async def test_missing_themed_word_never_generates_neutral_question(setup):
     llm = LLM()
     with pytest.raises(InvalidResourceError, match="namespace"):
         await generate_questions(
-            db, llm, sense_id, "definition_to_word", 1, distractor_count=3, theme_id=theme.id
+            db, llm, sense_id, "DEFINITION_TO_WORD", 1, distractor_count=3, theme_id=theme.id
         )
     assert llm.calls == 0
     assert await list_for_sense(db, sense_id, theme_id=theme.id) == []
     assert await list_for_sense(db, sense_id) == []
 
 
-@pytest.mark.parametrize("kind", ["definition_to_word", "word_to_definition", "context_to_word"])
+@pytest.mark.parametrize("kind", ["DEFINITION_TO_WORD", "WORD_TO_DEFINITION", "CONTEXT_TO_WORD"])
 async def test_anchored_correct_answer_is_not_in_model_schema(setup, kind):
     db, sense_id = setup
 
@@ -138,8 +138,8 @@ async def test_anchored_correct_answer_is_not_in_model_schema(setup, kind):
             assert "correct" not in item_schema["properties"]
             assert "correct" not in item_schema["required"]
             context = prompt_context(data)
-            assert context["definition" if kind == "word_to_definition" else "word"] == (
-                "A place for money" if kind == "word_to_definition" else "bank"
+            assert context["definition" if kind == "WORD_TO_DEFINITION" else "word"] == (
+                "A place for money" if kind == "WORD_TO_DEFINITION" else "bank"
             )
             return await super().complete(instruction, data, schema)
 
@@ -147,7 +147,7 @@ async def test_anchored_correct_answer_is_not_in_model_schema(setup, kind):
         0
     ]
     assert question.correct.content == (
-        "A place for money" if kind == "word_to_definition" else "bank"
+        "A place for money" if kind == "WORD_TO_DEFINITION" else "bank"
     )
     assert question.correct.explanation == "It fits."
     assert await get(db, question.id) == question
@@ -156,7 +156,7 @@ async def test_anchored_correct_answer_is_not_in_model_schema(setup, kind):
 def dialogue_output(placement):
     text = (
         'The <t inf="base">bank</t> is closed.'
-        if placement == "dialogue"
+        if placement == "DIALOGUE"
         else "Where should I deposit my savings?"
     )
     answer = 'The <t inf="base">bank</t> can keep them safe.'
@@ -172,7 +172,7 @@ def dialogue_output(placement):
                     {
                         "content": (
                             f'The <t inf="base">bank</t> reply {i}.'
-                            if placement == "options"
+                            if placement == "OPTIONS"
                             else f"Wrong reply {i}."
                         ),
                         "explanation": "Does not fit.",
@@ -184,15 +184,15 @@ def dialogue_output(placement):
     }
 
 
-@pytest.mark.parametrize("placement", [None, "dialogue", "options"])
+@pytest.mark.parametrize("placement", [None, "DIALOGUE", "OPTIONS"])
 async def test_dialogue_placement_is_saved_retrieved_and_graded(setup, placement):
     db, sense_id = setup
-    expected = placement or "dialogue"
+    expected = placement or "DIALOGUE"
 
     class DialogueLLM:
         async def complete(self, instruction, data, schema):
             assert prompt_context(data)["target_placement"] == expected
-            assert ("Target in Options" in instruction) == (expected == "options")
+            assert ("Target in Options" in instruction) == (expected == "OPTIONS")
             return dialogue_output(expected)
 
     question = (
@@ -200,7 +200,7 @@ async def test_dialogue_placement_is_saved_retrieved_and_graded(setup, placement
             db,
             DialogueLLM(),
             sense_id,
-            "dialogue_completion",
+            "DIALOGUE_COMPLETION",
             1,
             distractor_count=3,
             target_placement=placement,
@@ -214,7 +214,7 @@ async def test_dialogue_placement_is_saved_retrieved_and_graded(setup, placement
             db,
             None,
             question.id,
-            "single_choice",
+            "SINGLE_CHOICE",
             question.correct.id,
             config=DecisionConfig(0.8),
         )
@@ -230,8 +230,8 @@ async def test_invalid_dialogue_options_do_not_publish_partial_batch(setup, case
 
     class InvalidDialogueLLM:
         async def complete(self, instruction, data, schema):
-            payload = dialogue_output("options")
-            invalid = dialogue_output("options")["questions"][0]
+            payload = dialogue_output("OPTIONS")
+            invalid = dialogue_output("OPTIONS")["questions"][0]
             if case == "visible_target":
                 invalid["content"][0]["text"] = "The bank is closed."
             elif case == "missing_tag":
@@ -250,16 +250,16 @@ async def test_invalid_dialogue_options_do_not_publish_partial_batch(setup, case
             db,
             InvalidDialogueLLM(),
             sense_id,
-            "dialogue_completion",
+            "DIALOGUE_COMPLETION",
             2,
             distractor_count=3,
-            target_placement="options",
+            target_placement="OPTIONS",
         )
     assert await list_for_sense(db, sense_id) == []
 
 
 @pytest.mark.parametrize(
-    "kind,placement", [("dialogue_completion", "bad"), ("context_to_word", "options")]
+    "kind,placement", [("DIALOGUE_COMPLETION", "bad"), ("CONTEXT_TO_WORD", "OPTIONS")]
 )
 async def test_invalid_placement_is_rejected_before_model_call(setup, kind, placement):
     db, sense_id = setup

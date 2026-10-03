@@ -8,16 +8,13 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from lexi_ai.config import database_schema_name
 from lexi_ai.schema import Base
-from lexi_ai.words.indexes import managed_search_object
 
 config = context.config
 target_metadata = Base.metadata
 
 
 def include_object(_object, name, type_, _reflected, _compare_to):
-    if type_ == "table" and name == "alembic_version":
-        return False
-    return not managed_search_object(name, type_)
+    return not (type_ == "table" and name == "alembic_version")
 
 
 def _schema_name(dialect_name):

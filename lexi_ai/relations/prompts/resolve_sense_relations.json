@@ -5,12 +5,12 @@
       "type": "${relation_type}",
       "rule": {
         "$switch": {
-          "relation_type == 'synonym'": "The target sense must express essentially the same lexicalized concept as the source sense.",
-          "relation_type == 'antonym'": "The target sense must express an opposing meaning to the source sense on the relevant semantic dimension.",
-          "relation_type == 'hypernym'": "The source sense must denote a kind or type of the target sense.",
-          "relation_type == 'hyponym'": "The target sense must denote a kind or type of the source sense.",
-          "relation_type == 'meronym'": "The target sense must denote a part, member, or substance of what the source sense denotes.",
-          "relation_type == 'holonym'": "What the source sense denotes must be a part, member, or substance of what the target sense denotes."
+          "relation_type == 'SYNONYM'": "The target sense must express essentially the same lexicalized concept as the source sense.",
+          "relation_type == 'ANTONYM'": "The target sense must express an opposing meaning to the source sense on the relevant semantic dimension.",
+          "relation_type == 'HYPERNYM'": "The source sense must denote a kind or type of the target sense.",
+          "relation_type == 'HYPONYM'": "The target sense must denote a kind or type of the source sense.",
+          "relation_type == 'MERONYM'": "The target sense must denote a part, member, or substance of what the source sense denotes.",
+          "relation_type == 'HOLONYM'": "What the source sense denotes must be a part, member, or substance of what the target sense denotes."
         }
       }
     },

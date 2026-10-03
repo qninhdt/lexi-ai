@@ -1,6 +1,6 @@
-"""Initial Lexicon schema: relational content, dense Questions and lexical indexes.
+"""Fresh Lexicon baseline: uppercase contracts, relational content and dense Questions.
 
-Revision ID: 20260930_base
+Revision ID: 20261003_base
 Revises: None
 
 Fresh generated dictionaries only; never target the read-only Cambridge database.
@@ -12,9 +12,8 @@ from alembic import context, op
 
 from lexi_ai.questions.positions import install_positions, remove_positions
 from lexi_ai.relations.invalidation import install_relation_triggers, remove_relation_triggers
-from lexi_ai.words.indexes import install_search_index, remove_search_index
 
-revision = "20260930_base"
+revision = "20261003_base"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -57,11 +56,11 @@ def upgrade():
         sa.Column("entry_type", sa.String(length=32), nullable=True),
         sa.Column("generation_state", sa.String(length=16), nullable=False),
         sa.CheckConstraint(
-            "entry_type IN ('expression', 'idiom', 'phrasal_verb', 'phrase', 'word')",
+            "entry_type IN ('EXPRESSION', 'IDIOM', 'PHRASAL_VERB', 'PHRASE', 'WORD')",
             name="ck_entry_type_vocab",
         ),
         sa.CheckConstraint(
-            "generation_state IN ('done', 'error', 'pending')", name="ck_generation_state_vocab"
+            "generation_state IN ('DONE', 'ERROR', 'PENDING')", name="ck_generation_state_vocab"
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("match_key"),
@@ -84,12 +83,12 @@ def upgrade():
         sa.Column("ipa_uk", sa.String(length=80)),
         sa.Column("ipa_us", sa.String(length=80)),
         sa.CheckConstraint(
-            "pos IN ('adjective', 'adverb', 'article', 'auxiliary', 'conjunction', "
-            "'determiner', 'interjection', 'noun', 'numeral', 'preposition', 'pronoun', 'verb')",
+            "pos IN ('ADJECTIVE', 'ADVERB', 'ARTICLE', 'AUXILIARY', 'CONJUNCTION', "
+            "'DETERMINER', 'INTERJECTION', 'NOUN', 'NUMERAL', 'PREPOSITION', 'PRONOUN', 'VERB')",
             name="ck_pos_vocab",
         ),
         sa.CheckConstraint(
-            "tier IN ('common', 'core', 'less_common', 'rare')", name="ck_tier_vocab"
+            "tier IN ('COMMON', 'CORE', 'LESS_COMMON', 'RARE')", name="ck_tier_vocab"
         ),
         sa.ForeignKeyConstraint(["word_id"], ["words.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -119,7 +118,7 @@ def upgrade():
         sa.Column("to_word_id", sa.Integer(), nullable=False),
         sa.Column("rel_type", sa.String(length=32), nullable=False),
         sa.CheckConstraint(
-            "rel_type IN ('confused_with', 'part_of_phrasal_family', 'word_family')",
+            "rel_type IN ('CONFUSED_WITH', 'PART_OF_PHRASAL_FAMILY', 'WORD_FAMILY')",
             name="ck_rel_type_vocab",
         ),
         sa.ForeignKeyConstraint(["from_word_id"], ["words.id"], ondelete="CASCADE"),
@@ -189,8 +188,8 @@ def upgrade():
         sa.Column("position", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("type_position", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.CheckConstraint(
-            "question_type IN ('cloze_to_word', 'context_to_word', 'definition_to_word', "
-            "'dialogue_completion', 'meaning_in_context', 'word_to_definition', 'word_to_usage')",
+            "question_type IN ('CLOZE_TO_WORD', 'CONTEXT_TO_WORD', 'DEFINITION_TO_WORD', "
+            "'DIALOGUE_COMPLETION', 'MEANING_IN_CONTEXT', 'WORD_TO_DEFINITION', 'WORD_TO_USAGE')",
             name="ck_question_type_vocab",
         ),
         sa.ForeignKeyConstraint(["sense_id"], ["senses.id"], ondelete="CASCADE"),
@@ -217,8 +216,8 @@ def upgrade():
         sa.Column("head_key", sa.String(length=512), nullable=False),
         sa.Column("inf", sa.String(length=24), nullable=False),
         sa.CheckConstraint(
-            "inf IN ('base', 'comparative', 'ing', 'past', 'past_participle', "
-            "'plural', 'present_3sg', 'superlative')",
+            "inf IN ('BASE', 'COMPARATIVE', 'ING', 'PAST', 'PAST_PARTICIPLE', "
+            "'PLURAL', 'PRESENT_3SG', 'SUPERLATIVE')",
             name="ck_inf_vocab",
         ),
         sa.ForeignKeyConstraint(["sense_id"], ["senses.id"], ondelete="CASCADE"),
@@ -264,7 +263,7 @@ def upgrade():
         sa.Column("target_hash", sa.String(length=64)),
         sa.Column("resolve_attempted_at", sa.String(length=32)),
         sa.CheckConstraint(
-            "rel_type IN ('antonym', 'holonym', 'hypernym', 'hyponym', 'meronym', 'synonym')",
+            "rel_type IN ('ANTONYM', 'HOLONYM', 'HYPERNYM', 'HYPONYM', 'MERONYM', 'SYNONYM')",
             name="ck_rel_type_vocab",
         ),
         sa.ForeignKeyConstraint(["from_sense_id"], ["senses.id"], ondelete="CASCADE"),
@@ -284,13 +283,11 @@ def upgrade():
     op.create_index("ix_sense_relations_to_word_id", "sense_relations", ["to_word_id"])
     install_positions(connection)
     install_relation_triggers(connection)
-    install_search_index(connection)
 
 
 def downgrade():
     connection = op.get_bind()
     remove_positions(connection)
-    remove_search_index(connection)
     remove_relation_triggers(connection)
     for table in (
         "sense_relations",

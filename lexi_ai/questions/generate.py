@@ -5,7 +5,7 @@ import uuid
 from lexi_ai.errors import InvalidOutputError, InvalidResourceError, MissingProviderError
 from lexi_ai.inference.prompting import render_prompt
 from lexi_ai.models import Option, Question
-from lexi_ai.vocab import QUESTION_TYPES
+from lexi_ai.vocab import QuestionType, TargetPlacement
 
 from .schemas import (
     ANCHORED_QUESTION_TYPES,
@@ -19,12 +19,12 @@ from .schemas import (
 from .storage import append, generation_context
 
 
-def _bound_content(question_type: str, lemma: str, anchor: str) -> str | None:
-    if question_type == "definition_to_word":
+def _bound_content(question_type: QuestionType, lemma: str, anchor: str) -> str | None:
+    if question_type is QuestionType.DEFINITION_TO_WORD:
         return anchor
-    if question_type == "word_to_definition":
+    if question_type is QuestionType.WORD_TO_DEFINITION:
         return f'<t inf="base">{lemma}</t>'
-    if question_type == "word_to_usage":
+    if question_type is QuestionType.WORD_TO_USAGE:
         return f'<t inf="base">{lemma}</t> — {anchor}'
     return None
 
@@ -33,22 +33,28 @@ async def generate_questions(
     db,
     llm,
     sense_id: int,
-    question_type: str,
+    question_type: QuestionType,
     count: int,
     *,
     distractor_count: int,
     theme_id: int | None = None,
-    target_placement: str | None = None,
+    target_placement: TargetPlacement | None = None,
     theme_key: str | None = None,
 ) -> list[Question]:
-    if question_type not in QUESTION_TYPES or not 1 <= count <= 20:
+    try:
+        question_type = QuestionType(question_type)
+        if target_placement is not None:
+            target_placement = TargetPlacement(target_placement)
+    except ValueError as exc:
+        raise InvalidResourceError("invalid Question type or target placement") from exc
+    if type(count) is not int or not 1 <= count <= 20:
         raise InvalidResourceError("invalid Question type or count")
     if not 3 <= distractor_count <= 20:
         raise InvalidResourceError("invalid distractor count")
-    if question_type == "dialogue_completion":
-        target_placement = "dialogue" if target_placement is None else target_placement
-        if target_placement not in {"dialogue", "options"}:
-            raise InvalidResourceError("invalid dialogue target placement")
+    if question_type is QuestionType.DIALOGUE_COMPLETION:
+        target_placement = (
+            TargetPlacement.DIALOGUE if target_placement is None else target_placement
+        )
     elif target_placement is not None:
         raise InvalidResourceError("target placement applies only to dialogue completion")
     word, sense, theme = await generation_context(db, sense_id, theme_id, theme_key=theme_key)
@@ -58,7 +64,7 @@ async def generate_questions(
     anchor = sense.definition.content
     bound = _bound_content(question_type, word.lemma, anchor)
     fixed_answer = (
-        (anchor if question_type == "word_to_definition" else word.lemma)
+        (anchor if question_type is QuestionType.WORD_TO_DEFINITION else word.lemma)
         if question_type in ANCHORED_QUESTION_TYPES
         else None
     )

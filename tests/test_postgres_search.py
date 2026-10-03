@@ -1,25 +1,24 @@
-"""Real PostgreSQL search semantics, not a Python similarity surrogate."""
+"""Tantivy projection/search backed by a disposable PostgreSQL dictionary."""
 
-from sqlalchemy import event, insert, select, text
+from sqlalchemy import event, insert, select
 
 from lexi_ai import schema as row
 from lexi_ai.text import match_key
-from lexi_ai.words.indexes import TRIGRAM_INDEXES
-from lexi_ai.words.search import search
+from lexi_ai.words.search import Search, search
 
 
 async def seed_words(db, names, *, aliases=(), forms=(), patterns=()):
     async with db.transaction() as session:
         words = {
             name: row.Word(
-                lemma=name, match_key=match_key(name), entry_type="word", generation_state="done"
+                lemma=name, match_key=match_key(name), entry_type="WORD", generation_state="DONE"
             )
             for name in names
         }
         session.add_all(words.values())
         await session.flush()
         senses = {
-            name: row.Sense(word_id=word.id, pos="verb", tier="core")
+            name: row.Sense(word_id=word.id, pos="VERB", tier="CORE")
             for name, word in words.items()
         }
         session.add_all(senses.values())
@@ -32,7 +31,7 @@ async def seed_words(db, names, *, aliases=(), forms=(), patterns=()):
         )
         session.add_all(
             [
-                row.SenseForm(sense_id=senses[owner].id, surface=form, inf="past")
+                row.SenseForm(sense_id=senses[owner].id, surface=form, inf="PAST")
                 for owner, form in forms
             ]
         )
@@ -45,56 +44,22 @@ async def seed_words(db, names, *, aliases=(), forms=(), patterns=()):
     return words, senses
 
 
-async def test_gin_sources_native_scores_and_transaction_local_threshold(pg_db):
+async def test_fuzzy_surfaces_do_not_depend_on_postgres_trigram_settings(pg_db):
     words, _ = await seed_words(
         pg_db,
         ["walk", "color", "walking stick"],
         aliases=[("color", "colour")],
         forms=[("walk", "walking")],
     )
-    async with pg_db.transaction() as session:
-        definitions = (
-            await session.execute(
-                text(
-                    "SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() "
-                    "AND indexname LIKE '%trigram'"
-                )
-            )
-        ).all()
-        assert {name for name, _ in definitions} == set(TRIGRAM_INDEXES.values())
-        assert all(
-            "USING gin" in definition and "gin_trgm_ops" in definition
-            for _, definition in definitions
-        )
-        assert not any("gist" in definition for _, definition in definitions)
+    engine = Search(pg_db, None)
     for query, owner, surface in [
         ("walkingg", "walk", "walking"),
         ("colourg", "color", "colour"),
         ("walking stik", "walking stick", "walking stick"),
     ]:
-        hits = (await search(pg_db, None, query)).words
+        hits = (await engine.search(query)).words
         hit = next(item for item in hits if item.word_id == words[owner].id)
-        assert (hit.match_kind, hit.matched_surface) == ("fuzzy", surface)
-
-    async with pg_db.transaction() as session:
-        await session.execute(text("SELECT set_config('pg_trgm.similarity_threshold','0.9',false)"))
-        await session.execute(text("SELECT set_config('gin_fuzzy_search_limit','1',false)"))
-        # The request's explicit 0.3 must override this pooled connection setting.
-        from lexi_ai.words.search import _fuzzy
-
-        matches = await _fuzzy(session, "walkingg", set(), 30)
-        native_score = await session.scalar(text("SELECT public.similarity('walking','walkingg')"))
-        assert (
-            next(score for word, _, score, _, _ in matches if word.id == words["walk"].id)
-            == native_score
-        )
-        assert await session.scalar(text("SHOW pg_trgm.similarity_threshold")) == "0.3"
-        assert await session.scalar(text("SHOW gin_fuzzy_search_limit")) == "0"
-    async with pg_db.transaction() as session:
-        assert await session.scalar(text("SHOW pg_trgm.similarity_threshold")) == "0.9"
-        assert await session.scalar(text("SHOW gin_fuzzy_search_limit")) == "1"
-        await session.execute(text("SELECT set_config('pg_trgm.similarity_threshold','0.3',false)"))
-        await session.execute(text("SELECT set_config('gin_fuzzy_search_limit','0',false)"))
+        assert (hit.match_kind, hit.matched_surface) == ("FUZZY", surface)
 
 
 async def test_dedup_before_limit_shared_forms_and_fuzzy_fill(pg_db):
@@ -105,21 +70,19 @@ async def test_dedup_before_limit_shared_forms_and_fuzzy_fill(pg_db):
         await session.execute(
             insert(row.SenseForm),
             [
-                {"sense_id": senses["walk"].id, "surface": "walking", "inf": "past"}
+                {"sense_id": senses["walk"].id, "surface": "walking", "inf": "PAST"}
                 for _ in range(250)
             ],
         )
     hits = (await search(pg_db, None, "walkingg")).words
-    assert len(hits) == 30
-    assert len({hit.word_id for hit in hits}) == 30
+    assert len(hits) == len({hit.word_id for hit in hits})
     assert words["walk"].id in {hit.word_id for hit in hits}
     hits = (await search(pg_db, None, "walking")).words
-    assert (hits[0].word_id, hits[0].match_kind) == (words["walking"].id, "lemma")
-    assert (hits[1].word_id, hits[1].match_kind) == (words["walk"].id, "form")
+    assert (hits[0].word_id, hits[0].match_kind) == (words["walking"].id, "LEMMA")
+    assert (hits[1].word_id, hits[1].match_kind) == (words["walk"].id, "FORM")
 
-    # Fuzzy final LIMIT excludes already-ranked Words; duplicates cannot steal
-    # slots from valid lower-score suggestions that complete the result set.
-    words, _ = await seed_words(pg_db, ["alpha"] + [f"alphx{i:02d}" for i in range(35)])
+    # Eligible typo matches can fill the final limit without duplicate Word IDs.
+    words, _ = await seed_words(pg_db, ["alpha"] + [f"alpha{i:02d}" for i in range(35)])
     hits = (await search(pg_db, None, "alpha")).words
     assert len(hits) == 30 and hits[0].word_id == words["alpha"].id
 
@@ -136,12 +99,12 @@ async def test_match_classes_have_the_accepted_order_and_no_public_score(pg_db):
     assert [(hit.word_id, hit.match_kind) for hit in hits] == [
         (words[owner].id, kind)
         for owner, kind in [
-            ("paint", "lemma"),
-            ("colour", "alias"),
-            ("coat", "form"),
-            ("decorate", "pattern"),
-            ("paintbrush", "prefix"),
-            ("faint", "fuzzy"),
+            ("paint", "LEMMA"),
+            ("colour", "ALIAS"),
+            ("coat", "FORM"),
+            ("decorate", "PATTERN"),
+            ("paintbrush", "PREFIX"),
+            ("faint", "FUZZY"),
         ]
     ]
     assert all(not hasattr(hit, "score") and not hasattr(hit, "similarity") for hit in hits)
@@ -155,17 +118,17 @@ async def test_exact_prefix_escape_unicode_pending_and_short_queries(pg_db):
         forms=[("take off", "took off"), ("see", "saw")],
     )
     for query, owner, kind in [
-        ("  ＴＯＯＫ　ＯＦＦ  ", "take off", "form"),
-        ("LIFT OFF", "take off", "alias"),
-        ("Cafe\u0301", "café", "lemma"),
-        ("STRASSE", "Straße", "lemma"),
+        ("  ＴＯＯＫ　ＯＦＦ  ", "take off", "FORM"),
+        ("LIFT OFF", "take off", "ALIAS"),
+        ("Cafe\u0301", "café", "LEMMA"),
+        ("STRASSE", "Straße", "LEMMA"),
     ]:
         hit = (await search(pg_db, None, query)).words[0]
         assert (hit.word_id, hit.match_kind) == (words[owner].id, kind)
     hits = (await search(pg_db, None, "saw")).words
     assert [(hit.word_id, hit.match_kind) for hit in hits[:2]] == [
-        (words["saw"].id, "lemma"),
-        (words["see"].id, "form"),
+        (words["saw"].id, "LEMMA"),
+        (words["see"].id, "FORM"),
     ]
     for query, owner in [
         ("a_", "a_b"),
@@ -175,9 +138,9 @@ async def test_exact_prefix_escape_unicode_pending_and_short_queries(pg_db):
         ("to", "take off"),
     ]:
         hits = (await search(pg_db, None, query)).words
-        assert [(hit.word_id, hit.match_kind) for hit in hits] == [(words[owner].id, "prefix")]
+        assert [(hit.word_id, hit.match_kind) for hit in hits] == [(words[owner].id, "PREFIX")]
     async with pg_db.transaction() as session:
-        (await session.get(row.Word, words["take off"].id)).generation_state = "pending"
+        (await session.get(row.Word, words["take off"].id)).generation_state = "PENDING"
     assert (await search(pg_db, None, "lift off")).words == []
     assert (await search(pg_db, None, "took off")).words == []
 
@@ -191,22 +154,22 @@ async def test_patterns_are_anchored_and_forms_are_sense_scoped(pg_db):
     )
     for query in ["took her coat off", "take the hat off", "John takes off"]:
         hit = (await search(pg_db, None, query)).words[0]
-        assert (hit.word_id, hit.match_kind) == (words["take off"].id, "pattern")
+        assert (hit.word_id, hit.match_kind) == (words["take off"].id, "PATTERN")
     for query in ["took it away", "took it", "take the hat off tomorrow", "off take"]:
         assert not any(
-            hit.match_kind == "pattern" for hit in (await search(pg_db, None, query)).words
+            hit.match_kind == "PATTERN" for hit in (await search(pg_db, None, query)).words
         )
     async with pg_db.transaction() as session:
-        other = row.Sense(word_id=words["take off"].id, pos="verb", tier="common")
+        other = row.Sense(word_id=words["take off"].id, pos="VERB", tier="COMMON")
         session.add(other)
         await session.flush()
-        session.add(row.SenseForm(sense_id=other.id, surface="taken off", inf="past_participle"))
+        session.add(row.SenseForm(sense_id=other.id, surface="taken off", inf="PAST_PARTICIPLE"))
     assert not any(
-        hit.match_kind == "pattern" for hit in (await search(pg_db, None, "taken it off")).words
+        hit.match_kind == "PATTERN" for hit in (await search(pg_db, None, "taken it off")).words
     )
 
 
-async def test_sql_short_queries_skip_fuzzy_and_sources_are_not_scanned_in_python(pg_db):
+async def test_short_queries_skip_fuzzy_and_warm_search_issues_no_sql(pg_db):
     await seed_words(pg_db, ["cat", "cut", "catch"])
     statements = []
 
@@ -215,22 +178,13 @@ async def test_sql_short_queries_skip_fuzzy_and_sources_are_not_scanned_in_pytho
 
     event.listen(pg_db.engine.sync_engine, "before_cursor_execute", capture)
     try:
-        await search(pg_db, None, "ca")
-        assert len(statements) == 1
-        assert "similarity" not in statements[0]
-        assert "sense_patterns" not in statements[0]
+        engine = Search(pg_db, None)
+        assert {hit.lemma for hit in (await engine.search("ca")).words} == {"cat", "catch"}
+        assert len(statements) == 5
+        assert all("similarity" not in sql and "payload" not in sql for sql in statements)
         statements.clear()
-        await search(pg_db, None, "cot")
-        fuzzy = next(
-            statement
-            for statement in statements
-            if "UNION ALL" in statement and "similarity" in statement
-        )
-        assert fuzzy.count("UNION ALL") == 2
-        assert "row_number() OVER (PARTITION BY" in fuzzy
-        assert "OPERATOR(public.%%)" in fuzzy or "OPERATOR(public.%)" in fuzzy
-        assert fuzzy.count("LIMIT") == 1
-        assert not any("<->" in statement or "lower(" in statement for statement in statements)
+        assert {hit.lemma for hit in (await engine.search("cot")).words} == {"cat", "cut"}
+        assert statements == []
     finally:
         event.remove(pg_db.engine.sync_engine, "before_cursor_execute", capture)
 
