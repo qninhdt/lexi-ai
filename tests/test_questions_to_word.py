@@ -37,11 +37,11 @@ class LLM:
                     else {"correct": {"content": correct, "explanation": "It fits."}}
                 ),
                 "distractors": [
-                    {"content": f"wrong{i}", "explanation": "Not here."}
+                    {"content": f"wrong{self.calls}q{item}x{i}", "explanation": "Not here."}
                     for i in range(context["distractors_per_question"])
                 ],
             }
-            for _ in range(context["count"])
+            for item in range(context["count"])
         ]
         if self.invalid_last:
             questions[-1]["distractors"] = []
@@ -82,13 +82,17 @@ async def test_batch_append_reuses_artifact_across_formats(setup):
     assert first[0].supports("SINGLE_CHOICE") and first[0].supports("SINGLE_WORD")
 
 
-async def test_last_invalid_question_rolls_back(setup):
+async def test_invalid_questions_are_filtered_without_discarding_valid_items(setup):
     db, sense_id = setup
+    saved = await generate_questions(
+        db, LLM(invalid_last=True), sense_id, "DEFINITION_TO_WORD", 2, distractor_count=3
+    )
+    assert len(saved) == 1 and len(saved[0].distractors) == 3
     with pytest.raises(InvalidOutputError):
         await generate_questions(
-            db, LLM(invalid_last=True), sense_id, "DEFINITION_TO_WORD", 2, distractor_count=3
+            db, LLM(invalid_last=True), sense_id, "DEFINITION_TO_WORD", 1, distractor_count=3
         )
-    assert await list_for_sense(db, sense_id) == []
+    assert await list_for_sense(db, sense_id) == saved
 
 
 async def test_cloze_saves_inflected_answer_not_headword(setup):
@@ -225,7 +229,8 @@ async def test_dialogue_placement_is_saved_retrieved_and_graded(setup, placement
     "case",
     ["visible_target", "missing_tag", "wrong_target", "malformed_tag", "empty_turn"],
 )
-async def test_invalid_dialogue_options_do_not_publish_partial_batch(setup, case):
+@pytest.mark.parametrize("valid_first", [False, True])
+async def test_invalid_dialogue_questions_never_publish(setup, case, valid_first):
     db, sense_id = setup
 
     class InvalidDialogueLLM:
@@ -242,11 +247,11 @@ async def test_invalid_dialogue_options_do_not_publish_partial_batch(setup, case
                 invalid["correct"]["content"] = 'The <t inf="base">bank is closed.'
             else:
                 invalid["content"][0]["text"] = " "
-            payload["questions"].append(invalid)
+            payload["questions"] = [payload["questions"][0], invalid] if valid_first else [invalid]
             return payload
 
-    with pytest.raises(InvalidOutputError):
-        await generate_questions(
+    async def generate():
+        return await generate_questions(
             db,
             InvalidDialogueLLM(),
             sense_id,
@@ -255,7 +260,18 @@ async def test_invalid_dialogue_options_do_not_publish_partial_batch(setup, case
             distractor_count=3,
             target_placement="OPTIONS",
         )
-    assert await list_for_sense(db, sense_id) == []
+
+    if valid_first:
+        saved = await generate()
+        assert (
+            len(saved) == 1
+            and saved[0].content == dialogue_output("OPTIONS")["questions"][0]["content"]
+        )
+        assert await list_for_sense(db, sense_id) == saved
+    else:
+        with pytest.raises(InvalidOutputError):
+            await generate()
+        assert await list_for_sense(db, sense_id) == []
 
 
 @pytest.mark.parametrize(

@@ -13,6 +13,15 @@ class QuestionType(StrEnum):
     MEANING_IN_CONTEXT = "MEANING_IN_CONTEXT"
 
 
+FIXED_STEM_QUESTION_TYPES = frozenset(
+    {
+        QuestionType.DEFINITION_TO_WORD,
+        QuestionType.WORD_TO_DEFINITION,
+        QuestionType.WORD_TO_USAGE,
+    }
+)
+
+
 class ResponseFormat(StrEnum):
     SINGLE_CHOICE = "SINGLE_CHOICE"
     SINGLE_WORD = "SINGLE_WORD"
@@ -112,10 +121,7 @@ class Register(StrEnum):
 
 
 class MatchKind(StrEnum):
-    LEMMA = "LEMMA"
-    ALIAS = "ALIAS"
-    FORM = "FORM"
-    PATTERN = "PATTERN"
+    EXACT = "EXACT"
     PREFIX = "PREFIX"
     SUBSTRING = "SUBSTRING"
     FUZZY = "FUZZY"
@@ -168,7 +174,20 @@ GENERATED_WORD_REL_TYPES = frozenset({WordRelationType.WORD_FAMILY, WordRelation
 WORD_REL_TYPES = frozenset(WordRelationType)
 REL_LEVEL = {**dict.fromkeys(WORD_REL_TYPES, "word"), **dict.fromkeys(SENSE_REL_TYPES, "sense")}
 SLOTS = frozenset(
-    {"{sb}", "{sth}", "{one's}", "{oneself}", "{place}", "{doing}", "{do}", "{num}", "{clause}"}
+    {
+        "{sb}",
+        "{sth}",
+        "{one's}",
+        "{oneself}",
+        "{place}",
+        "{doing}",
+        "{do}",
+        "{done}",
+        "{adj}",
+        "{adv}",
+        "{num}",
+        "{clause}",
+    }
 )
 QUESTION_FORMATS = {
     QuestionType.DEFINITION_TO_WORD: frozenset(

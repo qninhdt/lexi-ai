@@ -1,1 +1,1 @@
-"""Single fresh-database generated-dictionary baseline revision."""
+"""Generated-dictionary baseline and schema upgrades."""

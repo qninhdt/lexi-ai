@@ -155,6 +155,10 @@ async def bank(optimized_db):
             ),
         ],
     )
+    from lexi_ai.words.search import Search
+
+    db.search_index = Search(db, None)
+    await db.search_index.start()
     return db, questions
 
 

@@ -1,4 +1,4 @@
-"""Shared root .env loading for examples/benchmarks, never for the installed library."""
+"""Provider environment parsing for the CLI and maintainer benchmarks."""
 
 import argparse
 import os
@@ -8,8 +8,7 @@ from dotenv import dotenv_values
 
 from lexi_ai import DecisionConfig, LLMConfig
 
-ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_ENV_FILE = ROOT / ".env"
+DEFAULT_ENV_FILE = Path(".env")
 
 PROVIDER_VARIABLES = (
     "LLM_API_KEY",
@@ -19,22 +18,13 @@ PROVIDER_VARIABLES = (
     "LLM_TEMPERATURE",
     "LLM_REASONING_EFFORT",
     "LLM_MAX_RETRIES",
+    "LLM_MAX_COMPLETION_TOKENS",
+    "LLM_TIMEOUT",
     "DECISION_API_KEY",
     "DECISION_BASE_URL",
     "DECISION_MODEL",
     "DECISION_FALLBACK_MODEL",
 )
-
-
-def add_config_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--db-url", required=True, help="Already initialized generated database")
-    parser.add_argument(
-        "--cambridge-path",
-        default=str(ROOT / "data" / "cambridge.db"),
-    )
-    parser.add_argument("--db-schema", help="Optional existing PostgreSQL schema")
-    parser.add_argument("--threshold", type=float, default=0.8)
-    parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
 
 
 def load_provider_values(env_file: Path = DEFAULT_ENV_FILE):
@@ -87,6 +77,19 @@ def provider_options(values, prefix, *, require_key=False):
             options["max_retries"] = LLMConfig(max_retries=retries).max_retries
         except ValueError as error:
             raise ValueError("LLM_MAX_RETRIES must be a non-negative integer or blank") from error
+        for field, name, convert in (
+            ("LLM_MAX_COMPLETION_TOKENS", "max_completion_tokens", int),
+            ("LLM_TIMEOUT", "timeout", float),
+        ):
+            value = values.get(field)
+            if value is None or value == "":
+                continue
+            try:
+                if not isinstance(value, str):
+                    raise ValueError
+                options[name] = getattr(LLMConfig(**{name: convert(value)}), name)
+            except ValueError as error:
+                raise ValueError(f"{field} must be within the LLMConfig limits or blank") from error
     return options
 
 
@@ -97,16 +100,29 @@ def create_lexicon(args: argparse.Namespace):
     decision = {}
     if (values.get("DECISION_API_KEY") or "").strip():
         decision = provider_options(values, "DECISION", require_key=True)
-    llm_config = LLMConfig(**provider_options(values, "LLM", require_key=True))
+    llm_config = (
+        LLMConfig(**provider_options(values, "LLM"))
+        if any(
+            (values.get(name) or "").strip()
+            for name in PROVIDER_VARIABLES
+            if name.startswith("LLM_")
+        )
+        else LLMConfig()
+    )
 
     return Lexicon(
         db_url=args.db_url,
-        cambridge_path=args.cambridge_path,
+        reference_path=getattr(args, "reference_path", None) or ""
+        if args.db_url.startswith("sqlite")
+        else "",
         db_schema=args.db_schema,
+        max_concurrency=getattr(args, "max_concurrency", 128),
         llm_config=llm_config,
         decision_config=DecisionConfig(
             threshold=args.threshold,
             **decision,
         ),
-        decision_fallback_model=values.get("DECISION_FALLBACK_MODEL") or None,
+        decision_fallback_model=getattr(args, "decision_fallback_model", None)
+        or values.get("DECISION_FALLBACK_MODEL")
+        or None,
     )

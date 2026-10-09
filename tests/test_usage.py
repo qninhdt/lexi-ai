@@ -339,26 +339,29 @@ async def lexicon(tmp_path, source):
     )
     try:
         await instance.db.create_schema(Base.metadata)
+        await instance.start()
         yield instance
     finally:
         await instance.close()
 
 
 async def generate_bank(lexicon):
-    handle = (await lexicon.search("bank", include_available=True)).available[0].available_id
-    word = await lexicon.generate(handle, target="bank", example_count=1)
+    handle = (await lexicon.search("bank", include_reference=True)).items[0].reference_id
+    word = await lexicon.generate_word("bank", reference_id=handle, example_count=1)
     return handle, word
 
 
 async def test_public_generation_theme_and_question_usage_and_cached_reads(lexicon):
-    handle = (await lexicon.search("bank", include_available=True)).available[0].available_id
+    handle = (await lexicon.search("bank", include_reference=True)).items[0].reference_id
     _, usage = await lexicon.create_theme("pirate", "Pirate", "nautical", with_usage=True)
     assert usage == [LLM_USAGE]
-    word, usage = await lexicon.generate(
-        handle, target="bank", theme="pirate", example_count=1, with_usage=True
+    word, usage = await lexicon.generate_word(
+        "bank", reference_id=handle, theme="pirate", example_count=1, with_usage=True
     )
     assert usage == [TokenUsage("actual-llm", 30, 9, None, 6)]
-    stored, usage = await lexicon.generate(handle, target="bank", theme="pirate", with_usage=True)
+    stored, usage = await lexicon.generate_word(
+        "bank", reference_id=handle, theme="pirate", with_usage=True
+    )
     assert stored == word and usage == []
     questions, usage = await lexicon.generate_questions(
         word.senses[0].id,
@@ -413,8 +416,8 @@ async def test_all_grading_stages_and_gates_collect_only_their_own_calls(
     _, word = await generate_bank(lexicon)
     async with lexicon.db.transaction() as session:
         session.add(row.WordAlias(word_id=word.id, content="lender", match_key="lender"))
-    # Direct fixture writes bypass native publication; preload the final projection.
-    await lexicon.start()
+    # Direct writes explicitly notify the index after committing.
+    await lexicon._search.update(word.id)
     question = (await lexicon.generate_questions(word.senses[0].id, kind, 1, distractor_count=3))[0]
 
     class GradingDecision:

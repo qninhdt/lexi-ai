@@ -14,6 +14,16 @@ from lexi_ai.schema import Base, SenseRelation, Word
 
 
 async def test_complete_consumer_flow_uses_host_session(optimized_db, source):
+    if optimized_db.engine.dialect.name == "postgresql":
+        from lexi_ai.references.schema import metadata
+
+        async with optimized_db.engine.begin() as connection:
+            await connection.run_sync(metadata.create_all)
+        owner = Lexicon(optimized_db.engine.url.render_as_string(hide_password=False))
+        try:
+            await owner.import_reference(source)
+        finally:
+            await owner.close()
     async with optimized_db.sessions() as session, session.begin():
         await verify_consumer_flow(None, source, session=session)
         assert session.in_transaction()
@@ -81,17 +91,16 @@ async def test_file_database_configures_every_connection_and_persists_wal(tmp_pa
         await db.close()
 
 
-async def test_host_session_keeps_transaction_and_lifecycle_ownership(tmp_path):
+async def test_host_session_keeps_transaction_and_lifecycle_ownership(tmp_path, source):
     db = Database(f"sqlite+aiosqlite:///{tmp_path / 'host.db'}")
     try:
         await db.create_schema(Base.metadata)
         async with db.sessions() as session:
             adapter = SessionDatabase(session)
-            lexicon = Lexicon(session=session, llm=object())
+            lexicon = Lexicon(session=session, reference_path=str(source), llm=object())
             assert lexicon.db.content_cache is None and lexicon.db.question_cache is None
-            with pytest.raises(ValueError, match="borrowed transaction"):
-                await lexicon.start()
             async with session.begin():
+                await lexicon.start()
                 async with adapter.transaction() as borrowed:
                     assert borrowed is session
                     borrowed.add(Word(lemma="bank", match_key="bank", generation_state="DONE"))

@@ -7,7 +7,7 @@ from sqlalchemy import update
 from lexi_ai.db.bulk import insert_identified_rows, insert_rows
 from lexi_ai.errors import InvalidHandleError, InvalidOutputError, MissingProviderError
 from lexi_ai.inference.prompting import render_prompt
-from lexi_ai.references.cambridge import decode_available_id
+from lexi_ai.references.cambridge import decode_reference_id
 from lexi_ai.references.wordnet import lookup
 from lexi_ai.schema import (
     Collocation,
@@ -34,12 +34,12 @@ from .storage import consumed_word, insert_contents, publish_identity, target_wo
 
 
 async def generate_word(
-    db, cambridge, llm, available_id: str, example_count: int, *, target: str, theme_key=None
+    db, cambridge, llm, reference_id: str, example_count: int, *, target: str, theme_key=None
 ):
     """Publish one transaction; caller serializes overlapping operations on the same Word."""
     if type(example_count) is not int or example_count < 1:
         raise ValueError("example count must be a positive integer")
-    selected_id = decode_available_id(available_id)
+    selected_id = decode_reference_id(reference_id)
     target = validate_lemma(target)
     async with db.read() as connection:
         existing = await consumed_word(connection, selected_id, theme_key=theme_key)
@@ -47,25 +47,37 @@ async def generate_word(
             return existing
     entry = await cambridge.fetch_by_id(selected_id)
     if entry is None or not entry.senses:
-        raise InvalidHandleError("available entry has no generation evidence")
+        raise InvalidHandleError("reference entry has no generation evidence")
     if llm is None:
         raise MissingProviderError("Word generation requires a structured LLM")
+    # Prefer a citation confirmed by a headword over a display listing variants.
+    if target == entry.display and any(s.headword == entry.slug for s in entry.senses):
+        target = entry.slug
     supporting = await lookup(target)
-    cambridge_sources = {f"c{index}": sense for index, sense in enumerate(entry.senses, 1)}
+    cambridge_sources = {f"a{index}": sense for index, sense in enumerate(entry.senses, 1)}
     source_refs = {key: ("cambridge", str(sense.id)) for key, sense in cambridge_sources.items()}
     source_refs.update(
-        {f"w{index}": ("wordnet", sense.key) for index, sense in enumerate(supporting, 1)}
+        {f"b{index}": ("wordnet", sense.key) for index, sense in enumerate(supporting, 1)}
     )
     references = [
         {
             "id": key,
-            "pos": normalize_pos(sense.pos),
+            "pos": normalize_pos(sense.pos) or sense.pos,
             "definition": sense.definition,
             "cefr_level": sense.cefr_level,
+            "examples": sense.examples,
+            **({"headword": sense.headword} if sense.headword else {}),
+            **({"phrase_title": sense.phrase_title} if sense.phrase_title else {}),
         }
         for key, sense in cambridge_sources.items()
     ] + [
-        {"id": f"w{index}", "pos": normalize_pos(sense.pos), "definition": sense.definition}
+        {
+            "id": f"b{index}",
+            "synset": sense.key,
+            "examples": sense.examples,
+            "pos": normalize_pos(sense.pos),
+            "definition": sense.definition,
+        }
         for index, sense in enumerate(supporting, 1)
     ]
     instruction, data = render_prompt(
@@ -78,21 +90,20 @@ async def generate_word(
         inventory = InventoryOutput.model_validate(inventory)
     except ValueError as exc:
         raise InvalidOutputError("invalid Word inventory") from exc
-    validate_inventory(inventory, target)
+    # A source display may list variants; its stored citation still anchors identity.
+    if target == entry.display and match_key(inventory.lemma) == match_key(entry.slug):
+        target = inventory.lemma
+    validate_inventory(inventory, set(source_refs), target)
     identity = inventory.model_dump(by_alias=True, exclude={"senses"})
-    semaphore = asyncio.Semaphore(4)
 
     async def enrich(seed):
         instruction, data = render_prompt(
             "words/prompts/enrich_sense.jinja",
-            target=target,
-            word=identity,
-            sense=seed.model_dump(),
-            references=references,
+            word={key: identity[key] for key in ("lemma", "type", "aliases")},
+            sense=seed.model_dump(exclude={"references"}),
             examples_per_sense=example_count,
         )
-        async with semaphore:
-            details = await llm.complete(instruction, data, SenseEnrichment)
+        details = await llm.complete(instruction, data, SenseEnrichment)
         try:
             details = SenseEnrichment.model_validate(details)
             output = SenseOutput.model_validate(
@@ -100,8 +111,6 @@ async def generate_word(
             )
         except ValueError as exc:
             raise InvalidOutputError("invalid Sense enrichment") from exc
-        if len(output.examples) != example_count:
-            raise InvalidOutputError("Sense example cardinality differs from configured count")
         return output
 
     tasks = [asyncio.create_task(enrich(seed)) for seed in inventory.senses]
@@ -128,7 +137,7 @@ async def generate_word(
         )
         sense_rows = []
         for item in generated.senses:
-            cited = [sources[ref] for ref in item.sources if ref in sources]
+            cited = [sources[ref] for ref in item.references if ref in sources]
             matching = [
                 (order, source) for order, source in cited if normalize_pos(source.pos) == item.pos
             ]
@@ -169,7 +178,7 @@ async def generate_word(
                 [
                     dict(sense_id=id, source=source_refs[ref][0], source_ref=source_refs[ref][1])
                     for id, item in groups
-                    for ref in item.sources
+                    for ref in item.references
                 ],
             ),
         ):
@@ -181,7 +190,7 @@ async def generate_word(
             try:
                 phrase_lemmas.add(validate_lemma(source.phrase_title))
             except ValueError:
-                # Reference notation is not a canonical lemma. Do not invent a
+                # Cambridge notation is not a canonical lemma. Do not invent a
                 # normalization or a second generation path for ambiguous titles.
                 continue
         word_edges = [(item.lemma, item.rel_type) for item in generated.related] + [
@@ -195,9 +204,11 @@ async def generate_word(
             (
                 WordRelation,
                 [
-                    dict(from_word_id=word.id, to_word_id=targets[match_key(lemma)], rel_type=kind)
-                    for lemma, kind in word_edges
-                    if targets[match_key(lemma)] != word.id
+                    dict(from_word_id=word.id, to_word_id=target_id, rel_type=kind)
+                    for target_id, kind in dict.fromkeys(
+                        (targets[match_key(lemma)], kind) for lemma, kind in word_edges
+                    )
+                    if target_id != word.id
                 ],
             ),
             (

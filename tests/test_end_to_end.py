@@ -1,4 +1,4 @@
-"""Consumer flow across migrated storage and a read-only Cambridge fixture."""
+"""Consumer flow across migrated storage and a read-only Reference fixture."""
 
 import hashlib
 from types import SimpleNamespace
@@ -15,7 +15,7 @@ from lexi_ai.db.session import Database
 from lexi_ai.errors import InvalidOutputError
 from lexi_ai.inference.config import LLMConfig
 from lexi_ai.inference.llm import OpenAIStructuredLLM
-from lexi_ai.references.cambridge import SourceEntry, SourceSense, encode_available_id
+from lexi_ai.references.cambridge import SourceEntry, SourceSense, encode_reference_id
 from lexi_ai.schema import Base, Definition, Example, Sense, Theme, Word
 from lexi_ai.themes.service import ThemedWord, ensure_word_theme
 from lexi_ai.words.generate import generate_word
@@ -52,7 +52,7 @@ class LLM:
                                     "gloss": "place to keep money",
                                 }
                             ],
-                            "sources": ["c1"],
+                            "references": ["a1"],
                         }
                     ],
                 },
@@ -94,11 +94,14 @@ class LLM:
                                 }
                             ),
                             "distractors": [
-                                {"content": f"wrong{i}", "explanation": "Does not fit."}
+                                {
+                                    "content": f"wrong{len(self.calls)}q{item}x{i}",
+                                    "explanation": "Does not fit.",
+                                }
                                 for i in range(context["distractors_per_question"])
                             ],
                         }
-                        for _ in range(context["count"])
+                        for item in range(context["count"])
                     ]
                 }
             )
@@ -144,9 +147,14 @@ async def test_selected_to_theme_question_grade_sense_linking_and_translation(tm
 async def verify_consumer_flow(url, source, *, db_schema=None, session=None):
     before = hashlib.sha256(source.read_bytes()).digest()
     llm, decision = LLM(), Decision()
+    postgres = (
+        (session.get_bind().dialect.name == "postgresql")
+        if session
+        else url.startswith("postgresql")
+    )
     ai = Lexicon(
         url,
-        str(source),
+        "" if postgres else str(source),
         decision_config=DecisionConfig(0.8),
         db_schema=db_schema,
         llm=llm,
@@ -154,6 +162,8 @@ async def verify_consumer_flow(url, source, *, db_schema=None, session=None):
         session=session,
     )
     try:
+        if postgres and session is None:
+            await ai.import_reference(source)
         async with ai.db.transaction() as session:
             target = Word(
                 lemma="vault", match_key="vault", entry_type="WORD", generation_state="DONE"
@@ -164,17 +174,20 @@ async def verify_consumer_flow(url, source, *, db_schema=None, session=None):
             session.add(target_sense)
             await session.flush()
             session.add(Definition(sense_id=target_sense.id, content="secure place for valuables"))
-        available = (await ai.search("bank", include_available=True)).available
-        assert len(available) == 1
+        await ai.start()
+        references = (await ai.search("bank", include_reference=True)).items
+        assert len(references) == 1
         assert llm.calls == []
-        word = await ai.generate(available[0].available_id, target="bank", example_count=1)
+        word = await ai.generate_word(
+            "bank", reference_id=references[0].reference_id, example_count=1
+        )
         sense_id = word.senses[0].id
         theme = await ai.create_theme("pirate", "Pirate", "nautical voice")
         assert await ai.get_theme(theme.key) == theme
         assert await ai.list_themes() == [theme]
         assert (await ai.get_word(word.id, theme.key)) is None
-        themed = await ai.generate(
-            available[0].available_id, theme.key, target="bank", example_count=1
+        themed = await ai.generate_word(
+            "bank", theme=theme.key, reference_id=references[0].reference_id, example_count=1
         )
         assert themed.senses[0].definition.content == "A safe house for treasure"
         assert (await ai.get_word(word.id)).senses[0].definition.content == (
@@ -235,7 +248,7 @@ async def test_oversized_selected_source_fails_without_partial_word(tmp_path, mo
                 "bank",
                 "word",
                 [
-                    SourceSense(101, "noun", "meaning " * 2500),
+                    SourceSense(101, "noun", "meaning " * 10000),
                 ],
             )
 
@@ -247,7 +260,7 @@ async def test_oversized_selected_source_fails_without_partial_word(tmp_path, mo
         await db.create_schema(Base.metadata)
         llm = OpenAIStructuredLLM(LLMConfig())
         with pytest.raises(ValueError, match="invalid structured request"):
-            await generate_word(db, HugeSource(), llm, encode_available_id(1), 1, target="bank")
+            await generate_word(db, HugeSource(), llm, encode_reference_id(1), 1, target="bank")
         async with db.transaction() as session:
             assert (await session.scalars(select(Word))).all() == []
     finally:

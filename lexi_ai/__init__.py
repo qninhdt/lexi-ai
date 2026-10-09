@@ -10,6 +10,7 @@ from .inference.llm import StructuredLLM
 from .models import TokenUsage
 from .vocab import (
     ALLOWED_PAIRS,
+    FIXED_STEM_QUESTION_TYPES,
     QUESTION_FORMATS,
     CEFRLevel,
     DefinitionAccuracy,
@@ -35,6 +36,7 @@ from .vocab import (
 
 __all__ = [
     "ALLOWED_PAIRS",
+    "FIXED_STEM_QUESTION_TYPES",
     "QUESTION_FORMATS",
     "CEFRLevel",
     "EntryType",

@@ -303,11 +303,11 @@ async def test_pattern_projection_loads_once_then_matches_in_ram(pg_db):
     event.listen(pg_db.engine.sync_engine, "before_cursor_execute", capture)
     try:
         engine = Search(pg_db, None)
-        await engine.reload()
+        await engine.start()
         assert len(captured) == 5
         assert all("definitions" not in sql and "questions" not in sql for sql, _ in captured)
         captured.clear()
-        assert (await engine.search("word1 thing fixed1")).words[0].match_kind == "PATTERN"
+        assert (await engine.search("word1 thing fixed1")).items[0].match_kind == "EXACT"
         assert captured == []
     finally:
         event.remove(pg_db.engine.sync_engine, "before_cursor_execute", capture)

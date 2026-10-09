@@ -21,8 +21,8 @@ from benchmarks.run import (
     run_benchmark,
 )
 from benchmarks.scoring import case_cost, summarize
-from examples._config import DEFAULT_ENV_FILE, PROVIDER_VARIABLES, load_provider_values
 from lexi_ai import DecisionConfig, DecisionMode, LLMConfig
+from lexi_ai.cli.config import DEFAULT_ENV_FILE, PROVIDER_VARIABLES, load_provider_values
 from lexi_ai.inference.decision import DecisionModel
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +42,7 @@ PRICING = {
         ("grading_llm", "LLM", DecisionMode.LLM_ONLY),
     ],
 )
-def test_examples_and_benchmark_share_env_without_provider_defaults(
+def test_cli_and_benchmark_share_env_without_provider_defaults(
     tmp_path, monkeypatch, profile, prefix, mode
 ):
     for name in PROVIDER_VARIABLES:
@@ -66,7 +66,7 @@ def test_examples_and_benchmark_share_env_without_provider_defaults(
     assert config["pricing"] == PRICING
     if prefix == "LLM":
         assert config["structured_outputs"] is True
-    assert DEFAULT_ENV_FILE == ROOT / ".env"
+    assert DEFAULT_ENV_FILE == Path(".env")
     assert f"{prefix}_API_KEY" not in os.environ
     monkeypatch.setenv(f"{prefix}_MODEL", "process-model")
     assert load_config(settings_path, profile, env_file=env_file)["model"] == "process-model"

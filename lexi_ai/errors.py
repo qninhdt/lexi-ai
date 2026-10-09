@@ -15,7 +15,7 @@ class LexiconError(Exception):
 
 
 class InvalidHandleError(LexiconError):
-    """An available entry handle is malformed or no longer valid."""
+    """A reference entry handle is malformed or no longer valid."""
 
 
 class InvalidResourceError(LexiconError):

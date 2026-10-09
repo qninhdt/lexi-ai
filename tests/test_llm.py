@@ -413,3 +413,16 @@ def test_invalid_temperature(value):
 def test_invalid_reasoning_effort(value):
     with pytest.raises(ValueError, match="reasoning_effort"):
         LLMConfig(reasoning_effort=value)
+
+
+async def test_reference_prompt_can_exceed_single_text_limit_but_remains_bounded():
+    from lexi_ai.config import MAX_PROMPT_LENGTH, MAX_TEXT_LENGTH
+
+    client = FakeClient(Reply(answer="yes"))
+    llm = OpenAIStructuredLLM(LLMConfig(), client)
+    data = "e" * (MAX_TEXT_LENGTH + 1)
+    assert await llm.complete("task", data, Reply) == Reply(answer="yes")
+    assert client.completions.requests[0]["messages"][1]["content"] == data
+    with pytest.raises(ValueError, match="invalid structured request"):
+        await llm.complete("task", "e" * (MAX_PROMPT_LENGTH + 1), Reply)
+    assert len(client.completions.requests) == 1

@@ -17,7 +17,7 @@ from lexi_ai.models import Option, Question
 from lexi_ai.questions.generate import generate_questions
 from lexi_ai.questions.grade import grade_answer
 from lexi_ai.questions.storage import append, list_for_sense
-from lexi_ai.references.cambridge import encode_available_id
+from lexi_ai.references.cambridge import encode_reference_id
 from lexi_ai.relations.storage import definition_hash, pending_relations
 from lexi_ai.themes.service import list_themes
 from lexi_ai.translation import storage as translations
@@ -274,12 +274,14 @@ async def test_pattern_projection_and_warm_matching(sqlite_db, monkeypatch):
 
     monkeypatch.setattr(search, "matches_pattern", counted)
     engine = search.Search(sqlite_db, None)
-    hits = (await engine.search("word1 thing fixed3")).words
+    await engine.start()
+    hits = (await engine.search("word1 thing fixed3")).items
     assert hits[0].matched_surface == "word1 {sth} fixed3"
-    assert len(patterns) == 5
+    assert len(patterns) <= 5
+    assert "word1 {sth} fixed3" in patterns
     patterns.clear()
-    assert (await engine.search("word1 thing fixed3")).words == hits
-    assert patterns == []  # Result memoization does not re-run the matcher.
+    assert (await engine.search("word1 thing fixed3")).items == hits
+    assert len(patterns) <= 5  # Warm searches reuse the index, without a result cache.
 
 
 async def test_append_returns_detached_artifact_without_json_roundtrip(sqlite_db, monkeypatch):
@@ -327,7 +329,7 @@ async def test_generation_checks_source_reuse_and_theme_in_one_read(optimized_db
                 optimized_db,
                 Source(),
                 None,
-                encode_available_id(1),
+                encode_reference_id(1),
                 1,
                 target="word0",
                 theme_key="style",
@@ -340,7 +342,7 @@ async def test_generation_checks_source_reuse_and_theme_in_one_read(optimized_db
                 optimized_db,
                 Source(),
                 None,
-                encode_available_id(2),
+                encode_reference_id(2),
                 1,
                 target="word0",
                 theme_key="missing",

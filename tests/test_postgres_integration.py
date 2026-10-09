@@ -24,7 +24,7 @@ from lexi_ai.migrations import get_migration_config, inspect_current, inspect_he
 from lexi_ai.relations.resolve import resolve_relations
 from lexi_ai.relations.storage import definition_hash, pending_relations
 from lexi_ai.schema import Base, Definition, Sense, SenseForm, SenseRelation, Word
-from lexi_ai.words.search import search
+from lexi_ai.words.search import Search, search
 
 PG_URL = os.getenv("LEXI_TEST_PG_URL")
 pytestmark = pytest.mark.skipif(not PG_URL, reason="no disposable LEXI_TEST_PG_URL")
@@ -171,7 +171,9 @@ upgrade_to_head(os.environ['LEXI_TEST_PG_URL'], db_schema=sys.argv[1])
                 session.add(SenseForm(sense_id=1, surface="ＴＯＯＫ　ＯＦＦ", inf="PAST"))
                 await session.execute(text("UPDATE definitions SET content='themed' WHERE id=6"))
             assert await pending_relations(db, 20) == []
-            assert (await search(db, None, "TOOK OFF")).words[0].match_kind == "FORM"
+            db.search_index = Search(db, None)
+            await db.search_index.start()
+            assert (await search(db, "TOOK OFF")).items[0].match_kind == "EXACT"
             with pytest.raises(RuntimeError):
                 async with db.transaction() as session:
                     await session.execute(

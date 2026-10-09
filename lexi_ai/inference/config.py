@@ -60,5 +60,5 @@ class LLMConfig:
             raise ValueError("invalid model or timeout")
         if not self.model.strip() or not self.base_url.strip():
             raise ValueError("LLM model and base URL must not be blank")
-        if not 1 <= self.max_completion_tokens <= 16384:
+        if not 1 <= self.max_completion_tokens <= 32768:
             raise ValueError("invalid completion token ceiling")

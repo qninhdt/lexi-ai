@@ -58,8 +58,9 @@ from lexi_ai.inference.prompting import render_prompt, render_decision
 system, user = render_prompt('words/prompts/inventory.jinja', target='bank', references=[])
 assert system.strip() and 'bank' in user
 system, user = render_prompt('words/prompts/enrich_sense.jinja',
-                            target='bank', word={}, sense={'definition': 'Money', 'pos': 'NOUN'},
-                            examples_per_sense=1, references=[])
+                            word={'lemma':'bank','type':'WORD','aliases':[]},
+                            sense={'definition': 'Money', 'pos': 'NOUN'},
+                            examples_per_sense=1)
 assert system.strip() and '<sense_request>' in user
 state, questions = render_decision('questions/prompts/decision/grade_single_word_1.json',
                                   question='question', answer='answer',

@@ -6,7 +6,7 @@ from typing import Protocol, TypeVar
 import json_repair
 from pydantic import BaseModel
 
-from ..config import MAX_TEXT_LENGTH
+from ..config import MAX_PROMPT_LENGTH
 from ..errors import InvalidOutputError, MissingProviderError
 from ..models import TokenUsage
 from .config import LLMConfig
@@ -63,7 +63,7 @@ class OpenAIStructuredLLM:
     ) -> Output | tuple[Output, list[TokenUsage]]:
         """Task rules have system role; untrusted user/source text stays in user role."""
         with UsageRecorder(with_usage) as usage:
-            if not instruction or not isinstance(data, str) or len(data) > MAX_TEXT_LENGTH:
+            if not instruction or not isinstance(data, str) or len(data) > MAX_PROMPT_LENGTH:
                 raise ValueError("invalid structured request")
             kwargs = {}
             if self.config.reasoning_effort is not None:

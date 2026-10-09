@@ -52,12 +52,13 @@ async def test_fuzzy_surfaces_do_not_depend_on_postgres_trigram_settings(pg_db):
         forms=[("walk", "walking")],
     )
     engine = Search(pg_db, None)
+    await engine.start()
     for query, owner, surface in [
         ("walkingg", "walk", "walking"),
-        ("colourg", "color", "colour"),
+        ("colourg", "color", "color"),
         ("walking stik", "walking stick", "walking stick"),
     ]:
-        hits = (await engine.search(query)).words
+        hits = (await engine.search(query)).items
         hit = next(item for item in hits if item.word_id == words[owner].id)
         assert (hit.match_kind, hit.matched_surface) == ("FUZZY", surface)
 
@@ -74,16 +75,20 @@ async def test_dedup_before_limit_shared_forms_and_fuzzy_fill(pg_db):
                 for _ in range(250)
             ],
         )
-    hits = (await search(pg_db, None, "walkingg")).words
+    pg_db.search_index = Search(pg_db, None)
+    await pg_db.search_index.start()
+    hits = (await search(pg_db, "walkingg")).items
     assert len(hits) == len({hit.word_id for hit in hits})
     assert words["walk"].id in {hit.word_id for hit in hits}
-    hits = (await search(pg_db, None, "walking")).words
-    assert (hits[0].word_id, hits[0].match_kind) == (words["walking"].id, "LEMMA")
-    assert (hits[1].word_id, hits[1].match_kind) == (words["walk"].id, "FORM")
+    hits = (await search(pg_db, "walking")).items
+    assert (hits[0].word_id, hits[0].match_kind) == (words["walking"].id, "EXACT")
+    assert (hits[1].word_id, hits[1].match_kind) == (words["walk"].id, "EXACT")
 
     # Eligible typo matches can fill the final limit without duplicate Word IDs.
     words, _ = await seed_words(pg_db, ["alpha"] + [f"alpha{i:02d}" for i in range(35)])
-    hits = (await search(pg_db, None, "alpha")).words
+    for word in words.values():
+        await pg_db.search_index.update(word.id)
+    hits = (await search(pg_db, "alpha")).items
     assert len(hits) == 30 and hits[0].word_id == words["alpha"].id
 
 
@@ -95,14 +100,16 @@ async def test_match_classes_have_the_accepted_order_and_no_public_score(pg_db):
         forms=[("coat", "paint")],
         patterns=[("decorate", "paint")],
     )
-    hits = (await search(pg_db, None, "paint")).words
+    pg_db.search_index = Search(pg_db, None)
+    await pg_db.search_index.start()
+    hits = (await search(pg_db, "paint")).items
     assert [(hit.word_id, hit.match_kind) for hit in hits] == [
         (words[owner].id, kind)
         for owner, kind in [
-            ("paint", "LEMMA"),
-            ("colour", "ALIAS"),
-            ("coat", "FORM"),
-            ("decorate", "PATTERN"),
+            ("paint", "EXACT"),
+            ("colour", "EXACT"),
+            ("coat", "EXACT"),
+            ("decorate", "EXACT"),
             ("paintbrush", "PREFIX"),
             ("faint", "FUZZY"),
         ]
@@ -117,18 +124,20 @@ async def test_exact_prefix_escape_unicode_pending_and_short_queries(pg_db):
         aliases=[("take off", "lift off")],
         forms=[("take off", "took off"), ("see", "saw")],
     )
+    pg_db.search_index = Search(pg_db, None)
+    await pg_db.search_index.start()
     for query, owner, kind in [
-        ("  ＴＯＯＫ　ＯＦＦ  ", "take off", "FORM"),
-        ("LIFT OFF", "take off", "ALIAS"),
-        ("Cafe\u0301", "café", "LEMMA"),
-        ("STRASSE", "Straße", "LEMMA"),
+        ("  ＴＯＯＫ　ＯＦＦ  ", "take off", "EXACT"),
+        ("LIFT OFF", "take off", "EXACT"),
+        ("Cafe\u0301", "café", "EXACT"),
+        ("STRASSE", "Straße", "EXACT"),
     ]:
-        hit = (await search(pg_db, None, query)).words[0]
+        hit = (await search(pg_db, query)).items[0]
         assert (hit.word_id, hit.match_kind) == (words[owner].id, kind)
-    hits = (await search(pg_db, None, "saw")).words
+    hits = (await search(pg_db, "saw")).items
     assert [(hit.word_id, hit.match_kind) for hit in hits[:2]] == [
-        (words["saw"].id, "LEMMA"),
-        (words["see"].id, "FORM"),
+        (words["saw"].id, "EXACT"),
+        (words["see"].id, "EXACT"),
     ]
     for query, owner in [
         ("a_", "a_b"),
@@ -137,12 +146,13 @@ async def test_exact_prefix_escape_unicode_pending_and_short_queries(pg_db):
         ("li", "take off"),
         ("to", "take off"),
     ]:
-        hits = (await search(pg_db, None, query)).words
+        hits = (await search(pg_db, query)).items
         assert [(hit.word_id, hit.match_kind) for hit in hits] == [(words[owner].id, "PREFIX")]
     async with pg_db.transaction() as session:
         (await session.get(row.Word, words["take off"].id)).generation_state = "PENDING"
-    assert (await search(pg_db, None, "lift off")).words == []
-    assert (await search(pg_db, None, "took off")).words == []
+    await pg_db.search_index.update(words["take off"].id)
+    assert (await search(pg_db, "lift off")).items == []
+    assert (await search(pg_db, "took off")).items == []
 
 
 async def test_patterns_are_anchored_and_forms_are_sense_scoped(pg_db):
@@ -152,21 +162,20 @@ async def test_patterns_are_anchored_and_forms_are_sense_scoped(pg_db):
         forms=[("take off", "took off")],
         patterns=[("take off", "take {sth} off"), ("take off", "{sb} takes off")],
     )
+    pg_db.search_index = Search(pg_db, None)
+    await pg_db.search_index.start()
     for query in ["took her coat off", "take the hat off", "John takes off"]:
-        hit = (await search(pg_db, None, query)).words[0]
-        assert (hit.word_id, hit.match_kind) == (words["take off"].id, "PATTERN")
+        hit = (await search(pg_db, query)).items[0]
+        assert (hit.word_id, hit.match_kind) == (words["take off"].id, "EXACT")
     for query in ["took it away", "took it", "take the hat off tomorrow", "off take"]:
-        assert not any(
-            hit.match_kind == "PATTERN" for hit in (await search(pg_db, None, query)).words
-        )
+        assert not any(hit.match_kind == "EXACT" for hit in (await search(pg_db, query)).items)
     async with pg_db.transaction() as session:
         other = row.Sense(word_id=words["take off"].id, pos="VERB", tier="COMMON")
         session.add(other)
         await session.flush()
         session.add(row.SenseForm(sense_id=other.id, surface="taken off", inf="PAST_PARTICIPLE"))
-    assert not any(
-        hit.match_kind == "PATTERN" for hit in (await search(pg_db, None, "taken it off")).words
-    )
+    await pg_db.search_index.update(words["take off"].id)
+    assert not any(hit.match_kind == "EXACT" for hit in (await search(pg_db, "taken it off")).items)
 
 
 async def test_short_queries_skip_fuzzy_and_warm_search_issues_no_sql(pg_db):
@@ -179,11 +188,12 @@ async def test_short_queries_skip_fuzzy_and_warm_search_issues_no_sql(pg_db):
     event.listen(pg_db.engine.sync_engine, "before_cursor_execute", capture)
     try:
         engine = Search(pg_db, None)
-        assert {hit.lemma for hit in (await engine.search("ca")).words} == {"cat", "catch"}
+        await engine.start()
+        assert {hit.lemma for hit in (await engine.search("ca")).items} == {"cat", "catch"}
         assert len(statements) == 5
         assert all("similarity" not in sql and "payload" not in sql for sql in statements)
         statements.clear()
-        assert {hit.lemma for hit in (await engine.search("cot")).words} == {"cat", "cut"}
+        assert {hit.lemma for hit in (await engine.search("cot")).items} == {"cat", "cut"}
         assert statements == []
     finally:
         event.remove(pg_db.engine.sync_engine, "before_cursor_execute", capture)
@@ -202,8 +212,11 @@ async def test_forms_and_aliases_update_without_search_mirror_triggers(pg_db):
         form.surface = "walked"
         alias = await session.scalar(select(row.WordAlias))
         alias.content, alias.match_key = "amble", match_key("amble")
-    assert (await search(pg_db, None, "walkedd")).words[0].matched_surface == "walked"
-    assert (await search(pg_db, None, "ambl")).words[0].matched_surface == "amble"
+    pg_db.search_index = Search(pg_db, None)
+    await pg_db.search_index.start()
+    assert (await search(pg_db, "walkedd")).items[0].matched_surface == "walked"
+    assert (await search(pg_db, "ambl")).items[0].matched_surface == "amble"
     async with pg_db.transaction() as session:
         await session.delete(await session.get(row.Word, words["walk"].id))
-    assert (await search(pg_db, None, "walkedd")).words == []
+    await pg_db.search_index.update(words["walk"].id)
+    assert (await search(pg_db, "walkedd")).items == []

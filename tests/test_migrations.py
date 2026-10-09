@@ -68,7 +68,7 @@ async def test_baseline_upgrade_drift_downgrade_and_reupgrade(tmp_path):
     url = f"sqlite+aiosqlite:///{tmp_path / 'generated.db'}"
     config = migration_config(url)
     revisions = list(ScriptDirectory.from_config(config).walk_revisions())
-    assert [revision.revision for revision in revisions] == ["20261003_base"]
+    assert [revision.revision for revision in revisions] == ["20261010_ref_forms", "20261009_base"]
     assert revisions[-1].down_revision is None
     await run_migration(config, url, command.upgrade, "head")
     actual = await snapshot(url)
@@ -120,8 +120,8 @@ async def test_baseline_does_not_create_new_live_metadata_tables(tmp_path):
 
 async def test_online_migration_uses_config_not_environment(monkeypatch, tmp_path):
     url = f"sqlite+aiosqlite:///{tmp_path / 'explicit.db'}"
-    monkeypatch.setenv("LEXI_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'wrong.db'}")
-    monkeypatch.setenv("LEXI_DB_SCHEMA", "invalid; schema")
+    monkeypatch.setenv("DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'wrong.db'}")
+    monkeypatch.setenv("DB_SCHEMA", "invalid; schema")
     await asyncio.to_thread(command.upgrade, migration_config(url), "head")
     assert set(await snapshot(url)) == {"alembic_version", *Base.metadata.tables}
     assert not (tmp_path / "wrong.db").exists()

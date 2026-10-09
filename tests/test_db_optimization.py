@@ -14,7 +14,7 @@ from lexi_ai.db.session import Database
 from lexi_ai.errors import InvalidResourceError
 from lexi_ai.models import Option, Question
 from lexi_ai.questions.storage import append, generation_context, get_many, retrieve
-from lexi_ai.references.cambridge import SourceEntry, SourceSense, encode_available_id
+from lexi_ai.references.cambridge import SourceEntry, SourceSense, encode_reference_id
 from lexi_ai.relations.storage import apply_resolution, pending_relations
 from lexi_ai.words.generate import generate_word
 from lexi_ai.words.storage import get_senses, get_word
@@ -305,7 +305,7 @@ async def test_publication_is_batched_not_per_sense(optimized_db, monkeypatch, s
     output = payload()
     output["senses"] = []
     for i in range(size):
-        sense = payload(source_ref=f"c{i + 1}")["senses"][0]
+        sense = payload(source_ref=f"a{i + 1}")["senses"][0]
         sense["definition"] = f"meaning{i}"
         sense["forms"] = [{"surface": "banks", "inf": "PLURAL"}]
         sense["patterns"] = ["bank {sth}"]
@@ -332,7 +332,7 @@ async def test_publication_is_batched_not_per_sense(optimized_db, monkeypatch, s
 
     event.listen(db.engine.sync_engine, "before_cursor_execute", capture)
     try:
-        word_id = await generate_word(db, Source(), LLM(), encode_available_id(1), 1, target="bank")
+        word_id = await generate_word(db, Source(), LLM(), encode_reference_id(1), 1, target="bank")
         assert len(statements) <= 18
         for table in (
             "senses",

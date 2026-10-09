@@ -6,7 +6,7 @@ from jinja2 import DictLoader
 
 from lexi_ai.inference import prompting
 from lexi_ai.inference.prompting import render_prompt
-from lexi_ai.vocab import QUESTION_TYPES
+from lexi_ai.vocab import QUESTION_TYPES, SLOTS
 
 
 def prompt_context(data, tag="question_context"):
@@ -136,3 +136,23 @@ def test_role_split_precedes_interpolation_and_supports_marker_spacing(monkeypat
         assert data == marker
     finally:
         prompting._templates.cache_clear()
+
+
+@pytest.mark.parametrize(
+    "template,context",
+    [
+        ("words/prompts/inventory.jinja", {"target": "have", "references": []}),
+        (
+            "words/prompts/enrich_sense.jinja",
+            {
+                "word": {"lemma": "have", "type": "WORD", "aliases": []},
+                "sense": {"definition": "An auxiliary forming perfect tenses.", "pos": "VERB"},
+                "examples_per_sense": 5,
+            },
+        ),
+    ],
+)
+def test_word_prompts_advertise_supported_runtime_slots(template, context):
+    instruction, _ = render_prompt(template, **context)
+    slot_line = next(line for line in instruction.splitlines() if "Supported slots are" in line)
+    assert set(re.findall(r"\{[^{}]+\}", slot_line)) == SLOTS

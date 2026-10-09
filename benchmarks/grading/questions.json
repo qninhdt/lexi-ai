@@ -6,7 +6,7 @@
       "id": 1,
       "sense_id": 1,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "A business organization that provides financial services, such as holding deposits, lending money, and exchanging currency, or a building where these services are provided.",
       "correct": {
         "id": "d5ea548d038f418e9e3d315b8c557580",
@@ -41,7 +41,7 @@
       "id": 3,
       "sense_id": 126,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "After spending hours tinkering with an old analog camera that jammed, Julian exhausts every diagnostic manual and replaces multiple tiny screws without restoring the shutter mechanism. Recognizing that the repair is beyond his technical ability, he packs his tools away and resigns himself to leaving the camera in pieces.",
       "correct": {
         "id": "57fc13c6691d44c3ab90893179cd4ee9",
@@ -76,7 +76,7 @@
       "id": 2,
       "sense_id": 16,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "The technician explained that the repair shop would _ us an additional fee for weekend service.",
       "correct": {
         "id": "0764c3ee47e44ca784f57aa0bb8cbbc8",
@@ -111,7 +111,7 @@
       "id": 4,
       "sense_id": 153,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">break the ice</t>",
       "correct": {
         "id": "75a6dfc4300c45db89db6122e2a5e32f",
@@ -146,7 +146,7 @@
       "id": 6,
       "sense_id": 38,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">advice</t> — Suggestions or recommendations offered to someone about what they should do or how they should handle a situation",
       "correct": {
         "id": "a8e0048c46f044c38d95dbf254624817",
@@ -181,7 +181,7 @@
       "id": 5,
       "sense_id": 157,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "Responsible for or having control over someone or something.",
       "correct": {
         "id": "6b02f49bebff48cda05f66c23d1fb87b",
@@ -216,7 +216,7 @@
       "id": 7,
       "sense_id": 40,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "A team of environmental scientists spends several years gathering water samples from dozens of rivers, interviewing local fishery workers, and compiling historical weather records to determine how industrial runoff affects regional aquatic life.",
       "correct": {
         "id": "567002386b4a4b918fb0487563a35f31",
@@ -251,7 +251,7 @@
       "id": 8,
       "sense_id": 136,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "Because both parents work long hours at the clinic, they hired a nanny to _ their two-year-old daughter during the day.",
       "correct": {
         "id": "601cd0ec695c4b4bbe7271360020dab6",
@@ -286,7 +286,7 @@
       "id": 9,
       "sense_id": 42,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">run</t>",
       "correct": {
         "id": "147f1534fb3b41b282b83e6aa7d0f5ee",
@@ -321,7 +321,7 @@
       "id": 10,
       "sense_id": 154,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">spill the beans</t> — to reveal secret or confidential information, often prematurely or by accident",
       "correct": {
         "id": "0e8cc4e834054b4089fa42a2e483a5fe",
@@ -356,7 +356,7 @@
       "id": 11,
       "sense_id": 160,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "Used to express relief or gratitude that something bad has ended, been avoided, or did not happen.",
       "correct": {
         "id": "a22985a1c020432bb1bd7e9dc65e6617",
@@ -391,7 +391,7 @@
       "id": 12,
       "sense_id": 85,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "During a question-and-answer session, an audience member puts her hand up into the air to catch the speaker's attention and signal that she has a comment.",
       "correct": {
         "id": "1d8c37878dd7402c941459b762c72f0f",
@@ -426,7 +426,7 @@
       "id": 15,
       "sense_id": 138,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "The passenger plane accelerated down the runway and _ smoothly into the cloudy sky.",
       "correct": {
         "id": "f5f6afbe5ecf43608280fcbe3c1cd3ec",
@@ -461,7 +461,7 @@
       "id": 13,
       "sense_id": 101,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">borrow</t>",
       "correct": {
         "id": "6893a78b3d9e48ada8b8d2cea79bb794",
@@ -496,7 +496,7 @@
       "id": 14,
       "sense_id": 105,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">lend</t> — to allow someone to borrow something that belongs to you for a period of time, expecting it to be returned",
       "correct": {
         "id": "13ca00020fbb4376837eb9927165c522",
@@ -531,7 +531,7 @@
       "id": 16,
       "sense_id": 158,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "As a representative or spokesperson of someone; acting or speaking for another person or group.",
       "correct": {
         "id": "bc3f45f32aba4b17b3b3efaf2c713133",
@@ -566,7 +566,7 @@
       "id": 17,
       "sense_id": 155,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "Arthur prepares every family meal from scratch and takes immense pride in his kitchen routine. Over the past fifteen years, his household has ordered restaurant takeout exactly twice: on one occasion when a winter blizzard cut off their electricity, and on another when their kitchen was undergoing emergency plumbing repairs. Aside from those two isolated incidents, packaged food has never appeared at their doorstep.",
       "correct": {
         "id": "5dd7ca5e25e54551ab8da4d9330a0e4e",
@@ -601,7 +601,7 @@
       "id": 18,
       "sense_id": 110,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "During community mediation, facilitators must remain calm and deeply _ to the cultural values and emotional concerns of everyone involved.",
       "correct": {
         "id": "7ac7bfa07faf4193a8e7b5ec5647ff18",
@@ -636,7 +636,7 @@
       "id": 22,
       "sense_id": 147,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">put off</t>",
       "correct": {
         "id": "077634eed6074c4197c8c3fe1b48d17d",
@@ -671,7 +671,7 @@
       "id": 20,
       "sense_id": 118,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">sensible</t> — Showing or based on good judgment, practical thinking, and sound reason rather than emotion.",
       "correct": {
         "id": "1ac54c7ed1a34ce19cd1e252425a0d39",
@@ -706,7 +706,7 @@
       "id": 19,
       "sense_id": 122,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "Not willing or eager to do something, or done, given, or acting with hesitation and unwillingness.",
       "correct": {
         "id": "2bcfa3eed19a4eec92007328b6f78888",
@@ -741,7 +741,7 @@
       "id": 21,
       "sense_id": 152,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "While preparing pastries for a morning market, a baker scrapes the last carton of butter completely clean and finds that the storage shelves contain no additional packages to complete the remaining recipes.",
       "correct": {
         "id": "17e099277fba400a85ea5b0022ef7c87",
@@ -776,7 +776,7 @@
       "id": 23,
       "sense_id": 123,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "Because Liam works night shifts and sleeps during the day, he _ ever sees his neighbors during the week.",
       "correct": {
         "id": "93dd612854a54affac814a912a16137b",
@@ -811,7 +811,7 @@
       "id": 27,
       "sense_id": 156,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">a piece of cake</t>",
       "correct": {
         "id": "2ac3c5812d9449f5819a8fe42f364626",
@@ -846,7 +846,7 @@
       "id": 24,
       "sense_id": 2,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">bank</t> — The sloping land alongside a river, stream, lake, or other body of water.",
       "correct": {
         "id": "3a711f30e2f8469c8a4558353ac7968f",
@@ -881,7 +881,7 @@
       "id": 25,
       "sense_id": 157,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "Responsible for or having control over someone or something.",
       "correct": {
         "id": "ea642f896ab34f0298f3e39af2945b13",
@@ -916,7 +916,7 @@
       "id": 26,
       "sense_id": 17,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "While dining at a hotel restaurant, a guest asks the server to put the cost of the meal onto his room account rather than paying with cash immediately, allowing him to pay the full balance when leaving at the end of his stay.",
       "correct": {
         "id": "89582b5868f34d75aa3a593124e0c26a",
@@ -951,7 +951,7 @@
       "id": 29,
       "sense_id": 127,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "After experiencing frequent migraines and restlessness, Priya decided to _ caffeine completely, swapping her daily coffees for herbal tea.",
       "correct": {
         "id": "1e1428117c7a4b6dbf28a400b444ba09",
@@ -986,7 +986,7 @@
       "id": 28,
       "sense_id": 39,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">advice</t>",
       "correct": {
         "id": "ad9bd6f3d78a4e52a088f375ef1fd0a6",
@@ -1021,7 +1021,7 @@
       "id": 32,
       "sense_id": 153,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">break the ice</t> — to do or say something that relieves tension or awkwardness, helping people feel more comfortable and willing to talk to one another",
       "correct": {
         "id": "8986844f3713466e8d19645bafc84a1c",
@@ -1056,7 +1056,7 @@
       "id": 30,
       "sense_id": 160,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "Used to express relief or gratitude that something bad has ended, been avoided, or did not happen.",
       "correct": {
         "id": "c191109cdd51495fa6a1d61e43d61586",
@@ -1091,7 +1091,7 @@
       "id": 31,
       "sense_id": 41,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "A conservation team sets out to determine why a native bee species is rapidly disappearing from agricultural valleys. The scientists gather pollen samples across dozens of farms, measure local pesticide residues, cross-reference regional weather logs, and examine historical museum specimens to uncover the precise factors driving the decline.",
       "correct": {
         "id": "f3e77a43cc0649db9f7a8ff41f386e06",
@@ -1126,7 +1126,7 @@
       "id": 34,
       "sense_id": 137,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "When our community club elected its new committee, Elena agreed to _ the finances, managing the bank account and paying all the monthly bills.",
       "correct": {
         "id": "45e293d97f494d1985b697e42a4af766",
@@ -1161,7 +1161,7 @@
       "id": 33,
       "sense_id": 43,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">run</t>",
       "correct": {
         "id": "a6881e88e74d4415965c791903bd2590",
@@ -1196,7 +1196,7 @@
       "id": 35,
       "sense_id": 86,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">raise</t> — to cause something to increase in amount, level, degree, or value",
       "correct": {
         "id": "07c56bd740ae4e86b86f99fa601e1112",
@@ -1231,7 +1231,7 @@
       "id": 36,
       "sense_id": 159,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "For the benefit, interest, or support of someone.",
       "correct": {
         "id": "cfdc635d3bbe422abdedad633047931c",
@@ -1266,7 +1266,7 @@
       "id": 38,
       "sense_id": 154,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "The office staff spent weeks secretly preparing an elaborate farewell celebration for their manager, hiding decorations in a locked supply closet and repeatedly warning everyone to keep the event under wraps. When the manager stopped by and asked why people were whispering in the breakroom, an excited coworker struggled not to blurt out the entire plan.",
       "correct": {
         "id": "a9854d08f0da4f84ac06a2212d14eb26",
@@ -1301,7 +1301,7 @@
       "id": 37,
       "sense_id": 102,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "Having exhausted their savings during the move, the couple had to _ eight thousand dollars from the bank at a low interest rate to furnish their new home.",
       "correct": {
         "id": "4e18f08943c742b2ab25fbb168257d47",
@@ -1336,7 +1336,7 @@
       "id": 39,
       "sense_id": 139,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">take off</t>",
       "correct": {
         "id": "07ab87d6ab064a51b4caa5545751c0b2",
@@ -1371,7 +1371,7 @@
       "id": 40,
       "sense_id": 106,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">lend</t> — to provide money to a person or organization on the condition that it will be paid back, usually along with interest",
       "correct": {
         "id": "135fdd262db74c3bbc812e853b744977",
@@ -1406,7 +1406,7 @@
       "id": 41,
       "sense_id": 111,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "Easily hurt, offended, or upset by criticism or what other people say and do.",
       "correct": {
         "id": "734cda330fc54a5b8f0042c4c4ee76bd",
@@ -1441,7 +1441,7 @@
       "id": 42,
       "sense_id": 148,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "Elena arrived eager to dine at a highly recommended seafood bistro, but the foul stench of stagnant water near the entrance and the grease on the cutlery instantly extinguished her appetite and destroyed any desire she had to eat there.",
       "correct": {
         "id": "69d58cd1dd6642b0b2d6316da9e91dd0",
@@ -1476,7 +1476,7 @@
       "id": 43,
       "sense_id": 119,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "Facing a demanding twelve-hour shift on the hospital ward, Priya chose a pair of _ shoes that offered arch support and cushioned soles rather than focusing on style.",
       "correct": {
         "id": "68ba2461b1bd4aa4abca735f56f4facd",
@@ -1511,7 +1511,7 @@
       "id": 45,
       "sense_id": 155,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">once in a blue moon</t>",
       "correct": {
         "id": "5c3c3ceceb1c43b48e929848947bf3d5",
@@ -1546,7 +1546,7 @@
       "id": 44,
       "sense_id": 122,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">reluctant</t> — Not willing or eager to do something, or done, given, or acting with hesitation and unwillingness.",
       "correct": {
         "id": "372a3c02205a4e98a7629ae1120232c0",
@@ -1581,7 +1581,7 @@
       "id": 46,
       "sense_id": 157,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "Responsible for or having control over someone or something.",
       "correct": {
         "id": "e95f658933e444218f218396d4e8864a",
@@ -1616,7 +1616,7 @@
       "id": 48,
       "sense_id": 124,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "When an auditor uncovers systematic accounting discrepancies that wiped out millions in company funds, the chief financial officer asks whether the upcoming regulatory review will simply overlook the issue. The auditor offers a dry, one-word response to convey that such an outcome is thoroughly out of the question.",
       "correct": {
         "id": "220091d1b729435aac193fb1b0e4add2",
@@ -1651,7 +1651,7 @@
       "id": 47,
       "sense_id": 152,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "After drafting twelve completely different concepts for the new library, the architect found it harder to think of anything new and admitted that she was beginning to _ ideas.",
       "correct": {
         "id": "adad53fb4be54ae4aca66d0227713a65",
@@ -1686,7 +1686,7 @@
       "id": 49,
       "sense_id": 3,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">bank</t>",
       "correct": {
         "id": "14d8b0836dcd42d98dbea45a44a1ac95",
@@ -1721,7 +1721,7 @@
       "id": 50,
       "sense_id": 156,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">a piece of cake</t> — something that is very easy and simple to do or achieve",
       "correct": {
         "id": "0f6c6c20a2ae4bdc80f53dbe678f2231",
@@ -1756,7 +1756,7 @@
       "id": 52,
       "sense_id": 160,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "Used to express relief or gratitude that something bad has ended, been avoided, or did not happen.",
       "correct": {
         "id": "c6908f5d48e34c3ab66453ee5984c4eb",
@@ -1791,7 +1791,7 @@
       "id": 53,
       "sense_id": 18,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "Following a six-month investigation into corporate embezzlement, detectives uncover falsified ledgers and illicit wire transfers. With sufficient proof assembled, the lead prosecutor officially files paperwork alleging that the chief financial officer committed grand larceny, requiring him to stand trial.",
       "correct": {
         "id": "5a09e5eb394d456f9d5fee8b6f1dda5a",
@@ -1826,7 +1826,7 @@
       "id": 51,
       "sense_id": 128,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "After more than a decade in corporate finance, Martin decided to _ his career to open a bakery in his hometown.",
       "correct": {
         "id": "0f73f975b97b44e69c0a92c44da2b09d",
@@ -1861,7 +1861,7 @@
       "id": 55,
       "sense_id": 38,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">advice</t>",
       "correct": {
         "id": "9948dca3d43d45e09831c91b69eabb3c",
@@ -1896,7 +1896,7 @@
       "id": 56,
       "sense_id": 40,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">research</t> — The systematic study and investigation of materials, sources, or data in order to discover new facts, test theories, or reach a deeper understanding of a subject.",
       "correct": {
         "id": "00e5f09c73a14512bc3662ab7f38b381",
@@ -1931,7 +1931,7 @@
       "id": 54,
       "sense_id": 158,
       "theme_id": null,
-      "question_type": "definition_to_word",
+      "question_type": "DEFINITION_TO_WORD",
       "content": "As a representative or spokesperson of someone; acting or speaking for another person or group.",
       "correct": {
         "id": "ad533f938af34bd89840bb4fff1c72a9",
@@ -1966,7 +1966,7 @@
       "id": 57,
       "sense_id": 153,
       "theme_id": null,
-      "question_type": "context_to_word",
+      "question_type": "CONTEXT_TO_WORD",
       "content": "At the start of an orientation workshop, twenty newly hired engineers from different departments sat in awkward silence, hesitating to introduce themselves. Sensing the initial stiffness, the organizer invited everyone to share their most embarrassing culinary mishap, sparking immediate laughter and helping the group chat openly.",
       "correct": {
         "id": "8f1fadd9ace9435dab179c4af4a3d736",
@@ -2001,7 +2001,7 @@
       "id": 58,
       "sense_id": 44,
       "theme_id": null,
-      "question_type": "cloze_to_word",
+      "question_type": "CLOZE_TO_WORD",
       "content": "After months of pacing drills and endurance training, Marcus felt ready to _ his first official marathon this weekend.",
       "correct": {
         "id": "4eec6c2b371c4c14b167a3c93f73eb69",
@@ -2036,7 +2036,7 @@
       "id": 60,
       "sense_id": 136,
       "theme_id": null,
-      "question_type": "word_to_definition",
+      "question_type": "WORD_TO_DEFINITION",
       "content": "<t inf=\"base\">look after</t>",
       "correct": {
         "id": "78f80ee670014846b2eca4383e5ee6e9",
@@ -2071,7 +2071,7 @@
       "id": 59,
       "sense_id": 87,
       "theme_id": null,
-      "question_type": "word_to_usage",
+      "question_type": "WORD_TO_USAGE",
       "content": "<t inf=\"base\">raise</t> — to care for a child until they are fully grown",
       "correct": {
         "id": "f5534c1b88864254b6dc390a964bf526",

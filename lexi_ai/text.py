@@ -10,7 +10,7 @@ from .vocab import SLOTS, Inflection
 
 _SPACES = re.compile(r"\s+")
 _BRACES = re.compile(r"\{[^{}]*\}")
-_TAG = re.compile(r'<t inf="([a-z0-9_]+)">([^<>]+)</t>')
+_TAG = re.compile(r'<t inf="([a-z0-9_]+)">([^<>]+)</t>', re.IGNORECASE)
 _ANY_TAG = re.compile(r"</?t\b", re.IGNORECASE)
 _ETC_OR_PAREN = re.compile(r"(?:\b[Ee][Tt][Cc]\.?(?:\s|$)|[()])")
 
@@ -74,7 +74,6 @@ def parse_marked_example(content: str) -> tuple[str, list[Span]]:
         result.append(prefix)
         clean_length += len(prefix)
         inf, surface = match.groups()
-        # Markup is a source-text protocol: its lowercase tags stay intact.
         try:
             inf = Inflection(inf.upper())
         except ValueError as exc:
@@ -94,3 +93,9 @@ def parse_marked_example(content: str) -> tuple[str, list[Span]]:
 
 def strip_markup(content: str) -> str:
     return parse_marked_example(content)[0]
+
+
+def canonical_markup(content: str) -> str:
+    """Validate before normalizing only known tag/inflection labels, never learner text."""
+    parse_marked_example(content)
+    return _TAG.sub(lambda m: f'<t inf="{m[1].lower()}">{m[2]}</t>', content)

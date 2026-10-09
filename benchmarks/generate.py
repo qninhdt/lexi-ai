@@ -8,10 +8,10 @@ from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 
-from examples._config import DEFAULT_ENV_FILE, ROOT, load_provider_values, provider_options
 from lexi_ai import Lexicon, LLMConfig
+from lexi_ai.cli.config import DEFAULT_ENV_FILE, load_provider_values, provider_options
 from lexi_ai.inference.decision import DecisionModel
-from lexi_ai.references.cambridge import Cambridge, encode_available_id
+from lexi_ai.references.cambridge import Cambridge, encode_reference_id
 
 from .run import TASKS
 from .synthetic import (
@@ -99,9 +99,9 @@ async def generate_sources(lexicon, config, jobs, output, *, workers, progress):
         if key in saved:
             return []
         entry = config.entries[index]
-        word, usage = await lexicon.generate(
-            encode_available_id(entry.source_id),
-            target=entry.target,
+        word, usage = await lexicon.generate_word(
+            entry.target,
+            reference_id=encode_reference_id(entry.source_id),
             theme=theme,
             example_count=config.examples_per_sense,
             with_usage=True,
@@ -334,7 +334,7 @@ def main():
         "--db-url", help="Already initialized generated DB; no automatic migrations"
     )
     parser.add_argument("--db-schema")
-    parser.add_argument("--cambridge-path", default=str(ROOT / "data" / "cambridge.db"))
+    parser.add_argument("--reference-path", default="")
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
     parser.add_argument("--stage", choices=["sources", "questions", "all"], default="all")
     parser.add_argument("--output", type=Path)
@@ -351,7 +351,7 @@ def main():
 
     async def run():
         # Read-only preflight checks every explicitly selected Cambridge entry.
-        source = Cambridge(args.cambridge_path)
+        source = Cambridge(args.reference_path)
         for entry in config.entries:
             evidence = await source.fetch_by_id(entry.source_id)
             if evidence is None or not evidence.senses:
@@ -376,11 +376,14 @@ def main():
         )
         lexicon = Lexicon(
             args.db_url,
-            args.cambridge_path,
+            str(source.path) if args.db_url.startswith("sqlite") else "",
             db_schema=args.db_schema,
             llm_config=llm_config,
         )
         try:
+            if args.db_url.startswith("postgresql"):
+                await lexicon.import_reference(source.path)
+            await lexicon.start()
             return await run_generation(
                 lexicon,
                 config,

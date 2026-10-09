@@ -16,15 +16,17 @@ __pycache__/
 .coverage*
 /htmlcov/
 
-# Reference data: only Cambridge is tracked through Git LFS
+# Local source snapshot uses Git LFS; distribution artifacts use GitHub Releases
 /data/*
-!/data/cambridge.db
 *.db
 *.db-shm
 *.db-wal
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+!/data/reference.sqlite
+!/data/content.sqlite
+!/data/content.sqlite.sha256
 
 # Local planning, experiments and agent state
 /plans/

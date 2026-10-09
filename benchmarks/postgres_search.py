@@ -26,7 +26,7 @@ from lexi_ai.db.session import Database
 from lexi_ai.patterns import surface_head_key
 from lexi_ai.text import answer_key, match_key
 from lexi_ai.vocab import INFLECTIONS
-from lexi_ai.words.search import search
+from lexi_ai.words.search import Search, search
 
 
 def corpus(path, size):
@@ -162,6 +162,8 @@ async def benchmark(args):
                 "enable_seqscan",
             )
         }
+        db.search_index = Search(db, None)
+        await db.search_index.start()
         cases = [
             ("exact_lemma", "bank"),
             ("prefix_lemma", "trans"),
@@ -186,13 +188,13 @@ async def benchmark(args):
 
             event.listen(db.engine.sync_engine, "before_cursor_execute", capture)
             try:
-                result = await search(db, None, query)
+                result = await search(db, query)
             finally:
                 event.remove(db.engine.sync_engine, "before_cursor_execute", capture)
             samples = []
             for _ in range(args.iterations):
                 start = time.perf_counter()
-                await search(db, None, query)
+                await search(db, query)
                 samples.append((time.perf_counter() - start) * 1000)
             samples.sort()
             plans = []
@@ -229,11 +231,11 @@ async def benchmark(args):
             case = {
                 "label": label,
                 "query": query,
-                "hits": len(result.words),
+                "hits": len(result.items),
                 "median_ms": round(statistics.median(samples), 3),
                 "p95_ms": round(samples[math.ceil(len(samples) * 0.95) - 1], 3),
                 "max_ms": round(max(samples), 3),
-                "top": [vars(hit) for hit in result.words[:3]],
+                "top": [vars(hit) for hit in result.items[:3]],
                 "plans": plans,
             }
             report["cases"].append(case)

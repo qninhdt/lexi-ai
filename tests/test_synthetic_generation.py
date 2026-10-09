@@ -61,6 +61,9 @@ def test_generator_reasoning_uses_shared_env_unless_config_overrides(
         def __init__(self, *_args, llm_config, **_kwargs):
             captured["config"] = llm_config
 
+        async def start(self):
+            pass
+
         async def close(self):
             pass
 
@@ -90,7 +93,7 @@ def test_generator_reasoning_uses_shared_env_unless_config_overrides(
             "sqlite+aiosqlite:///unused.db",
             "--output",
             str(tmp_path / "unused"),
-            "--cambridge-path",
+            "--reference-path",
             str(source),
         ],
     )
@@ -184,6 +187,7 @@ def test_blueprint_prose_is_rendered_from_jinja_not_python():
 class GeneratorLLM:
     def __init__(self):
         self.calls = Counter()
+        self.questions = QuestionLLM()
         self.active = 0
         self.peak = 0
         self.question_barrier = None
@@ -209,10 +213,13 @@ class GeneratorLLM:
                 await asyncio.wait_for(self.question_barrier.wait(), timeout=5)
             await asyncio.sleep(0.002)
             if schema.__name__ in {"InventoryOutput", "SenseEnrichment"}:
-                tag = "word_request" if schema.__name__ == "InventoryOutput" else "sense_request"
+                tag = "sense_request" if schema.__name__ == "SenseEnrichment" else "word_request"
                 request = prompt_context(data, tag)
                 output = payload()
-                output["senses"][0]["examples"] *= request.get("examples_per_sense", 1)
+                output["senses"][0]["examples"] = [
+                    f'The <t inf="base">bank</t> opened at {hour}.'
+                    for hour in range(request.get("examples_per_sense", 1))
+                ]
                 value = stage_payload(output, data, schema)
             elif schema.__name__ == "ThemeParts":
                 value = schema(voice="Adventure", diction="worldbuilding")
@@ -227,7 +234,7 @@ class GeneratorLLM:
                     ]
                 )
             elif schema.__name__ in {"QuestionBatch", "AnchoredQuestionBatch"}:
-                value = await QuestionLLM().complete(instruction, data, schema)
+                value = await self.questions.complete(instruction, data, schema)
             elif schema.__name__ in {"AnswerBatch", "AnswerList"}:
                 if self.fail_synthesis:
                     raise ValueError("synthetic failure")
@@ -327,6 +334,7 @@ async def lexicon(tmp_path, source, monkeypatch):
         decision_fallback_model="must-not-use",
     )
     await lexicon.db.create_schema(Base.metadata)
+    await lexicon.start()
     yield lexicon, llm
     await lexicon.close()
 
@@ -613,9 +621,9 @@ async def test_single_word_grading_uses_search_candidate_full_inventory(monkeypa
     }
     database = object()
 
-    async def search(db, source, text, *, limit):
-        assert db is database and source is None and text == "credit union" and limit == 1
-        return SimpleNamespace(words=[SimpleNamespace(word_id=4)])
+    async def search(db, text, *, limit):
+        assert db is database and text == "credit union" and limit == 1
+        return SimpleNamespace(items=[SimpleNamespace(word_id=4)])
 
     async def meanings(db, *, word_id):
         assert db is database and word_id == 4

@@ -264,10 +264,10 @@ async def grade_answers(lexicon, model, job, question, word, sense, answers):
                     continue
                 # Match the production gate and selected top-ranked Word, not a
                 # candidate invented by the answer generator.
-                result = await search(lexicon.db, None, answer, limit=1)
-                if not result.words:
+                result = await search(lexicon.db, answer, limit=1)
+                if not result.items:
                     continue
-                matched = await meaning_inventory(lexicon.db, word_id=result.words[0].word_id)
+                matched = await meaning_inventory(lexicon.db, word_id=result.items[0].word_id)
                 if matched is None or not matched["senses"]:
                     continue
                 context["matched_word"] = matched

@@ -194,7 +194,7 @@ class DeterministicQuestions:
                 for answer in ("river", "tree", "dinner")
             ],
         }
-        if output_schema is AnchoredQuestionBatch:
+        if issubclass(output_schema, AnchoredQuestionBatch):
             item["correct_explanation"] = "The fixed answer is the requested meaning"
         else:
             item["correct"] = {"content": "bank", "explanation": "A financial institution"}

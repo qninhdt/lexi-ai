@@ -9,7 +9,7 @@ from lexi_ai import schema as row
 from lexi_ai.db.session import Database
 from lexi_ai.relations.resolve import resolve_relations
 from lexi_ai.relations.storage import definition_hash, pending_relations
-from lexi_ai.words.search import search
+from lexi_ai.words.search import Search, search
 
 
 async def seed_links(db):
@@ -69,8 +69,10 @@ async def test_form_keys_cover_unicode_spacing_updates_and_core_inserts(tmp_path
                     {"sense_id": 1, "surface": "Straße", "inf": "BASE"},
                 ],
             )
-        hit = (await search(db, None, "TOOK OFF")).words[0]
-        assert (hit.word_id, hit.match_kind) == (1, "FORM")
+        db.search_index = Search(db, None)
+        await db.search_index.start()
+        hit = (await search(db, "TOOK OFF")).items[0]
+        assert (hit.word_id, hit.match_kind) == (1, "EXACT")
         async with db.transaction() as session:
             assert (
                 await session.scalar(
@@ -79,7 +81,8 @@ async def test_form_keys_cover_unicode_spacing_updates_and_core_inserts(tmp_path
                 == "strasse"
             )
             (await session.get(row.SenseForm, form_id)).surface = "  Taken   Off "
-        assert (await search(db, None, "TAKEN OFF")).words[0].match_kind == "FORM"
+        await db.search_index.update(1)
+        assert (await search(db, "TAKEN OFF")).items[0].match_kind == "EXACT"
         async with db.engine.connect() as connection:
             plan = (
                 await connection.execute(

@@ -1,7 +1,9 @@
 """Detached public values. No database entities or provider objects cross this boundary."""
 
 from dataclasses import field
+from typing import Annotated, Literal
 
+from pydantic import Field
 from pydantic.dataclasses import dataclass
 
 from .vocab import (
@@ -171,19 +173,24 @@ class WordHit:
     entry_type: EntryType
     match_kind: MatchKind
     matched_surface: str
+    kind: Literal["WORD"] = "WORD"
 
 
 @dataclass(frozen=True)
-class AvailableHit:
-    available_id: str
+class ReferenceHit:
+    reference_id: str
     display: str
     entry_type: EntryType
+    match_kind: MatchKind
+    matched_surface: str
+    kind: Literal["REFERENCE"] = "REFERENCE"
 
 
 @dataclass(frozen=True)
 class SearchResult:
-    words: list[WordHit] = field(default_factory=list)
-    available: list[AvailableHit] = field(default_factory=list)
+    items: list[Annotated[WordHit | ReferenceHit, Field(discriminator="kind")]] = field(
+        default_factory=list
+    )
 
 
 @dataclass(frozen=True)

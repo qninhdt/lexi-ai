@@ -1,71 +1,40 @@
-"""Shared embedded search for Cambridge and the published Lexi catalog."""
+"""One startup-built Tantivy index, updated when a Word is published."""
 
 import asyncio
-import time
+import json
 from collections import defaultdict
-from difflib import SequenceMatcher
 
 import tantivy
 from sqlalchemy import select
 
 from lexi_ai import schema as row
-from lexi_ai.cache import Cache
 from lexi_ai.config import MAX_QUERY_LENGTH
-from lexi_ai.db.session import SessionDatabase
 from lexi_ai.errors import InvalidResourceError
-from lexi_ai.models import AvailableHit, SearchResult, WordHit
+from lexi_ai.models import ReferenceHit, SearchResult, WordHit
 from lexi_ai.patterns import matches_pattern, surface_head_key
-from lexi_ai.references.cambridge import encode_available_id
+from lexi_ai.references.cambridge import encode_reference_id
 from lexi_ai.text import answer_key
 from lexi_ai.vocab import EntryType, GenerationState, MatchKind
 
 
 class Search:
-    def __init__(self, db, cambridge, result_cache_bytes=4 * 1024 * 1024, *, refresh_seconds=30):
+    def __init__(self, db, cambridge):
         self.db, self.cambridge = db, cambridge
-        self.results = Cache(result_cache_bytes)
-        self.snapshot = None
-        self.reference = None
-        self.refresh_seconds = refresh_seconds
-        self.refreshed_at = 0
-        self._reload_lock = asyncio.Lock()
+        self.index = self.writer = self.snapshot = None
+        self._write_lock = asyncio.Lock()
 
-    async def reload(self, *, include_available=False, force=True):
-        # Serialize process-local rebuilds; readers retain the previous immutable
-        # snapshot until replacement. This is not a distributed/domain lock.
-        async with self._reload_lock:
-            if (
-                not force
-                and self.snapshot is not None
-                and time.monotonic() - self.refreshed_at < self.refresh_seconds
-                and (not include_available or self.reference is not None)
-            ):
-                return
-            await self._reload(include_available=include_available)
-
-    async def _reload(self, *, include_available):
-        loaded_at = time.monotonic()
-        reference = self.reference
-        if include_available and reference is None:
-            if self.cambridge is None:
-                raise InvalidResourceError("Cambridge source is not configured")
-            reference = await self.cambridge.projection()
-        # One consistent publication snapshot. No definitions/examples/Questions.
-        async with self.db.transaction() as session:
-            if session.bind.dialect.name == "postgresql":
-                # Host-owned transactions choose their own isolation level.
-                if not isinstance(self.db, SessionDatabase):
-                    await session.connection(
-                        execution_options={"isolation_level": "REPEATABLE READ"}
-                    )
+    async def _projection(self, word_id=None):
+        ids = select(row.Word.id).where(row.Word.generation_state == GenerationState.DONE)
+        if word_id is not None:
+            ids = ids.where(row.Word.id == word_id)
+        async with self.db.read() as session:
             words = (
                 await session.execute(
                     select(row.Word.id, row.Word.lemma, row.Word.entry_type).where(
-                        row.Word.generation_state == GenerationState.DONE
+                        row.Word.id.in_(ids)
                     )
                 )
             ).all()
-            ids = select(row.Word.id).where(row.Word.generation_state == GenerationState.DONE)
             aliases = (
                 await session.execute(
                     select(row.WordAlias.word_id, row.WordAlias.content).where(
@@ -99,55 +68,58 @@ class Search:
                     )
                 ).all()
             )
-        snapshot = await asyncio.to_thread(
-            self._build, words, aliases, forms, patterns, consumed, reference or []
-        )
-        self.snapshot = snapshot
-        self.reference = reference
-        self.refreshed_at = loaded_at
-        self.results.clear()
+        return words, aliases, forms, patterns, consumed
 
     @staticmethod
-    def _build(words, aliases, forms, patterns, consumed, reference):
-        builder = tantivy.SchemaBuilder()
-        builder.add_text_field("identity", stored=True, tokenizer_name="raw")
-        for name in ("source", "available", "lemma", "alias", "form", "surface"):
-            builder.add_text_field(name, tokenizer_name="raw", index_option="basic")
-        schema = builder.build()
-        index = tantivy.Index(schema)
-        entries = {}
-        for identifier, lemma, kind in words:
-            entries[f"LEXI:{identifier}"] = (identifier, lemma, kind, [(MatchKind.LEMMA, lemma)])
+    def _documents(words, aliases, forms, patterns, consumed, reference):
+        entries = {
+            f"LEXI:{identifier}": (identifier, lemma, kind, [(0, lemma)])
+            for identifier, lemma, kind in words
+        }
         for identifier, surface in aliases:
-            entries[f"LEXI:{identifier}"][3].append((MatchKind.ALIAS, surface))
+            entries[f"LEXI:{identifier}"][3].append((1, surface))
         sense_forms = defaultdict(list)
         for identifier, sense_id, surface in forms:
-            entries[f"LEXI:{identifier}"][3].append((MatchKind.FORM, surface))
+            entries[f"LEXI:{identifier}"][3].append((2, surface))
             sense_forms[sense_id].append(surface)
-        for hit, surfaces in reference:
-            entries[f"CAMBRIDGE:{hit.id}"] = (
-                hit.id,
-                hit.display,
-                EntryType(hit.entry_type.upper()),
-                [(MatchKind.LEMMA, surface) for surface in dict.fromkeys(surfaces)],
-            )
-        writer = index.writer(heap_size=15_000_000, num_threads=1)
-        for identity, (_, _, _, surfaces) in entries.items():
+        for hit, surfaces, reference_forms in reference:
+            if hit.id not in consumed:
+                entries[f"CAMBRIDGE:{hit.id}"] = (
+                    hit.id,
+                    hit.display,
+                    EntryType(hit.entry_type.upper()),
+                    [
+                        *((0 if i < 2 else 1, surface) for i, surface in enumerate(surfaces)),
+                        *((2, form) for form in reference_forms),
+                    ],
+                )
+
+        def document(identity, rank, surface):
+            identifier, label, kind, _ = entries[identity]
             source = identity.partition(":")[0]
-            doc = tantivy.Document(identity=identity, source=source)
-            if source == "CAMBRIDGE" and entries[identity][0] not in consumed:
-                doc.add_text("available", "yes")
-            for kind, surface in set(surfaces):
-                key = answer_key(surface)
-                doc.add_text(kind.value.lower(), key)
-                doc.add_text("surface", key)
-            writer.add_document(doc)
-        writer.commit()
-        writer.wait_merging_threads()
-        index.reload()
-        by_head = defaultdict(list)
+            doc = tantivy.Document(
+                identity=identity,
+                source=source,
+                label=label,
+                entry_type=str(kind),
+                matched_surface=surface,
+                order=(
+                    f"{int(source != 'LEXI')}{rank}{answer_key(label)}\0"
+                    f"{identifier:020d}\0{answer_key(surface)}"
+                ),
+            )
+            doc.add_unsigned("identifier", identifier)
+            doc.add_unsigned("surface_rank", rank)
+            return doc
+
+        for identity, (_, _, _, surfaces) in entries.items():
+            for rank, surface in sorted(set(surfaces)):
+                doc = document(identity, rank, surface)
+                doc.add_text("surface", answer_key(surface))
+                yield doc
         for identifier, sense_id, pattern, head in patterns:
-            lemma = entries[f"LEXI:{identifier}"][1]
+            identity = f"LEXI:{identifier}"
+            lemma = entries[identity][1]
             word_head, _, tail = answer_key(lemma).partition(" ")
             licensed = [
                 first
@@ -156,114 +128,188 @@ class Search:
                 )
                 if rest == tail
             ]
-            item = (identifier, pattern, {word_head: licensed})
+            doc = document(identity, 3, pattern)
+            doc.add_text("forms", json.dumps({word_head: licensed}))
             for candidate in {head, *(surface_head_key(form) for form in sense_forms[sense_id])}:
-                by_head[candidate].append(item)
-        return index, entries, by_head
+                doc.add_text("head", candidate or "\0")
+            yield doc
+
+    @staticmethod
+    def _build(words, aliases, forms, patterns, consumed, reference):
+        builder = tantivy.SchemaBuilder()
+        for name in ("identity", "source", "surface", "head"):
+            builder.add_text_field(
+                name, stored=name == "identity", tokenizer_name="raw", index_option="basic"
+            )
+        for name in ("label", "entry_type", "matched_surface", "forms"):
+            builder.add_text_field(name, stored=True, tokenizer_name="raw", index_option="basic")
+        builder.add_text_field("order", fast=True, tokenizer_name="raw")
+        builder.add_unsigned_field("identifier", stored=True)
+        builder.add_unsigned_field("surface_rank", stored=True)
+        index = tantivy.Index(builder.build())
+        writer = index.writer(heap_size=15_000_000, num_threads=1)
+        for doc in Search._documents(words, aliases, forms, patterns, consumed, reference):
+            writer.add_document(doc)
+        writer.commit()
+        index.reload()
+        return index, writer, (index, index.searcher())
+
+    async def start(self):
+        async with self._write_lock:
+            if self.snapshot is not None:
+                return
+            reference = await self.cambridge.projection() if self.cambridge is not None else []
+            projection = await self._projection()
+            self.index, self.writer, self.snapshot = await asyncio.to_thread(
+                self._build, *projection, reference
+            )
+
+    async def update(self, word_id):
+        self._ready()
+        async with self._write_lock:
+            projection = await self._projection(word_id)
+
+            def publish():
+                self.writer.delete_documents_by_term("identity", f"LEXI:{word_id}")
+                for identifier in projection[4]:
+                    self.writer.delete_documents_by_term("identity", f"CAMBRIDGE:{identifier}")
+                for doc in self._documents(*projection, []):
+                    self.writer.add_document(doc)
+                self.writer.commit()
+                self.index.reload()
+                return self.index, self.index.searcher()
+
+            publication = asyncio.create_task(asyncio.to_thread(publish))
+            try:
+                self.snapshot = await asyncio.shield(publication)
+            except asyncio.CancelledError:
+                # Finish the native write before shutdown closes its writer.
+                self.snapshot = await publication
+                raise
+
+    def _ready(self):
+        if self.snapshot is None:
+            raise RuntimeError("Search is not started; call Lexicon.start() first")
 
     @staticmethod
     def _find(snapshot, query, source, limit):
-        index, entries, patterns = snapshot
-        key = answer_key(query)
-        searcher = index.searcher()
+        index, searcher = snapshot
+        schema, key = index.schema, answer_key(query)
         ranked = {}
-        # Rust regex syntax: escape metacharacters only (not spaces, %, #, etc.).
-        literal = "".join("\\" + char if char in r"\.^$|?*+(){}[]" else char for char in key)
-        branches = [
-            (rank, kind, tantivy.Query.term_query(index.schema, kind.value.lower(), key))
-            for rank, kind in enumerate((MatchKind.LEMMA, MatchKind.ALIAS, MatchKind.FORM))
-        ]
-        branches.append(
-            (
-                4,
-                MatchKind.PREFIX,
-                tantivy.Query.regex_query(index.schema, "surface", literal + ".*"),
+
+        def candidate(doc, tier):
+            identifier, label = doc["identifier"][0], doc["label"][0]
+            generated = doc["identity"][0].startswith("LEXI:")
+            kind, surface = tuple(MatchKind)[tier], doc["matched_surface"][0]
+            hit = (
+                WordHit(identifier, label, EntryType(doc["entry_type"][0]), kind, surface)
+                if generated
+                else ReferenceHit(
+                    encode_reference_id(identifier),
+                    label,
+                    EntryType(doc["entry_type"][0]),
+                    kind,
+                    surface,
+                )
             )
-        )
-        if len(key) >= 3:
-            branches.extend(
+            order = (
+                tier,
+                int(not generated),
+                doc["surface_rank"][0],
+                -1.0,
+                answer_key(label),
+                identifier,
+            )
+            identity = doc["identity"][0]
+            if identity not in ranked or order < ranked[identity][0]:
+                ranked[identity] = (order, hit)
+
+        def filtered(branch):
+            if source is None:
+                return branch
+            return tantivy.Query.boolean_query(
                 [
-                    (
-                        5,
-                        MatchKind.SUBSTRING,
-                        tantivy.Query.regex_query(index.schema, "surface", ".*" + literal + ".*"),
-                    ),
-                    (
-                        6,
-                        MatchKind.FUZZY,
-                        tantivy.Query.fuzzy_term_query(
-                            index.schema, "surface", key, distance=1 if len(key) < 6 else 2
-                        ),
-                    ),
+                    (tantivy.Occur.Must, branch),
+                    (tantivy.Occur.Must, tantivy.Query.term_query(schema, "source", source)),
                 ]
             )
-        for rank, kind, branch in branches:
-            clauses = [
-                (tantivy.Occur.Must, tantivy.Query.term_query(index.schema, "source", source)),
-                (tantivy.Occur.Must, branch),
-            ]
-            if source == "CAMBRIDGE":
-                clauses.append(
-                    (tantivy.Occur.Must, tantivy.Query.term_query(index.schema, "available", "yes"))
-                )
-            combined = tantivy.Query.boolean_query(clauses)
-            # One document per identity, so aliases cannot consume the hit limit.
-            for score, address in searcher.search(combined, limit=limit).hits:
-                identity = searcher.doc(address)["identity"][0]
-                identifier, lemma, entry_type, surfaces = entries[identity]
-                if kind in (MatchKind.LEMMA, MatchKind.ALIAS, MatchKind.FORM):
-                    surface = next(s for k, s in surfaces if k == kind and answer_key(s) == key)
-                elif kind is MatchKind.PREFIX:
-                    surface = next(s for _, s in surfaces if answer_key(s).startswith(key))
-                elif kind is MatchKind.SUBSTRING:
-                    surface = next(s for _, s in surfaces if key in answer_key(s))
-                else:
-                    # Select display evidence only among the engine's matched Word.
-                    surface = max(
-                        surfaces,
-                        key=lambda pair: SequenceMatcher(None, key, answer_key(pair[1])).ratio(),
-                    )[1]
-                ranked.setdefault(identifier, (rank, -score, lemma, entry_type, kind, surface))
-        if source == "LEXI" and len(key) >= 3:
-            for identifier, pattern, forms in [
-                *patterns.get(surface_head_key(key), []),
-                *patterns.get(None, []),
-            ]:
-                if identifier in ranked and ranked[identifier][0] < 3:
-                    continue
-                if matches_pattern(pattern, query, forms=forms):
-                    _, lemma, entry_type, _ = entries[f"LEXI:{identifier}"]
-                    ranked[identifier] = (3, -1, lemma, entry_type, MatchKind.PATTERN, pattern)
-        ordered = sorted(ranked.items(), key=lambda pair: (*pair[1][:3], pair[0]))[:limit]
-        if source == "CAMBRIDGE":
-            return [AvailableHit(encode_available_id(i), hit[2], hit[3]) for i, hit in ordered]
-        return [WordHit(i, hit[2], hit[3], hit[4], hit[5]) for i, hit in ordered]
 
-    async def search(self, query, include_available=False, *, limit=30):
+        literal = "".join("\\" + char if char in r"\.^$|?*+(){}[]" else char for char in key)
+        for tier in range(4 if len(key) >= 3 else 3):
+            if tier == 1 and source != "CAMBRIDGE":
+                heads = tantivy.Query.boolean_query(
+                    [
+                        (tantivy.Occur.Should, tantivy.Query.term_query(schema, "head", head))
+                        for head in {surface_head_key(key) or "\0", "\0"}
+                    ]
+                )
+                total = searcher.search(heads, limit=1).count
+                if total and sum(order[1] == 0 for order, _ in ranked.values()) < limit:
+                    for _, address in searcher.search(heads, limit=total, count=False).hits:
+                        doc = searcher.doc(address)
+                        if doc["identity"][0] not in ranked and matches_pattern(
+                            doc["matched_surface"][0], query, forms=json.loads(doc["forms"][0])
+                        ):
+                            candidate(doc, 0)
+            if tier and len(ranked) >= limit:
+                break
+            if tier == 0:
+                branch = tantivy.Query.term_query(schema, "surface", key)
+            elif tier == 1:
+                branch = tantivy.Query.regex_query(schema, "surface", literal + ".*")
+            elif tier == 2:
+                branch = tantivy.Query.regex_query(schema, "surface", ".*" + literal + ".*")
+            else:
+                branch = tantivy.Query.fuzzy_term_query(
+                    schema, "surface", key, distance=1 if len(key) < 6 else 2
+                )
+            # Raw surface scores tie within each tier; a constant score avoids a redundant probe.
+            combined = filtered(tantivy.Query.const_score_query(branch, 1.0))
+            fetched, seen, size = 0, set(), limit
+            while len(seen) < limit:
+                hits = searcher.search(
+                    combined,
+                    limit=size,
+                    count=False,
+                    order_by_field="order",
+                    order=tantivy.Order.Asc,
+                ).hits
+                for _, address in hits[fetched:]:
+                    doc = searcher.doc(address)
+                    identity = doc["identity"][0]
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    candidate(doc, tier)
+                    if len(seen) >= limit:
+                        break
+                if len(hits) < size:
+                    break
+                fetched, size = size, size * 2
+        return sorted(ranked.values(), key=lambda item: item[0])[:limit]
+
+    async def search(self, query, include_reference=False, *, limit=30):
         if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_LENGTH:
             raise InvalidResourceError("invalid lexical query")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise InvalidResourceError("invalid search limit")
-        await self.reload(
-            include_available=include_available, force=isinstance(self.db, SessionDatabase)
-        )
+        self._ready()
         snapshot = self.snapshot
-        key = (answer_key(query), include_available, limit)
-        if (cached := self.results.get(key, SearchResult)) is not None:
-            return cached
-        words = await asyncio.to_thread(self._find, snapshot, query, "LEXI", limit)
-        available = (
-            await asyncio.to_thread(self._find, snapshot, query, "CAMBRIDGE", limit)
-            if include_available
-            else []
+        candidates = await asyncio.to_thread(
+            self._find, snapshot, query, None if include_reference else "LEXI", limit
         )
-        result = SearchResult(words, available)
-        if self.snapshot is snapshot:
-            self.results.put(key, result)
-        return result
+        return SearchResult([hit for _, hit in candidates])
+
+    async def close(self):
+        async with self._write_lock:
+            self.snapshot = None
+            writer, self.writer = self.writer, None
+            self.index = None
+            if writer is not None:
+                await asyncio.to_thread(writer.wait_merging_threads)
 
 
-async def search(db, cambridge, query, include_available=False, *, limit=30):
-    """Standalone native read; Lexicon owns the reusable process index."""
-    engine = db.search_index or Search(db, cambridge)
-    return await engine.search(query, include_available, limit=limit)
+async def search(db, query, include_reference=False, *, limit=30):
+    if db.search_index is None:
+        raise RuntimeError("Search is not started; call Lexicon.start() first")
+    return await db.search_index.search(query, include_reference, limit=limit)

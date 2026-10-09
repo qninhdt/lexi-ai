@@ -16,4 +16,5 @@ def database_schema_name(value: str | None) -> str | None:
 MAX_QUERY_LENGTH = 256
 MAX_LEMMA_LENGTH = 256
 MAX_TEXT_LENGTH = 16_000
+MAX_PROMPT_LENGTH = 64_000
 MAX_PATTERN_LENGTH = 256

@@ -1,4 +1,4 @@
-"""Disposable Cambridge snapshots and PostgreSQL schema-isolated test dictionaries."""
+"""Disposable Reference snapshots and PostgreSQL schema-isolated test dictionaries."""
 
 import os
 import sqlite3
@@ -43,21 +43,23 @@ async def pg_db():
 
 @pytest.fixture
 def source(tmp_path):
-    path = tmp_path / "cambridge.db"
+    path = tmp_path / "reference.db"
     with sqlite3.connect(path) as conn:
         conn.executescript(
             "CREATE TABLE words(id INTEGER PRIMARY KEY, word TEXT, display_form TEXT, "
             "entry_type TEXT, status TEXT);"
             "CREATE TABLE entries(id INTEGER PRIMARY KEY, word_id INTEGER, pos TEXT, "
-            "entry_order INTEGER, pronunciation_uk TEXT, pronunciation_us TEXT);"
+            "entry_order INTEGER, pronunciation_uk TEXT, pronunciation_us TEXT, headword TEXT);"
             "CREATE TABLE senses(id INTEGER PRIMARY KEY, entry_id INTEGER, definition TEXT, "
             "cefr_level TEXT, phrase_title TEXT, sense_order INTEGER);"
             "CREATE TABLE examples(id INTEGER PRIMARY KEY, sense_id INTEGER, example TEXT, "
             "example_order INTEGER);"
             "CREATE TABLE word_alternatives(word_id INTEGER, alternative_word TEXT, "
             "alternative_type TEXT);"
+            "CREATE TABLE entry_inflections(id INTEGER PRIMARY KEY, entry_id INTEGER, "
+            "form_type TEXT, inflected_form TEXT);"
             "INSERT INTO words VALUES(1,'bank','bank','word','done');"
-            "INSERT INTO entries VALUES(11,1,'noun',0,NULL,NULL);"
+            "INSERT INTO entries VALUES(11,1,'noun',0,NULL,NULL,'bank');"
             "INSERT INTO senses VALUES(101,11,'Financial institution','A2',NULL,0);"
         )
     return path

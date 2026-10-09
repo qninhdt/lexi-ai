@@ -1,6 +1,6 @@
 """Fresh Lexicon baseline: uppercase contracts, relational content and dense Questions.
 
-Revision ID: 20261003_base
+Revision ID: 20261009_base
 Revises: None
 
 Fresh generated dictionaries only; never target the read-only Cambridge database.
@@ -13,7 +13,7 @@ from alembic import context, op
 from lexi_ai.questions.positions import install_positions, remove_positions
 from lexi_ai.relations.invalidation import install_relation_triggers, remove_relation_triggers
 
-revision = "20261003_base"
+revision = "20261009_base"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -29,6 +29,7 @@ def upgrade():
             "Baseline requires an empty generated dictionary schema; "
             "do not overwrite existing tables"
         )
+    _reference_storage()
     op.create_table(
         "themes",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -307,3 +308,40 @@ def downgrade():
         "themes",
     ):
         op.drop_table(table)
+
+
+def _reference_storage():
+    if op.get_bind().dialect.name != "postgresql":
+        return
+    op.execute("CREATE SCHEMA IF NOT EXISTS lexi_reference")
+    ddl = """
+        CREATE TABLE IF NOT EXISTS lexi_reference.words (
+            id INTEGER PRIMARY KEY, word TEXT, display_form TEXT, entry_type TEXT, status TEXT
+        );
+        CREATE TABLE IF NOT EXISTS lexi_reference.entries (
+            id INTEGER PRIMARY KEY, word_id INTEGER NOT NULL,
+            pos TEXT, headword TEXT, entry_order INTEGER,
+            pronunciation_uk TEXT, pronunciation_us TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ix_entries_word_id ON lexi_reference.entries(word_id);
+        CREATE TABLE IF NOT EXISTS lexi_reference.senses (
+            id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL,
+            definition TEXT, cefr_level TEXT, phrase_title TEXT, sense_order INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS ix_senses_entry_id ON lexi_reference.senses(entry_id);
+        CREATE TABLE IF NOT EXISTS lexi_reference.examples (
+            id INTEGER PRIMARY KEY, sense_id INTEGER NOT NULL,
+            example TEXT, example_order INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS ix_examples_sense_id ON lexi_reference.examples(sense_id);
+        CREATE TABLE IF NOT EXISTS lexi_reference.word_alternatives (
+            word_id INTEGER, alternative_word TEXT,
+            alternative_type TEXT, PRIMARY KEY(word_id, alternative_word)
+        );
+        CREATE TABLE IF NOT EXISTS lexi_reference.datasets (
+            name TEXT PRIMARY KEY, checksum TEXT NOT NULL
+        );
+    """
+    for statement in ddl.split(";"):
+        if statement.strip():
+            op.execute(statement)

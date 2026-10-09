@@ -2,16 +2,21 @@
 
 import re
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from lexi_ai.errors import InvalidOutputError
 from lexi_ai.models import Sense, Word
-from lexi_ai.text import answer_key, parse_marked_example, strip_markup
+from lexi_ai.text import answer_key, canonical_markup, parse_marked_example, strip_markup
 from lexi_ai.vocab import QUESTION_TYPES, QuestionType, TargetPlacement
 
 
 class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("content", "text", mode="before", check_fields=False)
+    @classmethod
+    def normalize_markup(cls, value):
+        return canonical_markup(value) if isinstance(value, str) else value
 
 
 class GeneratedOption(Strict):
@@ -73,7 +78,7 @@ def validate_batch(
     *,
     target_placement: TargetPlacement | None = None,
 ) -> None:
-    if kind not in QUESTION_TYPES or len(batch.questions) != count:
+    if kind not in QUESTION_TYPES or not batch.questions:
         raise InvalidOutputError("Question batch has an unexpected type or size")
     for question in batch.questions:
         if len(question.distractors) != distractor_count:
@@ -109,7 +114,7 @@ def validate_batch(
                     )
                 if any(not parse_marked_example(option.content)[1] for option in options):
                     raise InvalidOutputError("every option must mark the target")
-            if any("_" in text for text in texts):
+            if any("_" in strip_markup(text) for text in texts):
                 raise InvalidOutputError("dialogue must use null rather than a blank")
             continue
         if not isinstance(content, str) or not content.strip() or _INSTRUCTION.match(content):

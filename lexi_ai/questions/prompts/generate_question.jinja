@@ -82,7 +82,7 @@ Each question must provide a meaningful learning opportunity through lexical ret
 - Do not expose the correct answer or option explanations through question content unless explicitly required by the question type.
 - For every question type, keep question content limited to the exercise material required by that type. Do not prepend, append, or embed UI instructions, answer-format directions, or meta-questions such as "Choose the correct answer", "Which expression describes...", or "Write a sentence...". The application supplies task directions separately. Questions naturally spoken within exercise dialogue are exercise material, not UI instructions.
 - Do not sacrifice linguistic accuracy, answer uniqueness, or pedagogical value for difficulty, creativity, or diversity.
-- Respect the requested batch size and distractor count.
+- Treat the requested batch size as a target, not an exact quota; return fewer or more valid questions rather than padding. Respect the distractor count.
 
 {# user #}
 <question_context>

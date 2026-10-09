@@ -96,29 +96,30 @@ async def test_tantivy_ranking_and_licensed_patterns(tmp_path):
             ]
             session.add_all(aliases + [item for _, item in forms] + [item for _, item in patterns])
         engine = Search(db, None)
+        await engine.start()
         for query, owner, kind in [
-            ("stone", "stone", "LEMMA"),
-            ("ston", "ston", "LEMMA"),
-            ("stane", "stane", "LEMMA"),
-            ("TOOK IT OFF", "take off", "PATTERN"),
-            ("lifted it off", "lift off", "PATTERN"),
-            ("John says hello", "Élan", "PATTERN"),
-            ("premidfix", "ßeta", "PATTERN"),
+            ("stone", "stone", "EXACT"),
+            ("ston", "ston", "EXACT"),
+            ("stane", "stane", "EXACT"),
+            ("TOOK IT OFF", "take off", "EXACT"),
+            ("lifted it off", "lift off", "EXACT"),
+            ("John says hello", "Élan", "EXACT"),
+            ("premidfix", "ßeta", "EXACT"),
             ("a_", "a_b", "PREFIX"),
             ("a%", "a%b", "PREFIX"),
             ("él", "Élan", "PREFIX"),
         ]:
-            hits = (await engine.search(query)).words
+            hits = (await engine.search(query)).items
             assert (hits[0].word_id, hits[0].match_kind) == (by_name[owner].id, kind), query
             assert len({hit.word_id for hit in hits}) == len(hits)
         for query in ("i x", "ı x"):
             assert {
                 hit.word_id
-                for hit in (await engine.search(query)).words
-                if hit.match_kind == "PATTERN"
+                for hit in (await engine.search(query)).items
+                if hit.match_kind == "EXACT"
             } == {by_name[n].id for n in ("alpha", "ı")}
-        assert len((await engine.search("stone X")).words) == 30
-        assert (await engine.search("pending")).words == []
+        assert len((await engine.search("stone X")).items) == 30
+        assert (await engine.search("pending")).items == []
     finally:
         await db.close()
 
@@ -189,18 +190,19 @@ async def test_100000_word_search_has_no_id_window_and_narrows_patterns(tmp_path
             session.add(row.SensePattern(sense_id=100003, content="take {sth} off"))
         event.listen(db.engine.sync_engine, "before_cursor_execute", count)
         engine = Search(db, None)
-        hits = (await engine.search("needle")).words
+        await engine.start()
+        hits = (await engine.search("needle")).items
         assert [(hit.word_id, hit.match_kind) for hit in hits[:2]] == [
-            (100001, "LEMMA"),
+            (100001, "EXACT"),
             (100002, "PREFIX"),
         ]
         assert len(statements) == 5  # Bulk projection only, never full payloads.
         assert not any("definitions" in sql or "questions" in sql for sql, _ in statements)
         statements.clear()
         matched_patterns.clear()
-        assert (await engine.search("neadle")).words[0].word_id == 100001
-        hit = (await engine.search("took it off")).words[0]
-        assert (hit.word_id, hit.match_kind) == (100003, "PATTERN")
+        assert (await engine.search("neadle")).items[0].word_id == 100001
+        hit = (await engine.search("took it off")).items[0]
+        assert (hit.word_id, hit.match_kind) == (100003, "EXACT")
         assert matched_patterns == ["take {sth} off"]
         assert statements == []  # Warm lexical and pattern searches stay in RAM.
     finally:
@@ -268,7 +270,7 @@ async def test_grading_projects_neutral_meanings_in_two_queries(tmp_path, monkey
             )
         )[0]
 
-        async def ranked_search(_db, _source, _answer, *, limit):
+        async def ranked_search(_db, _answer, *, limit):
             assert limit == 1
             return SearchResult(
                 [WordHit(i, f"word{i}", "WORD", "FUZZY", f"word{i}") for i in range(10, 0, -1)]
@@ -298,6 +300,8 @@ async def test_grading_projects_neutral_meanings_in_two_queries(tmp_path, monkey
         exact = await grade_answer(db, None, question.id, "SINGLE_WORD", "SAVED", config=CONFIG)
         assert exact.task_fit
         assert len(statements) == 1
+        db.search_index = Search(db, None)
+        await db.search_index.start()
         monkeypatch.setattr("lexi_ai.questions.grade.search", search)
         statements.clear()
         actual = await grade_answer(
@@ -309,7 +313,7 @@ async def test_grading_projects_neutral_meanings_in_two_queries(tmp_path, monkey
             config=CONFIG,
         )
         assert actual.task_fit and actual.sense_id == 10
-        assert len(statements) == 7  # Artifact + five cold projection reads + meaning inventory.
+        assert len(statements) == 2  # Artifact + meaning inventory; search uses its startup index.
         with pytest.raises(ValueError):
             await meaning_inventory(db)
     finally:

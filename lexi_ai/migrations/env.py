@@ -1,4 +1,4 @@
-"""Migrate only the generated DB; never point this configuration at Cambridge."""
+"""Migrate the dictionary database; never target a read-only reference artifact."""
 
 import asyncio
 

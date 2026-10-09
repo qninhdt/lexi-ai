@@ -55,10 +55,10 @@ async def _single_word(db, model, question, answer, config, options):
     if not task_fit or spelling_error or len(answer.strip()) > MAX_QUERY_LENGTH:
         return SingleWordGrade(task_fit, spelling_error, None)
 
-    result = await search(db, None, answer, limit=1)
-    if not result.words:
+    result = await search(db, answer, limit=1)
+    if not result.items:
         return SingleWordGrade(True, False, None)
-    matched_word = await meaning_inventory(db, word_id=result.words[0].word_id)
+    matched_word = await meaning_inventory(db, word_id=result.items[0].word_id)
     if matched_word is None or not matched_word["senses"]:
         return SingleWordGrade(True, False, None)
     response = await model.decide(

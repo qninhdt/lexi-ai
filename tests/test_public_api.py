@@ -7,6 +7,7 @@ from test_word_generation import stage_payload
 
 from lexi_ai import DecisionConfig, DecisionMode, Lexicon, LLMConfig
 from lexi_ai.errors import InvalidResourceError, MissingProviderError
+from lexi_ai.references.cambridge import encode_reference_id
 
 
 class LLM:
@@ -34,7 +35,7 @@ class LLM:
                             "patterns": [],
                             "collocations": [],
                             "relations": [],
-                            "sources": ["c1"],
+                            "references": ["a1"],
                         }
                     ],
                 },
@@ -57,21 +58,24 @@ async def test_selected_search_generate_read_and_close(tmp_path, source):
         from lexi_ai.schema import Base
 
         await ai.db.create_schema(Base.metadata)
-        available = (await ai.search("bank", include_available=True)).available
-        assert len(available) == 1
-        word = await ai.generate(available[0].available_id, target="bank", example_count=1)
+        await ai.start()
+        references = (await ai.search("bank", include_reference=True)).items
+        assert len(references) == 1
+        word = await ai.generate_word(
+            "bank", reference_id=references[0].reference_id, example_count=1
+        )
         assert word.lemma == "bank"
         assert word.type == "WORD"
         assert (await ai.get_word(word.id)).senses[0].definition.content == (
             "A place to keep money"
         )
-        assert await ai.generate(available[0].available_id, target="bank") == word
+        assert await ai.generate_word("bank", reference_id=references[0].reference_id) == word
         assert llm.calls == 2
-        original_path = ai.cambridge.path
-        ai.cambridge.path = tmp_path / "absent-source.db"
-        assert await ai.generate(available[0].available_id, target="bank") == word
-        ai.cambridge.path = original_path
-        assert (await ai.search("bank", include_available=True)).available == []
+        original_path = ai._cambridge.path
+        ai._cambridge.path = tmp_path / "absent-source.db"
+        assert await ai.generate_word("bank", reference_id=references[0].reference_id) == word
+        ai._cambridge.path = original_path
+        assert (await ai.search("bank", include_reference=True)).items[0].kind == "WORD"
         assert await ai.translate_text("bank", "vi") == "ngân hàng"
         assert await ai.translate_text("bank", "vi") == "ngân hàng"
         assert llm.calls == 3
@@ -85,15 +89,8 @@ async def test_selected_search_generate_read_and_close(tmp_path, source):
 
 
 async def test_explicit_config_ignores_environment(monkeypatch, tmp_path, source):
-    settings = {
-        "LEXI_DB_URL": f"sqlite+aiosqlite:///{tmp_path / 'generated.db'}",
-        "LEXI_CAMBRIDGE_DB_PATH": str(source),
-        "LEXI_NEUTRAL_EXAMPLES": "3",
-        "LEXI_THEMED_EXAMPLES": "5",
-        "LEXI_DECISION_THRESHOLD": "0.85",
-    }
-    for name, value in settings.items():
-        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("LLM_API_KEY", "ignored-key")
+    monkeypatch.setenv("DB_URL", "ignored-url")
     ai = Lexicon(
         f"sqlite+aiosqlite:///{tmp_path / 'explicit.db'}",
         str(source),
@@ -108,7 +105,7 @@ async def test_explicit_config_ignores_environment(monkeypatch, tmp_path, source
         assert ai._decision_model().config is ai.decision_config
         assert ai._decision_model().llm_config is ai.llm_config
         assert ai.db.engine.url.database == str(tmp_path / "explicit.db")
-        assert ai.cambridge.path == source
+        assert ai._cambridge.path == source
     finally:
         await ai.close()
 
@@ -164,7 +161,9 @@ async def test_example_counts_are_per_generate_call(tmp_path, source, neutral_fi
                     ]
                 )
             output = await super().complete(instruction, data, schema)
-            output.examples *= count
+            output.examples = [
+                f'The <t inf="base">bank</t> opens at {hour}.' for hour in range(count)
+            ]
             return output
 
     llm = CountingLLM()
@@ -176,20 +175,25 @@ async def test_example_counts_are_per_generate_call(tmp_path, source, neutral_fi
     )
     try:
         await lexicon.db.create_schema(Base.metadata)
-        handle = (await lexicon.search("bank", include_available=True)).available[0].available_id
+        await lexicon.start()
+        handle = (await lexicon.search("bank", include_reference=True)).items[0].reference_id
         if neutral_first:
-            await lexicon.generate(handle, target="bank", example_count=2)
+            await lexicon.generate_word("bank", reference_id=handle, example_count=2)
         await lexicon.create_theme("pirate", "Pirate", "nautical voice")
-        themed = await lexicon.generate(handle, target="bank", theme="pirate", example_count=4)
+        themed = await lexicon.generate_word(
+            "bank", reference_id=handle, theme="pirate", example_count=4
+        )
         assert len(themed.senses[0].examples) == 4
         neutral = await lexicon.get_word(themed.id)
         assert len(neutral.senses[0].examples) == (2 if neutral_first else 4)
         assert neutral.senses[0].definition is not None
         assert themed.senses[0].definition is not None
         assert llm.calls == 4
-        assert await lexicon.generate(handle, target="bank", example_count=9) == neutral
+        assert await lexicon.generate_word("bank", reference_id=handle, example_count=9) == neutral
         assert (
-            await lexicon.generate(handle, target="bank", theme="pirate", example_count=9)
+            await lexicon.generate_word(
+                "bank", reference_id=handle, theme="pirate", example_count=9
+            )
         ) == themed
         assert llm.calls == 4
     finally:
@@ -206,7 +210,7 @@ async def test_generate_rejects_invalid_count_before_io(tmp_path, source, count)
     )
     try:
         with pytest.raises(ValueError, match="positive integer"):
-            await lexicon.generate("invalid-handle", target="bank", example_count=count)
+            await lexicon.generate_word("bank", reference_id="invalid-handle", example_count=count)
         assert lexicon.llm is None
         assert not (tmp_path / "unused.db").exists()
     finally:
@@ -214,14 +218,17 @@ async def test_generate_rejects_invalid_count_before_io(tmp_path, source, count)
 
 
 @pytest.mark.parametrize("llm_config", [None, LLMConfig(), LLMConfig(api_key=" ")])
-def test_lexicon_requires_llm_without_opening_storage(tmp_path, source, llm_config):
-    with pytest.raises(MissingProviderError, match="requires an LLM"):
-        Lexicon(
-            f"sqlite+aiosqlite:///{tmp_path / 'unused.db'}",
-            str(source),
-            llm_config=llm_config,
-        )
-    assert not (tmp_path / "unused.db").exists()
+async def test_reads_and_imports_do_not_require_llm_credentials(tmp_path, source, llm_config):
+    lexicon = Lexicon(
+        f"sqlite+aiosqlite:///{tmp_path / 'unused.db'}", str(source), llm_config=llm_config
+    )
+    try:
+        with pytest.raises(MissingProviderError, match="requires an LLM"):
+            lexicon._llm()
+        assert not (tmp_path / "unused.db").exists()
+        await lexicon.validate_reference(encode_reference_id(1))
+    finally:
+        await lexicon.close()
 
 
 async def test_decision_only_requires_credentials_only_for_inference(tmp_path, source, monkeypatch):
@@ -253,6 +260,7 @@ async def test_decision_only_requires_credentials_only_for_inference(tmp_path, s
         with pytest.raises(MissingProviderError, match="decision model credentials"):
             await lexicon.grade_answer(1, "SINGLE_WORD", "answer", mode=DecisionMode.DECISION_ONLY)
         await lexicon.db.create_schema(Base.metadata)
+        await lexicon.start()
         assert await lexicon.resolve_relations(mode=DecisionMode.DECISION_ONLY) == []
         assert lexicon.decision_model.primary is None and lexicon.llm is None
     finally:
@@ -301,6 +309,7 @@ async def test_public_api_list_questions_for_senses(tmp_path, source):
         from lexi_ai.schema import Base, Sense, Word
 
         await lexicon.db.create_schema(Base.metadata)
+        await lexicon.start()
         async with lexicon.db.transaction() as session:
             word = Word(lemma="coin", match_key="coin", entry_type="WORD", generation_state="DONE")
             session.add(word)
@@ -332,3 +341,8 @@ async def test_public_api_list_questions_for_senses(tmp_path, source):
         assert selected == res
     finally:
         await lexicon.close()
+
+
+def test_postgresql_reference_path_requires_import_before_runtime():
+    with pytest.raises(ValueError, match="import_reference"):
+        Lexicon("postgresql+asyncpg://unused/lexicon", reference_path="reference.sqlite")

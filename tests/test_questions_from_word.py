@@ -48,11 +48,14 @@ class LLM:
                             else {"correct": {"content": correct, "explanation": "Fits."}}
                         ),
                         "distractors": [
-                            {"content": f"wrong{i}", "explanation": "Does not fit."}
+                            {
+                                "content": f"wrong{self.calls}q{item}x{i}",
+                                "explanation": "Does not fit.",
+                            }
                             for i in range(context["distractors_per_question"])
                         ],
                     }
-                    for _ in range(context["count"])
+                    for item in range(context["count"])
                 ]
             }
         )

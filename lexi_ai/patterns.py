@@ -4,7 +4,7 @@ import re
 from functools import cache, lru_cache
 
 from .config import MAX_PATTERN_LENGTH
-from .text import answer_key, validate_lemma
+from .text import answer_key, parse_marked_example, validate_lemma
 from .vocab import SLOTS
 
 _TOKEN = re.compile(r"\{[^{}]+\}")
@@ -18,6 +18,9 @@ _BOUNDS = {
     "{place}": (1, 4),
     "{doing}": (1, 4),
     "{do}": (1, 4),
+    "{done}": (1, 4),
+    "{adj}": (1, 4),
+    "{adv}": (1, 4),
     "{num}": (1, 1),
     "{clause}": (2, 12),
 }
@@ -35,6 +38,8 @@ _PRONOUNS = {
 def validate_pattern(pattern: str) -> str:
     if not isinstance(pattern, str) or len(pattern) > MAX_PATTERN_LENGTH:
         raise ValueError("invalid pattern length")
+    if parse_marked_example(pattern)[1]:
+        raise ValueError("patterns must be plain text; target tags belong only in examples")
     pattern = validate_lemma(pattern)
     if any(match.group() not in SLOTS for match in _TOKEN.finditer(pattern)):
         raise ValueError("unknown pattern slot")

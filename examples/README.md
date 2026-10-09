@@ -1,116 +1,124 @@
-# Examples
+# CLI recipes
 
-Standalone scripts demonstrating the public `Lexicon` API. Run them from the
-repository root after installing development dependencies and initializing a
-separate generated-content database; see [database setup](../README.md#database-setup).
+Install the package with `uv sync --locked` in a checkout or `pip install .`.
+Use `lexi` (or `python -m lexi_ai`); all commands ship in the installed package.
+Copy the root [.env.example](../.env.example) to `.env` in the current directory for
+provider operations. Process environment overrides it; `--env-file PATH` selects
+another file. Reads/imports need no provider credentials. Generation, uncached
+translation and model-based grading can incur provider charges.
 
-## Setup
-
-```bash
-uv sync --locked
-cp .env.example .env
-```
-
-Fill in `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL`. The `DECISION_*` group is
-optional; without a decision key, grading and Sense Linking use the LLM.
-Process environment variables override the root `.env` file. Use `--env-file`
-to select a different file. Database settings belong in CLI arguments, not `.env`.
-
-For OpenRouter, use `https://openrouter.ai/api/v1` for `LLM_BASE_URL` and
-`https://openrouter.ai/api` for `DECISION_BASE_URL`.
-
-The commands below use Bash and an initialized PostgreSQL dictionary:
+## Generate and import
 
 ```bash
-DB_ARGS=(--db-url 'postgresql+asyncpg://user:password@localhost/lexicon' \
-  --db-schema lexi --cambridge-path data/cambridge.db)
+lexi generate word bank --output content.sqlite
+lexi generate word --word-list words.txt --output content.sqlite
+lexi generate question 1 --output content.sqlite --type DEFINITION_TO_WORD
+lexi generate word --word-list words.txt --output 'postgresql://user:password@localhost/lexicon'
+lexi import content.sqlite --into 'postgresql://user:password@localhost/lexicon'
 ```
 
-Generation, uncached translation, and free-text grading can incur provider charges.
-Reads, cache hits, and saved-answer shortcuts do not call providers.
+TXT accepts UTF-8/BOM, one word per line; blanks and identical duplicates are ignored.
+Word generation runs up to `--max-concurrency 128` words concurrently and returns
+complete Words. Questions take a saved Sense ID, one required `--type`, and `--count`
+new Questions. Fixed-stem types (`DEFINITION_TO_WORD`, `WORD_TO_DEFINITION`,
+`WORD_TO_USAGE`) default to 1 Question and 5 distractors; the other types default
+to 8 Questions and 3 distractors. Explicit count flags override these defaults.
+They return full Questions and
+never generate Words. `--theme KEY` selects existing themed content;
+`--target-placement` applies to dialogue questions.
 
-## Dictionary
+Generation initializes the current database. Word generation downloads/caches reference
+as needed; `--reference-path reference.sqlite` selects an offline source. Existing Words
+are reused. Failed Words continue with a nonzero exit and retain successful work.
+SQLite output is finalized with a checksum sidecar. Import preserves IDs and
+refuses conflicting rows; `--words-only` excludes saved questions.
 
-Search first, then select a reference entry handle from the printed `available` results:
+The checkout keeps its reference snapshot at `data/reference.sqlite`. To build
+words and all seven question types from a common-word list into the same directory:
 
 ```bash
-uv run python examples/01_dictionary.py "${DB_ARGS[@]}" bank
-AVAILABLE_ID='selected-available-id'
-uv run python examples/01_dictionary.py "${DB_ARGS[@]}" bank \
-  --available-id "$AVAILABLE_ID" --target bank --example-count 3
+uv run python scripts/generate-content.py --word-list /path/common-words.txt
 ```
 
-Save a Word ID and a Sense ID from the output for the following examples:
+Run from the checkout root with provider settings in `.env`. The script uses one
+Lexicon and runs up to 128 Words concurrently. Each Word immediately starts all
+seven Question types per Sense concurrently; tqdm advances per completed word.
+Defaults are 128 concurrent provider requests, 1 Question with 5 distractors per
+Sense/fixed-stem type, and 8 Questions with 3 distractors per Sense/context type.
+`--count` applies to the four context types. `--output`,
+`--reference-path`, `--env-file`, `--count`, and `--max-concurrency`
+override defaults. Failures are printed and return exit code 1; other words continue.
+Use `lexi generate word` to generate only dictionary content and `lexi generate
+question` for Questions of existing words. Ctrl+C preserves each committed Word
+and question bank; unfinished operations roll back. Run the same command again to
+reuse saved words and fill missing questions. After a hard stop, keep any
+`content.sqlite-wal` file with the database until the next run recovers/finalizes it.
+The script checkpoints SQLite and writes `data/content.sqlite.sha256` on orderly
+exit, including cancellation. A hard stop may leave WAL pending until the next
+run. Generated content is Git-ignored.
 
 ```bash
-WORD_ID='generated-word-id'
-SENSE_ID='selected-sense-id'
-uv run python examples/01_dictionary.py "${DB_ARGS[@]}" bank --word-id "$WORD_ID"
+lexi db init --db content.sqlite --reference-path reference.sqlite
+lexi db init --db 'postgresql://user:password@localhost/lexicon'
+lexi db head
+lexi db current --db content.sqlite
+lexi import reference.sqlite --kind reference --into 'postgresql://user:password@localhost/lexicon'
 ```
 
-## Themes
+PostgreSQL data survives process/container restarts in persistent storage. Import is
+setup work; ordinary reads never import/migrate. SQLite artifacts are not runtime
+mounts for Pycil. `--db-schema` selects a PostgreSQL dictionary schema only.
+SQLite reference search/validation opens the cached reference automatically;
+`--reference-path reference.sqlite` selects an offline file for those commands.
+
+## Saved dictionary and exercises
+
+Replace sample numeric IDs with IDs returned by your generation commands.
 
 ```bash
-uv run python examples/02_themes.py "${DB_ARGS[@]}" "$AVAILABLE_ID" \
-  --target bank --theme pirate --name Pirate --concept 'A nautical speaking voice'
+lexi word search bank --db content.sqlite
+lexi word search bank --include-reference --db content.sqlite
+lexi word get 1 --db content.sqlite
+lexi sense get 1 2 --db content.sqlite
+lexi sense previews 1 2 --db content.sqlite
+lexi reference validate SELECTED_REFERENCE_ID --db 'postgresql://user:password@localhost/lexicon'
+lexi question get 1 2 --db content.sqlite
+lexi question list 1 --type DEFINITION_TO_WORD --limit 20 --db content.sqlite
+lexi question list 1 2 --limit-per-type 8 --db content.sqlite
+lexi question count 1 2 --db content.sqlite
+lexi question retrieve 1 --type DEFINITION_TO_WORD --db content.sqlite
+lexi question retrieve --request 1:DEFINITION_TO_WORD:2 --request 2:WORD_TO_USAGE:1 --db content.sqlite
+lexi question grade 1 --format SINGLE_WORD --answer bank --db content.sqlite
+lexi question delete 1 --db content.sqlite
 ```
 
-The script creates the Theme if absent and generates or reuses themed content.
-Use `--update-name` to change its display name without rewriting saved content.
+Question artifacts include answers/explanations; consumers decide answer visibility.
+Grading returns separate diagnostics, not a single learning score. Saved option IDs
+and normalized saved-word answers can grade locally. `--mode` uses native uppercase
+`LLM_FALLBACK`, `LLM_ONLY` or `DECISION_ONLY`; `--allowed-pair TYPE:FORMAT` limits
+accepted grading formats. `--with-usage` on inference commands returns usage records.
+Long answers or translation input can use `--answer -` / `--text -` for stdin.
 
-## Questions
+## Themes, relations and translations
 
 ```bash
-uv run python examples/03_questions.py "${DB_ARGS[@]}" "$SENSE_ID" \
-  definition_to_word --generate-count 2
-uv run python examples/03_questions.py "${DB_ARGS[@]}" "$SENSE_ID" definition_to_word
+lexi generate theme pirate --name Pirate --concept 'A nautical voice' --output content.sqlite
+lexi theme get pirate --db content.sqlite
+lexi theme list --limit 20 --db content.sqlite
+lexi theme update pirate --name 'Pirate voice' --db content.sqlite
+lexi generate word bank --theme pirate --output content.sqlite
+lexi generate question 1 --type DEFINITION_TO_WORD --theme pirate --output content.sqlite --count 8
+lexi relation resolve --batch-size 20 --db content.sqlite
+lexi generate translation --text 'I went to the bank.' --language vi --output content.sqlite
+lexi translation list --limit 20 --db content.sqlite
+lexi translation get 1 --db content.sqlite
+lexi translation delete 1 --db content.sqlite
+lexi translation purge --db content.sqlite
+lexi theme delete pirate --db content.sqlite
 ```
 
-Use any [supported question type](../README.md#questions-and-grading).
-`--generate-count` appends new artifacts on every call; omit it to read the bank.
-Dialogue questions accept `--target-placement dialogue` or `options` during generation.
-Use `--theme pirate` only after generating that Sense's themed content.
-
-## Grading
-
-Choose saved Question IDs of the corresponding types. Adapt these answers to the
-selected meaning; the sentences below assume the financial noun `bank`.
-
-```bash
-uv run python examples/04_grade_single_word.py "${DB_ARGS[@]}" "$SINGLE_WORD_QUESTION_ID" \
-  --answer bank --answer bnka --answer chair
-uv run python examples/05_grade_definition.py "${DB_ARGS[@]}" "$DEFINITION_QUESTION_ID" \
-  --answer 'An institution that holds money and offers financial services.'
-uv run python examples/06_grade_usage.py "${DB_ARGS[@]}" "$USAGE_QUESTION_ID" \
-  --answer 'I deposited my savings at the bank.' --answer 'We went home.'
-```
-
-Example 04 also demonstrates saved-option and exact-word shortcuts. Outputs are
-independent diagnostics, not a single learner score. Full Question objects include
-answers and explanations and must remain server-side.
-
-## Sense Linking
-
-```bash
-uv run python examples/07_sense_linking.py "${DB_ARGS[@]}" "$WORD_ID"
-uv run python examples/07_sense_linking.py "${DB_ARGS[@]}" "$WORD_ID" \
-  --target-entry "$TARGET_AVAILABLE_ID" "$TARGET" --resolve --batch-size 20
-```
-
-Select `TARGET_AVAILABLE_ID` and its lexical `TARGET` from the inspection output.
-`--resolve` processes a **global eligible page**, not only the supplied Word's edges.
-Use a dedicated example database if other pending work must remain untouched.
-
-## Translation
-
-```bash
-uv run python examples/08_translation.py "${DB_ARGS[@]}" \
-  --text 'I went to the bank.' \
-  --tagged 'I went to the <t inf="base">bank</t>.' --language vi
-```
-
-The script repeats the translation to demonstrate cache reuse. Tagged and plain
-text share a cache entry when their unwrapped text is identical; whitespace and
-target-language changes produce separate entries.
-
-Run any script with `--help` for its full argument list.
+Theme namespaces never substitute neutral content. Relation resolution processes
+**global eligible links** in the database, not only a selected word. Delete/purge
+commands perform their explicit destructive operation. Lists support `--after-id`
+(or theme `--after-key`). Progress/errors go to stderr; JSON results go to stdout.
+Exit codes: 0 success, 1 operation/batch failure, 2 argument error, 130 interruption.

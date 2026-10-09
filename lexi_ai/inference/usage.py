@@ -117,11 +117,26 @@ class UsageRecorder:
         if error is not None and self.enabled:
             error.usage = merge_usage(self.records)
 
-    def wrap(self, provider):
+    def wrap(self, provider, *, semaphore=None):
+        if semaphore is not None:
+            provider = _LimitedProvider(provider, semaphore)
         return _TrackedProvider(provider, self.records) if self.enabled else provider
 
     def finish[T](self, value: T) -> T | tuple[T, list[TokenUsage]]:
         return (value, merge_usage(self.records)) if self.enabled else value
+
+
+class _LimitedProvider:
+    def __init__(self, provider, semaphore):
+        self.provider, self.semaphore = provider, semaphore
+
+    async def complete(self, *args, **kwargs):
+        async with self.semaphore:
+            return await self.provider.complete(*args, **kwargs)
+
+    async def decide(self, *args, **kwargs):
+        async with self.semaphore:
+            return await self.provider.decide(*args, **kwargs)
 
 
 class _TrackedProvider:
