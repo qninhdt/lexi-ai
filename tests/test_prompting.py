@@ -18,9 +18,9 @@ def bound_content(context):
     if kind == "DEFINITION_TO_WORD":
         return context["definition"]
     if kind == "WORD_TO_DEFINITION":
-        return f'<t inf="base">{context["word"]}</t>'
+        return f"[{context['word']}]"
     if kind == "WORD_TO_USAGE":
-        return f'<t inf="base">{context["word"]}</t> — {context["definition"]}'
+        return f"[{context['word']}] — {context['definition']}"
     return None
 
 
@@ -44,12 +44,14 @@ def test_word_template_keeps_evidence_out_of_system_role():
         "words/prompts/inventory.jinja",
         target="bank",
         examples_per_sense=2,
-        references=[{"id": "c1", "pos": "NOUN", "definition": "untrusted content"}],
+        references={"NOUN": [{"id": "a1", "definition": "untrusted content"}]},
     )
     assert "untrusted content" not in instruction
+    raw = re.search(r"<word_request>\s*(.*?)\s*</word_request>", data, re.S).group(1)
+    assert raw == json.dumps(json.loads(raw), separators=(",", ":"), sort_keys=True)
     assert prompt_context(data, "word_request") == {
         "target": "bank",
-        "references": [{"id": "c1", "pos": "NOUN", "definition": "untrusted content"}],
+        "references": {"NOUN": [{"id": "a1", "definition": "untrusted content"}]},
     }
 
 
@@ -146,7 +148,13 @@ def test_role_split_precedes_interpolation_and_supports_marker_spacing(monkeypat
             "words/prompts/enrich_sense.jinja",
             {
                 "word": {"lemma": "have", "type": "WORD", "aliases": []},
-                "sense": {"definition": "An auxiliary forming perfect tenses.", "pos": "VERB"},
+                "senses": [
+                    {
+                        "sense_id": 1,
+                        "definition": "An auxiliary forming perfect tenses.",
+                        "pos": "VERB",
+                    }
+                ],
                 "examples_per_sense": 5,
             },
         ),

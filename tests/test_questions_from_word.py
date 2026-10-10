@@ -21,11 +21,11 @@ class LLM:
         content = bound_content(context)
         if kind == "DIALOGUE_COMPLETION":
             content = [
-                {"speaker": "Maya", "text": 'The <t inf="base">bank</t> is closed.'},
+                {"speaker": "Maya", "text": "The [bank] is closed."},
                 {"speaker": "Leo", "text": None},
             ]
         elif kind == "MEANING_IN_CONTEXT":
-            content = 'The <t inf="base">bank</t> kept my savings safe.'
+            content = "The [bank] kept my savings safe."
         elif kind == "CONTEXT_TO_WORD":
             content = "I went there to deposit money."
         elif kind == "CLOZE_TO_WORD":
@@ -33,9 +33,7 @@ class LLM:
         correct = (
             context["definition"]
             if kind == "WORD_TO_DEFINITION"
-            else (
-                "bank" if kind.endswith("_to_word") else 'The <t inf="base">bank</t> opens at nine.'
-            )
+            else ("bank" if kind.endswith("_to_word") else "The [bank] opens at nine.")
         )
         return schema.model_validate(
             {
@@ -102,12 +100,12 @@ async def test_every_type_batches_into_exact_namespace(kind, themed, tmp_path):
             session.add_all(
                 [
                     Definition(sense_id=sense.id, content="A place for money"),
-                    Example(sense_id=sense.id, content='The <t inf="base">bank</t> opened.'),
+                    Example(sense_id=sense.id, content="The [bank] opened."),
                     Definition(sense_id=sense.id, theme_id=theme.id, content="A place for coins"),
                     Example(
                         sense_id=sense.id,
                         theme_id=theme.id,
-                        content='The <t inf="base">bank</t> holds treasure.',
+                        content="The [bank] holds treasure.",
                     ),
                 ]
             )

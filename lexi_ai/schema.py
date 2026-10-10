@@ -103,7 +103,6 @@ class Sense(Base):
     tier: Mapped[str] = mapped_column(String(16), nullable=False)
     cefr_level: Mapped[str | None] = mapped_column(String(8))
     register: Mapped[str | None] = mapped_column(String(32))
-    usage_note: Mapped[str | None] = mapped_column(Text)
     ipa_uk: Mapped[str | None] = mapped_column(String(80))
     ipa_us: Mapped[str | None] = mapped_column(String(80))
 
@@ -279,7 +278,6 @@ class SenseRelation(Base):
         ForeignKey("senses.id", ondelete="SET NULL"), index=True
     )
     rel_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    gloss: Mapped[str] = mapped_column(Text, nullable=False)
     target_hash: Mapped[str | None] = mapped_column(String(64))
     resolve_attempted_at: Mapped[str | None] = mapped_column(String(32))
 

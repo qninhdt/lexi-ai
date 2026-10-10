@@ -47,7 +47,6 @@ async def resolve_relations(
                         source_definition=link.source_definition,
                         relation_type=link.relation_type,
                         target_word=link.target_word,
-                        target_gloss=link.target_gloss,
                         candidates=[
                             {"index": i, "pos": c.pos, "definition": c.definition}
                             for i, c in enumerate(link.candidates, 1)

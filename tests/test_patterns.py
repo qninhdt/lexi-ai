@@ -2,12 +2,15 @@ import pytest
 
 from lexi_ai.patterns import matches_pattern, validate_pattern
 from lexi_ai.text import (
+    canonical_markup,
     content_hash,
     match_key,
+    parse_form,
     parse_marked_example,
     strip_markup,
     validate_lemma,
 )
+from lexi_ai.vocab import INFLECTION_CODES
 
 
 def test_identity_preserves_lexical_difference():
@@ -67,15 +70,33 @@ def test_overlapping_licensed_heads_do_not_hide_longer_matches():
 
 
 def test_markup_and_exact_text_hash():
-    assert parse_marked_example('She <t inf="past">took</t> it off.')[1][0].surface == "took"
-    assert strip_markup('She <t inf="past">took</t> it off.') == "She took it off."
+    assert parse_marked_example("She [took|p] it off.")[1][0].surface == "took"
+    assert strip_markup("She [took|p] it off.") == "She took it off."
     assert content_hash(" a ") != content_hash("a")
-    for invalid in ('<t inf="wrong">foo</t>', '<t inf="base">foo', "<t>foo</t>"):
+    for invalid in ("[foo|wrong]", "[foo", "[[foo]]"):
         with pytest.raises(ValueError):
             parse_marked_example(invalid)
 
 
-@pytest.mark.parametrize("pattern", ['<t inf="base">have</t> {done}', "<t>go</t> {adj}"])
+@pytest.mark.parametrize("code,inflection", INFLECTION_CODES.items())
+def test_target_and_form_codes_share_the_same_inflections(code, inflection):
+    form = "café" + ("|" + code.upper() if code else "")
+    assert parse_form(form) == ("café", inflection)
+    marked = "🌍 [" + form + "]!"
+    text, spans = parse_marked_example(marked)
+    assert text == "🌍 café!"
+    assert text[spans[0].start : spans[0].end] == "café"
+    assert spans[0].inf == inflection
+    assert canonical_markup(marked) == "🌍 [café" + ("|" + code if code else "") + "]!"
+
+
+@pytest.mark.parametrize("form", ["", "|p", "run|", "run|past", "run|p|p", "[run]", 1])
+def test_compact_forms_reject_invalid_surfaces_and_codes(form):
+    with pytest.raises(ValueError):
+        parse_form(form)
+
+
+@pytest.mark.parametrize("pattern", ["[have] {done}", "[go|unknown] {adj}"])
 def test_patterns_reject_display_tags(pattern):
     with pytest.raises(ValueError):
         validate_pattern(pattern)

@@ -59,7 +59,7 @@ system, user = render_prompt('words/prompts/inventory.jinja', target='bank', ref
 assert system.strip() and 'bank' in user
 system, user = render_prompt('words/prompts/enrich_sense.jinja',
                             word={'lemma':'bank','type':'WORD','aliases':[]},
-                            sense={'definition': 'Money', 'pos': 'NOUN'},
+                            senses=[{'sense_id': 1, 'definition': 'Money', 'pos': 'NOUN'}],
                             examples_per_sense=1)
 assert system.strip() and '<sense_request>' in user
 state, questions = render_decision('questions/prompts/decision/grade_single_word_1.json',

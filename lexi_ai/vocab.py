@@ -80,6 +80,18 @@ class Inflection(StrEnum):
     SUPERLATIVE = "SUPERLATIVE"
 
 
+INFLECTION_CODES = {
+    "": Inflection.BASE,
+    "p": Inflection.PAST,
+    "pp": Inflection.PAST_PARTICIPLE,
+    "3": Inflection.PRESENT_3SG,
+    "ing": Inflection.ING,
+    "pl": Inflection.PLURAL,
+    "c": Inflection.COMPARATIVE,
+    "s": Inflection.SUPERLATIVE,
+}
+
+
 class SenseRelationType(StrEnum):
     SYNONYM = "SYNONYM"
     ANTONYM = "ANTONYM"

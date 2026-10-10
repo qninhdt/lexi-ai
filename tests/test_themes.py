@@ -25,8 +25,8 @@ class LLM:
                 {
                     "definition": "A safe place for coin",
                     "examples": [
-                        'The <t inf="base">bank</t> was open.',
-                        'I visited the <t inf="base">bank</t>.',
+                        "The [bank] was open.",
+                        "I visited the [bank].",
                     ],
                 }
             ]
@@ -50,7 +50,7 @@ async def test_crud_delete_and_generate_reuse(tmp_path):
             session.add_all(
                 [
                     Definition(sense_id=sense.id, content="A financial institution"),
-                    Example(sense_id=sense.id, content='The <t inf="base">bank</t> opened.'),
+                    Example(sense_id=sense.id, content="The [bank] opened."),
                 ]
             )
         theme = await create_theme(db, llm, "pirate", "Pirate", "Write like a pirate")
@@ -108,7 +108,7 @@ async def test_theme_uses_single_neutral_meaning(tmp_path):
             session.add_all(
                 [
                     Definition(sense_id=sense.id, content="A financial institution"),
-                    Example(sense_id=sense.id, content='The <t inf="base">bank</t> opened.'),
+                    Example(sense_id=sense.id, content="The [bank] opened."),
                 ]
             )
         llm = LLM()

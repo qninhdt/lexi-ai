@@ -126,10 +126,7 @@ async def test_single_definition_uniqueness_and_exact_style(optimized_db):
             [row.Definition(sense_id=1, theme_id=i, content=f"style{i}") for i in (1, 2)]
         )
         session.add_all(
-            [
-                row.Example(sense_id=1, theme_id=i, content=f'<t inf="base">word1</t> {i}')
-                for i in (1, 2)
-            ]
+            [row.Example(sense_id=1, theme_id=i, content=f"[word1] {i}") for i in (1, 2)]
         )
     for style in (None, 1, 2):
         with pytest.raises(IntegrityError):
@@ -199,9 +196,7 @@ async def test_read_and_sense_linking_query_budgets(optimized_db):
     db = optimized_db
     await seed(db)
     async with db.transaction() as session:
-        session.add(
-            row.SenseRelation(from_sense_id=1, to_word_id=2, rel_type="SYNONYM", gloss="meaning2")
-        )
+        session.add(row.SenseRelation(from_sense_id=1, to_word_id=2, rel_type="SYNONYM"))
     statements = []
 
     def capture(_conn, _cursor, statement, _parameters, _context, _many):
@@ -307,10 +302,10 @@ async def test_publication_is_batched_not_per_sense(optimized_db, monkeypatch, s
     for i in range(size):
         sense = payload(source_ref=f"a{i + 1}")["senses"][0]
         sense["definition"] = f"meaning{i}"
-        sense["forms"] = [{"surface": "banks", "inf": "PLURAL"}]
+        sense["forms"] = ["banks" + "|pl"]
         sense["patterns"] = ["bank {sth}"]
         sense["collocations"] = ["central bank"]
-        sense["relations"] = [{"lemma": "vault", "rel_type": "SYNONYM", "gloss": "money keeper"}]
+        sense["relations"] = {"SYNONYM": ["vault"]}
         output["senses"].append(sense)
 
     class Source:

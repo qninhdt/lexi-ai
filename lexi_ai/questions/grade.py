@@ -107,10 +107,10 @@ async def _definition(db, model, question, answer, options):
 
 async def _usage(model, question, answer, config, options):
     # Use the saved Word/meaning, not newly edited dictionary wording.
-    tagged, separator, meaning = question.content.partition("</t> — ")
+    tagged, separator, meaning = question.content.partition("] — ")
     if not separator or not meaning:
         raise InvalidResourceError("Question has no saved Word/meaning anchor")
-    lemma, spans = parse_marked_example(tagged + "</t>")
+    lemma, spans = parse_marked_example(tagged + "]")
     if len(spans) != 1:
         raise InvalidResourceError("Question has an invalid Word anchor")
     word = {"lemma": lemma}

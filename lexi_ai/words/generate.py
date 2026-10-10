@@ -1,4 +1,4 @@
-"""Inventory -> independent Sense enrichment -> one atomic relational publication."""
+"""Inventory -> parallel batches of up to eight Senses -> atomic publication."""
 
 import asyncio
 
@@ -19,18 +19,33 @@ from lexi_ai.schema import (
     Word,
     WordRelation,
 )
-from lexi_ai.text import match_key, validate_lemma
+from lexi_ai.text import match_key, parse_form, validate_lemma
 from lexi_ai.vocab import GenerationState, WordRelationType, normalize_pos
 
 from .schemas import (
+    EnrichmentBatch,
     InventoryOutput,
-    SenseEnrichment,
     SenseOutput,
     WordOutput,
     validate_evidence,
     validate_inventory,
 )
 from .storage import consumed_word, insert_contents, publish_identity, target_words
+
+
+def _headword_field(value, target):
+    if not value or value == target:
+        return {}
+    try:
+        if match_key(value) == match_key(target):
+            return {}
+    except ValueError:
+        try:
+            if match_key(value.rstrip(".")) == match_key(target):
+                return {}
+        except ValueError:
+            pass
+    return {"headword": value}
 
 
 async def generate_word(
@@ -50,9 +65,21 @@ async def generate_word(
         raise InvalidHandleError("reference entry has no generation evidence")
     if llm is None:
         raise MissingProviderError("Word generation requires a structured LLM")
-    # Prefer a citation confirmed by a headword over a display listing variants.
+    # Prefer the source's canonical slug/headword over a display-form target.
     if target == entry.display and any(s.headword == entry.slug for s in entry.senses):
         target = entry.slug
+    elif (
+        target == entry.display
+        and entry.entry_type == "word"
+        and match_key(target) == match_key(entry.slug)
+    ):
+        headwords = {
+            match_key(s.headword): s.headword
+            for s in entry.senses
+            if s.headword and match_key(s.headword) == match_key(entry.slug)
+        }
+        if len(headwords) == 1:
+            target = next(iter(headwords.values()))
     supporting = await lookup(target)
     cambridge_sources = {f"a{index}": sense for index, sense in enumerate(entry.senses, 1)}
     source_refs = {key: ("cambridge", str(sense.id)) for key, sense in cambridge_sources.items()}
@@ -62,28 +89,27 @@ async def generate_word(
     references = [
         {
             "id": key,
-            "pos": normalize_pos(sense.pos) or sense.pos,
+            "pos": normalize_pos(sense.pos) or sense.pos or "UNKNOWN",
             "definition": sense.definition,
-            "cefr_level": sense.cefr_level,
-            "examples": sense.examples,
-            **({"headword": sense.headword} if sense.headword else {}),
-            **({"phrase_title": sense.phrase_title} if sense.phrase_title else {}),
+            **_headword_field(sense.headword, target),
+            **({"phrasal": sense.phrase_title} if sense.phrase_title else {}),
         }
         for key, sense in cambridge_sources.items()
     ] + [
         {
             "id": f"b{index}",
-            "synset": sense.key,
-            "examples": sense.examples,
-            "pos": normalize_pos(sense.pos),
+            "pos": normalize_pos(sense.pos) or "UNKNOWN",
             "definition": sense.definition,
         }
         for index, sense in enumerate(supporting, 1)
     ]
+    grouped = {}
+    for reference in references:
+        grouped.setdefault(reference.pop("pos"), []).append(reference)
     instruction, data = render_prompt(
         "words/prompts/inventory.jinja",
         target=target,
-        references=references,
+        references=grouped,
     )
     inventory = await llm.complete(instruction, data, InventoryOutput)
     try:
@@ -96,26 +122,38 @@ async def generate_word(
     validate_inventory(inventory, set(source_refs), target)
     identity = inventory.model_dump(by_alias=True, exclude={"senses"})
 
-    async def enrich(seed):
+    async def enrich(batch):
         instruction, data = render_prompt(
             "words/prompts/enrich_sense.jinja",
             word={key: identity[key] for key in ("lemma", "type", "aliases")},
-            sense=seed.model_dump(exclude={"references"}),
+            senses=[
+                dict(sense_id=id, **seed.model_dump(exclude={"references"})) for id, seed in batch
+            ],
             examples_per_sense=example_count,
         )
-        details = await llm.complete(instruction, data, SenseEnrichment)
+        details = await llm.complete(instruction, data, EnrichmentBatch)
         try:
-            details = SenseEnrichment.model_validate(details)
-            output = SenseOutput.model_validate(
-                seed.model_dump() | details.model_dump(by_alias=True),
-            )
+            details = EnrichmentBatch.model_validate(details)
+            by_id = {item.sense_id: item for item in details.senses}
+            if set(by_id) != {id for id, _ in batch}:
+                raise ValueError("enrichment IDs do not match supplied Senses")
+            output = [
+                SenseOutput.model_validate(
+                    seed.model_dump() | by_id[id].model_dump(by_alias=True, exclude={"sense_id"})
+                )
+                for id, seed in batch
+            ]
         except ValueError as exc:
             raise InvalidOutputError("invalid Sense enrichment") from exc
         return output
 
-    tasks = [asyncio.create_task(enrich(seed)) for seed in inventory.senses]
+    seeds = list(enumerate(inventory.senses, 1))
+    tasks = [
+        asyncio.create_task(enrich(seeds[offset : offset + 8]))
+        for offset in range(0, len(seeds), 8)
+    ]
     try:
-        senses = await asyncio.gather(*tasks)
+        batches = await asyncio.gather(*tasks)
     finally:
         for task in tasks:
             if not task.done():
@@ -124,7 +162,7 @@ async def generate_word(
     generated = WordOutput.model_validate(
         identity
         | {
-            "senses": [sense.model_dump(by_alias=True) for sense in senses],
+            "senses": [sense.model_dump(by_alias=True) for batch in batches for sense in batch],
         }
     )
     validate_evidence(generated, entry, supporting, target=target)
@@ -148,7 +186,6 @@ async def generate_word(
                 tier=item.tier,
                 cefr_level=item.cefr_level,
                 register=item.register_,
-                usage_note=item.usage_note,
                 ipa_uk=pronunciation.ipa_uk if pronunciation else None,
                 ipa_us=pronunciation.ipa_us if pronunciation else None,
             )
@@ -160,9 +197,10 @@ async def generate_word(
             (
                 SenseForm,
                 [
-                    dict(sense_id=id, surface=f.surface, inf=f.inf)
+                    dict(sense_id=id, surface=surface, inf=inf)
                     for id, item in groups
                     for f in item.forms
+                    for surface, inf in [parse_form(f)]
                 ],
             ),
             (
@@ -193,12 +231,17 @@ async def generate_word(
                 # Cambridge notation is not a canonical lemma. Do not invent a
                 # normalization or a second generation path for ambiguous titles.
                 continue
-        word_edges = [(item.lemma, item.rel_type) for item in generated.related] + [
-            (lemma, WordRelationType.PART_OF_PHRASAL_FAMILY) for lemma in sorted(phrase_lemmas)
+        word_edges = [
+            (lemma, kind) for kind, lemmas in generated.related.items() for lemma in lemmas
+        ] + [(lemma, WordRelationType.PART_OF_PHRASAL_FAMILY) for lemma in sorted(phrase_lemmas)]
+        sense_edges = [
+            (id, kind, lemma)
+            for id, item in groups
+            for kind, lemmas in item.relations.items()
+            for lemma in lemmas
         ]
-        sense_edges = [(id, relation) for id, item in groups for relation in item.relations]
         targets = await target_words(
-            session, [lemma for lemma, _ in word_edges] + [edge.lemma for _, edge in sense_edges]
+            session, [lemma for lemma, _ in word_edges] + [lemma for _, _, lemma in sense_edges]
         )
         for table, rows in (
             (
@@ -215,12 +258,14 @@ async def generate_word(
                 SenseRelation,
                 [
                     dict(
-                        from_sense_id=id,
-                        to_word_id=targets[match_key(edge.lemma)],
-                        rel_type=edge.rel_type,
-                        gloss=edge.gloss,
+                        from_sense_id=sense_id,
+                        to_word_id=word_id,
+                        rel_type=kind,
                     )
-                    for id, edge in sense_edges
+                    for sense_id, kind, word_id in dict.fromkeys(
+                        (id, kind, targets[match_key(lemma)])
+                        for id, kind, lemma in sense_edges
+                    )
                 ],
             ),
         ):

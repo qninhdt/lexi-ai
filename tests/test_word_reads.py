@@ -45,7 +45,7 @@ async def test_detached_and_namespace_exact(tmp_path):
             session.add_all(
                 [
                     Definition(sense_id=sense.id, content="A financial institution"),
-                    Example(sense_id=sense.id, content='The <t inf="base">bank</t> closed.'),
+                    Example(sense_id=sense.id, content="The [bank] closed."),
                 ]
             )
         neutral = await get_word(db, word.id)
@@ -58,7 +58,7 @@ async def test_detached_and_namespace_exact(tmp_path):
                     Example(
                         sense_id=sense.id,
                         theme_id=theme.id,
-                        content='The <t inf="base">bank</t> took my coin.',
+                        content="The [bank] took my coin.",
                     ),
                 ]
             )

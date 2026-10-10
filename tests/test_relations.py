@@ -50,7 +50,6 @@ async def test_candidate_pos_filter_before_cap_and_explicit_resolution(tmp_path)
                         from_sense_id=from_sense.id,
                         to_word_id=target.id,
                         rel_type="SYNONYM",
-                        gloss="emit light",
                     ),
                 ]
             )
@@ -67,7 +66,7 @@ async def test_candidate_pos_filter_before_cap_and_explicit_resolution(tmp_path)
                 "rule": "The target sense must express essentially the same lexicalized concept "
                 "as the source sense.",
             },
-            "target": {"word": "shine", "gloss": "emit light"},
+            "target": {"word": "shine"},
         }
         assert set(questions["matched_sense"].criteria) == {"no_candidate", "candidate_1"}
         assert (await get_word(db, source.id)).senses[0].relations[0].resolution_state == "RESOLVED"
@@ -119,12 +118,8 @@ async def test_incomplete_evidence_errors_only_its_edge(tmp_path, missing):
             await session.flush()
             session.add_all(
                 [
-                    SenseRelation(
-                        id=1, from_sense_id=1, to_word_id=2, rel_type="SYNONYM", gloss="bad"
-                    ),
-                    SenseRelation(
-                        id=2, from_sense_id=2, to_word_id=3, rel_type="SYNONYM", gloss="good"
-                    ),
+                    SenseRelation(id=1, from_sense_id=1, to_word_id=2, rel_type="SYNONYM"),
+                    SenseRelation(id=2, from_sense_id=2, to_word_id=3, rel_type="SYNONYM"),
                 ]
             )
         model = Decision("candidate_1")
@@ -161,7 +156,6 @@ async def ready_relation(tmp_path):
                 from_sense_id=source_sense.id,
                 to_word_id=target.id,
                 rel_type="SYNONYM",
-                gloss="move quickly",
             )
             session.add_all(
                 [
@@ -259,7 +253,6 @@ async def test_no_same_pos_decides_zero_without_decision_model(tmp_path):
                         from_sense_id=verb.id,
                         to_word_id=target.id,
                         rel_type="SYNONYM",
-                        gloss="a race",
                     ),
                 ]
             )
@@ -298,7 +291,6 @@ async def test_resolved_edges_before_batch_do_not_starve_pending_edge(tmp_path):
                         to_word_id=target.id,
                         to_sense_id=target_sense.id,
                         rel_type="SYNONYM",
-                        gloss="move quickly",
                         target_hash=definition_hash("move quickly"),
                         resolve_attempted_at="2026-09-29T00:00:00Z",
                     )
@@ -307,7 +299,6 @@ async def test_resolved_edges_before_batch_do_not_starve_pending_edge(tmp_path):
                 from_sense_id=source_senses[-1].id,
                 to_word_id=target.id,
                 rel_type="SYNONYM",
-                gloss="move quickly",
             )
             session.add(pending)
             await session.flush()
@@ -328,11 +319,11 @@ async def test_parallel_resolution_isolates_invalid_verdict_and_transport_error(
 
     class IndependentDecisions:
         async def decide(self, state, questions, **kwargs):
-            started.append(state["target"]["gloss"])
+            started.append(state["source"]["definition"])
             if len(started) == 2:
                 both_started.set()
             await asyncio.wait_for(both_started.wait(), timeout=2)
-            if state["target"]["gloss"] == "bad":
+            if state["source"]["definition"] == "bad":
                 if failure == "transport":
                     raise ConnectionError("provider unavailable")
                 return SimpleNamespace(choices={"matched_sense": SimpleNamespace(choice="invalid")})
@@ -351,13 +342,13 @@ async def test_parallel_resolution_isolates_invalid_verdict_and_transport_error(
             target_sense = Sense(word_id=target.id, pos="VERB", tier="CORE")
             session.add_all([*senses, target_sense])
             await session.flush()
-            for sense in [*senses, target_sense]:
-                session.add(Definition(sense_id=sense.id, content="move quickly"))
+            for sense, definition in zip(
+                [*senses, target_sense], ["bad", "good", "move quickly"], strict=True
+            ):
+                session.add(Definition(sense_id=sense.id, content=definition))
             edges = [
-                SenseRelation(
-                    from_sense_id=sense.id, to_word_id=target.id, rel_type="SYNONYM", gloss=gloss
-                )
-                for sense, gloss in zip(senses, ["bad", "good"], strict=True)
+                SenseRelation(from_sense_id=sense.id, to_word_id=target.id, rel_type="SYNONYM")
+                for sense in senses
             ]
             session.add_all(edges)
             await session.flush()

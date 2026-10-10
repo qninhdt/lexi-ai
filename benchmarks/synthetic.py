@@ -175,10 +175,10 @@ def synthesis_context(question, word, kinds):
     elif kind == QuestionType.WORD_TO_DEFINITION:
         context["definition"] = question.correct.content
     elif kind == QuestionType.WORD_TO_USAGE:
-        tagged, separator, meaning = question.content.partition("</t> — ")
+        tagged, separator, meaning = question.content.partition("] — ")
         if not separator or not meaning:
             raise ValueError("Question has no saved Word/meaning anchor")
-        context["target"] = strip_markup(tagged + "</t>")
+        context["target"] = strip_markup(tagged + "]")
         context["definition"] = meaning
     else:
         raise ValueError("unsupported synthetic Question type")
@@ -239,10 +239,10 @@ def stage_contexts(question, word, sense):
                 ),
             },
         }
-    tagged, separator, meaning = question.content.partition("</t> — ")
+    tagged, separator, meaning = question.content.partition("] — ")
     if not separator or not meaning:
         raise ValueError("Question has no saved Word/meaning anchor")
-    anchor = {"lemma": strip_markup(tagged + "</t>")}
+    anchor = {"lemma": strip_markup(tagged + "]")}
     return {
         "grade_word_to_usage_1": {**base, "word": anchor},
         "grade_word_to_usage_2": {**base, "word": anchor, "meaning": meaning},

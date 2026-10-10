@@ -1,19 +1,10 @@
 ## Target Expression Tagging
 
-- In text intended to display or highlight the lexical target, wrap each visible target surface with `<t inf="LABEL">surface</t>`.
-- Tag only occurrences of the intended lexical target, not unrelated words or coincidental matches.
-- Preserve the actual surface form and select its corresponding inflection label:
-  - `base`: base or invariant form.
-  - `past`: simple past.
-  - `past_participle`: past participle.
-  - `present_3sg`: third-person singular present.
-  - `ing`: -ing form.
-  - `plural`: plural noun.
-  - `comparative`: comparative form.
-  - `superlative`: superlative form.
-- Tag each fixed component of a multi-word expression separately, even when separated by other words. Leave variable arguments and intervening text outside the tags.
-- Do not introduce the target solely to satisfy tagging. If the target is intentionally hidden (e.g., a cloze blank), do not tag the placeholder or reveal the missing expression.
+- Mark each target surface as `[surface]` for a base/invariant form, or `[surface|code]` for an inflected form. Tag only the intended lexical identity, not unrelated words or coincidental matches; preserve the actual surface.
+- Choose the code by grammatical function: `p` simple past; `pp` past participle; `3` third-person singular present; `ing` -ing form; `pl` plural noun; `c` comparative; `s` superlative. Base forms have no code. Square brackets are reserved for target tags.
+- Tag each fixed component of a multi-word target separately, even across intervening words; leave variable arguments outside tags. Never wrap the whole expression in one tag.
+{% if examples_per_sense is not defined %}
+- Never introduce the target just to satisfy tagging. When intentionally hidden, as in a cloze blank, leave the placeholder untagged and do not reveal the missing expression.
+{% endif %}
 
-Example for "bring up":
-
-"She <t inf="past">brought</t> the issue <t inf="base">up</t> during the meeting."
+Example for "bring up": `She [brought|p] the issue [up] during the meeting.`

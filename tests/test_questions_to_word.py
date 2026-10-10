@@ -62,7 +62,7 @@ async def setup(tmp_path):
         session.add_all(
             [
                 Definition(sense_id=sense.id, content="A place for money"),
-                Example(sense_id=sense.id, content='The <t inf="base">bank</t> opens.'),
+                Example(sense_id=sense.id, content="The [bank] opens."),
             ]
         )
     yield db, sense.id
@@ -159,11 +159,9 @@ async def test_anchored_correct_answer_is_not_in_model_schema(setup, kind):
 
 def dialogue_output(placement):
     text = (
-        'The <t inf="base">bank</t> is closed.'
-        if placement == "DIALOGUE"
-        else "Where should I deposit my savings?"
+        "The [bank] is closed." if placement == "DIALOGUE" else "Where should I deposit my savings?"
     )
-    answer = 'The <t inf="base">bank</t> can keep them safe.'
+    answer = "The [bank] can keep them safe."
     return {
         "questions": [
             {
@@ -175,7 +173,7 @@ def dialogue_output(placement):
                 "distractors": [
                     {
                         "content": (
-                            f'The <t inf="base">bank</t> reply {i}.'
+                            f"The [bank] reply {i}."
                             if placement == "OPTIONS"
                             else f"Wrong reply {i}."
                         ),
@@ -242,7 +240,7 @@ async def test_invalid_dialogue_questions_never_publish(setup, case, valid_first
             elif case == "missing_tag":
                 invalid["distractors"][0]["content"] = "The bank is closed."
             elif case == "wrong_target":
-                invalid["correct"]["content"] = 'The <t inf="base">vault</t> is closed.'
+                invalid["correct"]["content"] = "The [vault] is closed."
             elif case == "malformed_tag":
                 invalid["correct"]["content"] = 'The <t inf="base">bank is closed.'
             else:

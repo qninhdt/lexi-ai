@@ -16,6 +16,15 @@ from .usage import UsageRecorder, openai_usage
 Output = TypeVar("Output", bound=BaseModel)
 
 
+def _prompt_schema(value):
+    """Titles repeat field names; preserve descriptions and validation constraints."""
+    if isinstance(value, dict):
+        return {key: _prompt_schema(item) for key, item in value.items() if key != "title"}
+    if isinstance(value, list):
+        return [_prompt_schema(item) for item in value]
+    return value
+
+
 class StructuredLLM(Protocol):
     async def complete(
         self,
@@ -76,9 +85,14 @@ class OpenAIStructuredLLM:
             ]
             if not self.config.structured_outputs:
                 messages[0]["content"] += (
-                    "\n\nReturn only one JSON document matching this schema, "
-                    "without prose or Markdown fences:\n"
-                    + json.dumps(schema.model_json_schema(), ensure_ascii=False)
+                    "\n\nReturn only one compact JSON document matching this schema, "
+                    "without indentation or unnecessary whitespace outside string values, "
+                    "and without prose or Markdown fences:\n"
+                    + json.dumps(
+                        _prompt_schema(schema.model_json_schema()),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
                 )
             client = self._get_client()
             # SDK transport retries must not multiply the shared attempt ceiling.

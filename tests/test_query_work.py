@@ -53,7 +53,7 @@ async def shared_target(db, *, source_count=50, definition="target"):
         await session.execute(
             insert(row.SenseRelation),
             [
-                dict(id=i, from_sense_id=i, to_word_id=2, rel_type="SYNONYM", gloss="target")
+                dict(id=i, from_sense_id=i, to_word_id=2, rel_type="SYNONYM")
                 for i in range(1, source_count + 1)
             ],
         )
@@ -153,7 +153,7 @@ async def test_oversize_short_answer_never_reaches_provider(sqlite_db):
                     1,
                     None,
                     "WORD_TO_DEFINITION",
-                    '<t inf="base">word1</t>',
+                    "[word1]",
                     Option("yes", "source", "Fits"),
                     [],
                 )
@@ -180,10 +180,7 @@ async def test_sqlite_bulk_sense_ids_are_safe_across_writers_and_rollback(sqlite
             ids = await insert_identified_rows(
                 session,
                 row.Sense,
-                [
-                    dict(word_id=1, pos="NOUN", tier="CORE", usage_note=str(number))
-                    for _ in range(20)
-                ],
+                [dict(word_id=1, pos="NOUN", tier="CORE", ipa_uk=str(number)) for _ in range(20)],
             )
             return ids
 
@@ -196,10 +193,10 @@ async def test_sqlite_bulk_sense_ids_are_safe_across_writers_and_rollback(sqlite
             )
             raise RuntimeError("rollback")
     async with sqlite_db.read() as connection:
-        records = (await connection.execute(select(row.Sense.id, row.Sense.usage_note))).all()
+        records = (await connection.execute(select(row.Sense.id, row.Sense.ipa_uk))).all()
     assert len(records) == 80
     for number, group in enumerate(groups):
-        assert all(note == str(number) for identifier, note in records if identifier in group)
+        assert all(ipa == str(number) for identifier, ipa in records if identifier in group)
 
 
 async def test_keyset_lists_keep_existing_order_and_namespace(optimized_db):

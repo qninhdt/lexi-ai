@@ -381,7 +381,6 @@ async def test_reader_scope_order_namespace_and_shared_fingerprint(tmp_path, mon
                         to_word_id=2,
                         to_sense_id=502,
                         rel_type="SYNONYM",
-                        gloss="target",
                         target_hash=definition_hash("meaning502"),
                         resolve_attempted_at="2026-09-30",
                     )

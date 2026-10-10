@@ -75,7 +75,6 @@ async def test_pending_relations_uses_one_query_per_page(tmp_path, batch_size):
                         "from_sense_id": i + 1,
                         "to_word_id": i + 2,
                         "rel_type": "SYNONYM",
-                        "gloss": "target",
                     }
                     for i in range(50)
                 ],

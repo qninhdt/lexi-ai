@@ -27,13 +27,13 @@ class LLM:
 
     async def complete(self, instruction, data, schema):
         self.calls.append(schema.__name__)
-        if schema.__name__ in {"InventoryOutput", "SenseEnrichment"}:
+        if schema.__name__ in {"InventoryOutput", "EnrichmentBatch"}:
             return stage_payload(
                 {
                     "lemma": "bank",
                     "type": "WORD",
                     "aliases": [],
-                    "related": [],
+                    "related": {},
                     "senses": [
                         {
                             "definition": "A place to keep money",
@@ -41,17 +41,11 @@ class LLM:
                             "tier": "CORE",
                             "cefr_level": "A1",
                             "register": None,
-                            "examples": ['The <t inf="base">bank</t> opened.'],
+                            "examples": ["The [bank] opened."],
                             "forms": [],
                             "patterns": [],
                             "collocations": [],
-                            "relations": [
-                                {
-                                    "lemma": "vault",
-                                    "rel_type": "SYNONYM",
-                                    "gloss": "place to keep money",
-                                }
-                            ],
+                            "relations": {"SYNONYM": ["vault"]},
                             "references": ["a1"],
                         }
                     ],
@@ -66,7 +60,7 @@ class LLM:
                 senses=[
                     {
                         "definition": "A safe house for treasure",
-                        "examples": ['The <t inf="base">bank</t> holds coin.'],
+                        "examples": ["The [bank] holds coin."],
                     }
                 ]
             )
@@ -75,7 +69,7 @@ class LLM:
             kind = context["question_type"]
             content = bound_content(context)
             if kind == "WORD_TO_USAGE":
-                correct = 'The <t inf="base">bank</t> opened.'
+                correct = "The [bank] opened."
             else:
                 correct = "bank"
             return schema.model_validate(
@@ -277,7 +271,7 @@ async def test_last_invalid_themed_sense_rolls_back_entire_namespace(tmp_path):
                 senses=[
                     {
                         "definition": "safe place for coins",
-                        "examples": ['The <t inf="base">bank</t> opens.'],
+                        "examples": ["The [bank] opens."],
                     },
                     {"definition": "river's edge", "examples": []},
                 ]
@@ -297,7 +291,7 @@ async def test_last_invalid_themed_sense_rolls_back_entire_namespace(tmp_path):
                 session.add_all(
                     [
                         Definition(sense_id=sense.id, content=f"Meaning {index}"),
-                        Example(sense_id=sense.id, content='The <t inf="base">bank</t> opened.'),
+                        Example(sense_id=sense.id, content="The [bank] opened."),
                     ]
                 )
         with pytest.raises(InvalidOutputError, match="incomplete themed"):

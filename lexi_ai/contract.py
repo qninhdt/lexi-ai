@@ -26,7 +26,6 @@ class Sense(RelationalContractBase):
     tier: Mapped[str] = mapped_column(String(16), nullable=False)
     cefr_level: Mapped[str | None] = mapped_column(String(8))
     register: Mapped[str | None] = mapped_column(String(32))
-    usage_note: Mapped[str | None] = mapped_column(Text)
     ipa_uk: Mapped[str | None] = mapped_column(String(80))
     ipa_us: Mapped[str | None] = mapped_column(String(80))
 

@@ -1,6 +1,7 @@
 """Squashed baseline parity, repeatability and non-destructive bootstrap guards."""
 
 import asyncio
+import json
 
 import pytest
 from alembic import command
@@ -68,7 +69,12 @@ async def test_baseline_upgrade_drift_downgrade_and_reupgrade(tmp_path):
     url = f"sqlite+aiosqlite:///{tmp_path / 'generated.db'}"
     config = migration_config(url)
     revisions = list(ScriptDirectory.from_config(config).walk_revisions())
-    assert [revision.revision for revision in revisions] == ["20261010_ref_forms", "20261009_base"]
+    assert [revision.revision for revision in revisions] == [
+        "20261010_no_notes",
+        "20261010_compact",
+        "20261010_ref_forms",
+        "20261009_base",
+    ]
     assert revisions[-1].down_revision is None
     await run_migration(config, url, command.upgrade, "head")
     actual = await snapshot(url)
@@ -118,6 +124,55 @@ async def test_baseline_does_not_create_new_live_metadata_tables(tmp_path):
         Base.metadata.remove(extra)
 
 
+async def test_compact_content_migrates_saved_tags_and_preserves_ids(tmp_path):
+    url = f"sqlite+aiosqlite:///{tmp_path / 'content.db'}"
+    config = migration_config(url)
+    await run_migration(config, url, command.upgrade, "20261010_ref_forms")
+    engine = create_async_engine(url)
+    old = 'She <t inf="PAST">ran</t> <t inf="base">home</t>.'
+    payload = {"content": old, "correct": {"content": '<t inf="base">run</t>'}}
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("INSERT INTO words VALUES(1,'run','run','WORD','DONE')"))
+            await connection.execute(
+                text("INSERT INTO senses(id,word_id,pos,tier) VALUES(1,1,'VERB','CORE')")
+            )
+            await connection.execute(
+                text("INSERT INTO examples(id,sense_id,content) VALUES(17,1,:content)"),
+                {"content": old},
+            )
+            await connection.execute(
+                text("INSERT INTO definitions(id,sense_id,content) VALUES(18,1,'move quickly')")
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO questions(id,sense_id,question_type,payload) "
+                    "VALUES(19,1,'WORD_TO_USAGE',:payload)"
+                ),
+                {"payload": json.dumps(payload)},
+            )
+        await run_migration(config, url, command.upgrade, "head")
+        async with engine.connect() as connection:
+            assert (await connection.execute(text("SELECT id,content FROM examples"))).all() == [
+                (17, "She [ran|p] [home].")
+            ]
+            assert (await connection.execute(text("SELECT id,content FROM definitions"))).all() == [
+                (18, "move quickly")
+            ]
+            stored = await connection.scalar(text("SELECT payload FROM questions WHERE id=19"))
+            assert json.loads(stored) == {
+                "content": "She [ran|p] [home].",
+                "correct": {"content": "[run]"},
+            }
+            columns = await connection.run_sync(
+                lambda conn: {c["name"] for c in inspect(conn).get_columns("sense_relations")}
+            )
+            assert "gloss" not in columns
+        await run_migration(config, url, command.upgrade, "head")
+    finally:
+        await engine.dispose()
+
+
 async def test_online_migration_uses_config_not_environment(monkeypatch, tmp_path):
     url = f"sqlite+aiosqlite:///{tmp_path / 'explicit.db'}"
     monkeypatch.setenv("DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'wrong.db'}")
@@ -125,6 +180,44 @@ async def test_online_migration_uses_config_not_environment(monkeypatch, tmp_pat
     await asyncio.to_thread(command.upgrade, migration_config(url), "head")
     assert set(await snapshot(url)) == {"alembic_version", *Base.metadata.tables}
     assert not (tmp_path / "wrong.db").exists()
+
+
+async def test_remove_usage_notes_preserves_sense_content(tmp_path):
+    url = f"sqlite+aiosqlite:///{tmp_path / 'notes.db'}"
+    config = migration_config(url)
+    await run_migration(config, url, command.upgrade, "20261010_compact")
+    engine = create_async_engine(url)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("INSERT INTO words VALUES(1,'room','room','WORD','DONE')")
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO senses(id,word_id,pos,tier,usage_note) "
+                    "VALUES(7,1,'NOUN','CORE','Uncountable in this sense.')"
+                )
+            )
+            await connection.execute(
+                text("INSERT INTO definitions(id,sense_id,content) VALUES(9,7,'Available space')")
+            )
+        await run_migration(config, url, command.upgrade, "head")
+        assert "usage_note" not in (await snapshot(url))["senses"][0]
+        async with engine.connect() as connection:
+            assert (
+                await connection.execute(text("SELECT id,word_id,pos,tier FROM senses"))
+            ).all() == [(7, 1, "NOUN", "CORE")]
+            assert (
+                await connection.execute(text("SELECT id,sense_id,content FROM definitions"))
+            ).all() == [(9, 7, "Available space")]
+        await run_migration(config, url, command.downgrade, "20261010_compact")
+        async with engine.connect() as connection:
+            assert (await connection.execute(text("SELECT id,usage_note FROM senses"))).all() == [
+                (7, None)
+            ]
+        await run_migration(config, url, command.upgrade, "head")
+    finally:
+        await engine.dispose()
 
 
 async def test_packaged_migrations_are_idempotent_and_enforce_current_tiers(tmp_path):

@@ -1,7 +1,7 @@
 """Word generation schemas and lexical/evidence validation."""
 
 from enum import Enum
-from typing import Literal, get_args
+from typing import TypedDict, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -13,6 +13,7 @@ from lexi_ai.text import (
     answer_key,
     canonical_markup,
     match_key,
+    parse_form,
     parse_marked_example,
     strip_markup,
     validate_lemma,
@@ -20,12 +21,9 @@ from lexi_ai.text import (
 from lexi_ai.vocab import (
     CEFRLevel,
     EntryType,
-    Inflection,
     PartOfSpeech,
     Register,
-    SenseRelationType,
     Tier,
-    WordRelationType,
 )
 
 
@@ -50,34 +48,20 @@ class Strict(BaseModel):
         return value
 
 
-class FormOutput(Strict):
-    surface: str
-    inf: Inflection
+class WordRelations(TypedDict, total=False):
+    __pydantic_config__ = ConfigDict(extra="forbid")
+    WORD_FAMILY: list[str]
+    CONFUSED_WITH: list[str]
 
 
-class WordRelationOutput(Strict):
-    lemma: str
-    rel_type: Literal[WordRelationType.WORD_FAMILY, WordRelationType.CONFUSED_WITH]
-
-    @model_validator(mode="after")
-    def check(self):
-        validate_lemma(self.lemma)
-        return self
-
-
-class SenseRelationOutput(Strict):
-    lemma: str = Field(description="Stable citation lemma of the related lexical item.")
-    rel_type: SenseRelationType
-    gloss: str = Field(
-        description="Short, discriminative meaning of the target lemma, not the source Sense."
-    )
-
-    @model_validator(mode="after")
-    def check(self):
-        validate_lemma(self.lemma)
-        if parse_marked_example(self.gloss)[1]:
-            raise ValueError("relation glosses must be plain text")
-        return self
+class SenseRelations(TypedDict, total=False):
+    __pydantic_config__ = ConfigDict(extra="forbid")
+    SYNONYM: list[str]
+    ANTONYM: list[str]
+    HYPERNYM: list[str]
+    HYPONYM: list[str]
+    MERONYM: list[str]
+    HOLONYM: list[str]
 
 
 class InventorySense(Strict):
@@ -97,15 +81,16 @@ class InventorySense(Strict):
 class SenseEnrichment(Strict):
     tier: Tier
     examples: list[str] = Field(
-        min_length=1, description="Natural use; mark target with <t inf=...>...</t>"
+        min_length=1, description="Natural use; mark targets as [surface] or [surface|code]"
     )
-    forms: list[FormOutput]
+    forms: list[str] = Field(description="Surface or surface|inflection-code; base has no code")
     patterns: list[str]
     collocations: list[str]
-    relations: list[SenseRelationOutput]
+    relations: SenseRelations = Field(
+        description="Related citation lemmas grouped by relation type; omit empty groups"
+    )
     cefr_level: CEFRLevel
     register_: Register | None = Field(alias="register")
-    usage_note: str | None = None
 
     @field_validator("examples", mode="before")
     @classmethod
@@ -130,11 +115,32 @@ class SenseEnrichment(Strict):
 
     @model_validator(mode="after")
     def check(self):
+        for form in self.forms:
+            parse_form(form)
+        for lemmas in self.relations.values():
+            for lemma in lemmas:
+                if parse_marked_example(lemma)[1]:
+                    raise ValueError("relation lemmas must be plain text")
+                validate_lemma(lemma)
         for pattern in self.patterns:
             validate_pattern(pattern)
-        for text in [*self.collocations, self.usage_note or ""]:
+        for text in self.collocations:
             if parse_marked_example(text)[1]:
-                raise ValueError("collocations and usage notes must be plain text")
+                raise ValueError("collocations must be plain text")
+        return self
+
+
+class EnrichmentItem(SenseEnrichment):
+    sense_id: int = Field(ge=1, description="The supplied local Sense ID")
+
+
+class EnrichmentBatch(Strict):
+    senses: list[EnrichmentItem] = Field(min_length=1, max_length=8)
+
+    @model_validator(mode="after")
+    def unique_ids(self):
+        if len({sense.sense_id for sense in self.senses}) != len(self.senses):
+            raise ValueError("duplicate enrichment Sense ID")
         return self
 
 
@@ -146,7 +152,9 @@ class InventoryOutput(Strict):
     lemma: str = Field(description="One stable citation lemma for the selected lexical item")
     type: EntryType
     aliases: list[str]
-    related: list[WordRelationOutput]
+    related: WordRelations = Field(
+        description="Related citation lemmas grouped by relation type; omit empty groups"
+    )
     senses: list[InventorySense] = Field(min_length=1)
 
     @field_validator("lemma")
@@ -158,6 +166,11 @@ class InventoryOutput(Strict):
     def check(self):
         for alias in self.aliases:
             validate_lemma(alias)
+        for lemmas in self.related.values():
+            for lemma in lemmas:
+                if parse_marked_example(lemma)[1]:
+                    raise ValueError("relation lemmas must be plain text")
+                validate_lemma(lemma)
         keys = [(sense.pos, answer_key(sense.definition)) for sense in self.senses]
         if len(set(keys)) != len(keys):
             raise ValueError("exactly duplicate inventory Sense")

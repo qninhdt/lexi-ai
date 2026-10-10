@@ -49,12 +49,23 @@ IELTS/TOEIC. Meanings must have clear learning value for everyday, workplace or
 general academic English; infrequent uses with limited practical value are omitted.
 Dictionary presence or possible use outside a specialist field alone is insufficient.
 It generates the Word identity and lexical-family relations, and fixes each
-Sense's definition, POS and supporting references. Sense enrichment runs in
-parallel using only Word identity and the fixed definition/POS, without reference
+Sense's definition, POS and supporting references. Inventory input groups both
+dictionaries by POS in compact JSON. Source Senses contain an ID and definition,
+omit source examples and CEFR, retain phrase titles as `phrasal`, and include headwords only when
+they differ from the target. Sense enrichment groups consecutive
+Senses of the same Word into batches of at most eight; batches run concurrently
+using only Word identity and the fixed definition/POS, without reference
 payloads or a repeated target. References and source pronunciation are preserved
-locally for publication. The default request is five examples per Sense; validation
+locally for publication. The default request is three examples per Sense; validation
 keeps usable examples and rejects empty output. Target tags belong only in examples;
-patterns, collocations, usage notes and relation glosses are plain text. Patterns use
+patterns, collocations and relation lemmas are plain text.
+Target markup is `[surface]` for base forms, otherwise `[surface|code]`: `p`, `pp`,
+`3`, `ing`, `pl`, `c`, `s` for past, participle, present third-person singular,
+-ing, plural, comparative and superlative. Generation uses compact form strings
+and relation-type maps; public Form objects remain unchanged. The migration to
+`20261010_compact` converts saved target markup and removes unused relation glosses.
+`20261010_no_notes` removes usage notes from saved Senses; generation and the public
+Sense contract no longer include this field. Forms remain scoped to each Sense. Patterns use
 the supported slots in `lexi_ai/vocab.py`, including `{done}` (past-participle phrase),
 `{adj}` (adjective phrase) and `{adv}` (adverb phrase). Slot matching is bounded text
 matching, not grammatical analysis. Raw provider data is private.
@@ -273,7 +284,8 @@ calls with asyncio; SQLite serializes writes while provider requests run concurr
 Pass configuration explicitly; the library does not load `.env` files.
 `LLMConfig` supports provider URL/model, timeout, output-token limit, temperature,
 reasoning effort, and bounded retries. Set `structured_outputs=False` for prompted
-JSON output with local repair and schema validation.
+compact JSON output with local repair and schema validation. The adapter appends
+the formatting instruction with the schema; whitespace within string values is preserved.
 
 Grading and Sense Linking use the LLM by default. To use a native decision model,
 pass a `DecisionConfig` with credentials, URL, model, and confidence threshold.

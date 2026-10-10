@@ -173,16 +173,16 @@ class DeterministicQuestions:
         if kind is QuestionType.DEFINITION_TO_WORD:
             content = "a financial institution"
         elif kind is QuestionType.WORD_TO_DEFINITION:
-            content = '<t inf="base">bank</t>'
+            content = "[bank]"
         elif kind is QuestionType.WORD_TO_USAGE:
-            content = '<t inf="base">bank</t> — a financial institution'
+            content = "[bank] — a financial institution"
         elif kind is QuestionType.DIALOGUE_COMPLETION:
             content = [
-                {"speaker": "Alex", "text": 'Are you visiting the <t inf="base">bank</t>?'},
+                {"speaker": "Alex", "text": "Are you visiting the [bank]?"},
                 {"speaker": "Jamie", "text": None},
             ]
         elif kind is QuestionType.MEANING_IN_CONTEXT:
-            content = 'I keep my savings in the <t inf="base">bank</t>.'
+            content = "I keep my savings in the [bank]."
         elif kind is QuestionType.CLOZE_TO_WORD:
             content = "I keep my savings in the _."
         else:

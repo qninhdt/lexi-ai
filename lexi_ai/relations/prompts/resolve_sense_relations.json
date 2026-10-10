@@ -1,6 +1,9 @@
 {
   "state": {
-    "source": {"word": "${source_word}", "definition": "${source_definition}"},
+    "source": {
+      "word": "${source_word}",
+      "definition": "${source_definition}"
+    },
     "relation": {
       "type": "${relation_type}",
       "rule": {
@@ -14,17 +17,30 @@
         }
       }
     },
-    "target": {"word": "${target_word}", "gloss": "${target_gloss}"}
+    "target": {
+      "word": "${target_word}"
+    }
   },
   "questions": {
     "matched_sense": {
       "type": "choice",
-      "instructions": "Which candidate sense of `target.word` is the intended endpoint of this semantic relation? A candidate must both be compatible with `target.gloss` and satisfy `relation.rule` with the source sense. Treat `target.gloss` as evidence of the intended target meaning, not as authoritative ground truth. Prefer semantic compatibility over wording overlap. Choose `no_candidate` if no candidate satisfies both requirements.",
+      "instructions": "Which candidate sense of target.word satisfies relation.rule with the source sense? Compare lexical meanings, not wording overlap or general association. Choose no_candidate if none forms the required relation. If several candidates qualify, choose the most directly equivalent endpoint.",
       "criteria": {
-        "$reduce": {"$eval": "candidates"},
-        "initial": {"no_candidate": "No candidate sense both represents the intended target meaning and forms the required semantic relation with the source sense."},
+        "$reduce": {
+          "$eval": "candidates"
+        },
+        "initial": {
+          "no_candidate": "No candidate sense forms the required semantic relation with the source sense."
+        },
         "each(acc, sense)": {
-          "$merge": [{"$eval": "acc"}, {"candidate_${sense.index}": "${target_word} - ${sense.pos} - ${sense.definition}"}]
+          "$merge": [
+            {
+              "$eval": "acc"
+            },
+            {
+              "candidate_${sense.index}": "${target_word} - ${sense.pos} - ${sense.definition}"
+            }
+          ]
         }
       }
     }

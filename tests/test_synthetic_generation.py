@@ -144,7 +144,7 @@ async def test_neutral_source_stage_never_generates_themes_questions_or_answers(
     settings = GenerationConfig.model_validate(settings)
     output = tmp_path / "neutral"
     await run_generation(library, settings, output=output, stage="sources", progress=False)
-    assert llm.calls == {"InventoryOutput": 1, "SenseEnrichment": 1}
+    assert llm.calls == {"InventoryOutput": 1, "EnrichmentBatch": 1}
     assert not llm.grading_calls
     saved = read_records(output / "sources.jsonl")
     assert set(saved) == {"word:0:neutral"}
@@ -169,7 +169,7 @@ async def test_neutral_source_stage_never_generates_themes_questions_or_answers(
         resume=True,
         progress=False,
     )
-    assert llm.calls == {"InventoryOutput": 1, "SenseEnrichment": 1}
+    assert llm.calls == {"InventoryOutput": 1, "EnrichmentBatch": 1}
 
 
 def test_blueprint_prose_is_rendered_from_jinja_not_python():
@@ -212,12 +212,12 @@ class GeneratorLLM:
                     self.question_barrier.set()
                 await asyncio.wait_for(self.question_barrier.wait(), timeout=5)
             await asyncio.sleep(0.002)
-            if schema.__name__ in {"InventoryOutput", "SenseEnrichment"}:
-                tag = "sense_request" if schema.__name__ == "SenseEnrichment" else "word_request"
+            if schema.__name__ in {"InventoryOutput", "EnrichmentBatch"}:
+                tag = "sense_request" if schema.__name__ == "EnrichmentBatch" else "word_request"
                 request = prompt_context(data, tag)
                 output = payload()
                 output["senses"][0]["examples"] = [
-                    f'The <t inf="base">bank</t> opened at {hour}.'
+                    f"The [bank] opened at {hour}."
                     for hour in range(request.get("examples_per_sense", 1))
                 ]
                 value = stage_payload(output, data, schema)
@@ -229,7 +229,7 @@ class GeneratorLLM:
                     senses=[
                         {
                             "definition": "A place for money in this world",
-                            "examples": ['The <t inf="base">bank</t> holds coin.'] * count,
+                            "examples": ["The [bank] holds coin."] * count,
                         }
                     ]
                 )
@@ -354,7 +354,7 @@ async def test_two_stages_resume_three_answers_and_benchmark_export(tmp_path, le
     )
     assert sources == {"planned_questions": 10, "planned_answers": 30}
     assert not llm.calls["AnswerBatch"] and not llm.calls["QuestionBatch"]
-    assert llm.calls["InventoryOutput"] == llm.calls["SenseEnrichment"] == 1
+    assert llm.calls["InventoryOutput"] == llm.calls["EnrichmentBatch"] == 1
     assert llm.calls["ThemeParts"] == 3
     assert llm.calls["ThemedWord"] == 3
     assert llm.peak >= 2
@@ -443,7 +443,7 @@ def test_usage_anchor_is_saved_question_not_current_definition():
         1,
         None,
         "WORD_TO_USAGE",
-        '<t inf="base">bank</t> — Saved meaning',
+        "[bank] — Saved meaning",
         Option("correct", "The bank opens.", "Fits"),
         [],
     )
@@ -510,7 +510,7 @@ def test_native_schema_has_only_string_array_no_generated_labels_or_metadata():
 async def test_text_transport_parses_json_array_without_object_wrapper():
     async def create(**kwargs):
         assert "response_format" not in kwargs
-        assert '"type": "array"' in kwargs["messages"][0]["content"]
+        assert '"type":"array"' in kwargs["messages"][0]["content"]
         return SimpleNamespace(
             model="fixture",
             usage=None,
@@ -554,13 +554,13 @@ async def test_text_transport_parses_json_array_without_object_wrapper():
         ),
         (
             "WORD_TO_DEFINITION",
-            '<t inf="base">bank</t>',
+            "[bank]",
             "A money keeper",
             {"definition": "A money keeper"},
         ),
         (
             "WORD_TO_USAGE",
-            '<t inf="base">bank</t> — Saved meaning',
+            "[bank] — Saved meaning",
             "The bank opens.",
             {"definition": "Saved meaning"},
         ),
@@ -670,7 +670,7 @@ async def test_definition_grading_selects_another_sense_from_full_inventory():
         1,
         None,
         "WORD_TO_DEFINITION",
-        '<t inf="base">bank</t>',
+        "[bank]",
         Option("correct", "A financial institution", "Not sent"),
         [],
     )
@@ -711,7 +711,7 @@ async def test_unknown_grading_sense_rejected_before_export():
         1,
         None,
         "WORD_TO_DEFINITION",
-        '<t inf="base">bank</t>',
+        "[bank]",
         Option("correct", "A financial institution", "Not sent"),
         [],
     )

@@ -26,9 +26,9 @@ def _bound_content(question_type: QuestionType, lemma: str, anchor: str) -> str 
     if question_type is QuestionType.DEFINITION_TO_WORD:
         return anchor
     if question_type is QuestionType.WORD_TO_DEFINITION:
-        return f'<t inf="base">{lemma}</t>'
+        return f"[{lemma}]"
     if question_type is QuestionType.WORD_TO_USAGE:
-        return f'<t inf="base">{lemma}</t> — {anchor}'
+        return f"[{lemma}] — {anchor}"
     return None
 
 
@@ -83,7 +83,6 @@ async def generate_questions(
         "collocations": sense.collocations,
         "register": sense.register,
         "cefr_level": sense.cefr_level,
-        "usage_note": sense.usage_note,
         "theme": ({"voice": theme["voice"], "diction": theme["diction"]} if theme else None),
         "question_type": question_type,
         "count": count,

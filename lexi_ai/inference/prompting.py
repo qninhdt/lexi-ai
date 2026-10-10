@@ -17,6 +17,7 @@ _ENV = Environment(
     autoescape=False,
     keep_trailing_newline=True,
 )
+_ENV.policies["json.dumps_kwargs"] = {"sort_keys": True, "separators": (",", ":")}
 _ROLE = re.compile(r"\{#\s*(system|user)\s*#\}")
 
 

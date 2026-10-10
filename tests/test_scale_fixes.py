@@ -43,7 +43,6 @@ async def seed_links(db):
                     to_word_id=target,
                     to_sense_id=target,
                     rel_type="SYNONYM",
-                    gloss=f"meaning{target}",
                     target_hash=definition_hash(f"meaning{target}"),
                     resolve_attempted_at="2026-09-30T00:00:00Z",
                 )
@@ -304,7 +303,6 @@ async def test_pending_lookup_skips_100000_fresh_resolutions(tmp_path):
                             "from_sense_id": i,
                             "to_word_id": 2,
                             "rel_type": "SYNONYM",
-                            "gloss": "target",
                             "to_sense_id": 200001 if i <= 100000 else None,
                             "target_hash": fingerprint if i <= 100000 else None,
                             "resolve_attempted_at": "2026-09-30T00:00:00Z" if i <= 100000 else None,

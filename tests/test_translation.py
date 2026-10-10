@@ -78,12 +78,12 @@ async def test_invalid_translation_is_not_cached_and_languages_are_distinct(tmp_
 async def test_target_markup_is_unwrapped_before_translation_and_cache_lookup(tmp_path):
     db = Database(f"sqlite+aiosqlite:///{tmp_path / 'dict.db'}")
     plain = "  She brought the issue up.\n"
-    marked = '  She <t inf="past">brought</t> the issue <t inf="base">up</t>.\n'
+    marked = "  She [brought|p] the issue [up].\n"
 
     class CaptureLLM(LLM):
         async def complete(self, instruction, data, schema):
             assert f"<text>{plain}</text>" in data
-            assert "<t inf=" not in data
+            assert "[bank]" not in data
             return await super().complete(instruction, data, schema)
 
     llm = CaptureLLM()
@@ -102,12 +102,12 @@ async def test_target_markup_is_unwrapped_before_translation_and_cache_lookup(tm
 @pytest.mark.parametrize(
     "content",
     [
-        '<t inf="base">bank',
-        '<t inf="unknown">bank</t>',
-        '<t inf="base"><t inf="base">bank</t></t>',
-        '<t inf="base"> </t>',
-        "<t>bank</t>",
-        "bank</t>",
+        "[bank",
+        "[bank|unknown]",
+        "[[bank]]",
+        "[ ]",
+        "[bank|]",
+        "bank]",
         "",
         None,
     ],

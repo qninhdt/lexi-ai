@@ -120,12 +120,12 @@ async def test_script_parallel_words_and_seven_banks_without_batch_barrier(
     inventories, kinds = [], set()
 
     async def concurrent(instruction, data, schema):
-        if schema.__name__ in {"InventoryOutput", "SenseEnrichment"}:
-            tag = "sense_request" if schema.__name__ == "SenseEnrichment" else "word_request"
+        if schema.__name__ in {"InventoryOutput", "EnrichmentBatch"}:
+            tag = "sense_request" if schema.__name__ == "EnrichmentBatch" else "word_request"
             context = prompt_context(data, tag)
             target = (
                 context["word"]["lemma"]
-                if schema.__name__ == "SenseEnrichment"
+                if schema.__name__ == "EnrichmentBatch"
                 else context["target"]
             )
             if schema.__name__ == "InventoryOutput":
@@ -133,13 +133,13 @@ async def test_script_parallel_words_and_seven_banks_without_batch_barrier(
                 if len(inventories) == 2:
                     both_words.set()
                 await asyncio.wait_for(both_words.wait(), 5)
-            elif schema.__name__ == "SenseEnrichment" and target == "harbor":
+            elif schema.__name__ == "EnrichmentBatch" and target == "harbor":
                 # Bank's questions must start before the other Word finishes.
                 await asyncio.wait_for(questions_started.wait(), 5)
             output = payload(target)
-            output["senses"][0]["examples"] = [f'The <t inf="base">{target}</t> opened.']
+            output["senses"][0]["examples"] = [f"The [{target}] opened."]
             if target == "bank":
-                output["senses"][0]["forms"] = [{"surface": "banks", "inf": "PLURAL"}]
+                output["senses"][0]["forms"] = ["banks" + "|pl"]
             return stage_payload(output, data, schema)
         context = prompt_context(data)
         if context["word"] == "bank":
@@ -231,14 +231,14 @@ async def test_script_caps_concurrent_words_at_thirty_two(
     monkeypatch.setattr(cli, "create_lexicon", instrument)
 
     async def complete(instruction, data, schema):
-        assert schema.__name__ in {"InventoryOutput", "SenseEnrichment"}
+        assert schema.__name__ in {"InventoryOutput", "EnrichmentBatch"}
         tag = "word_request" if schema.__name__ == "InventoryOutput" else "sense_request"
         context = prompt_context(data, tag)
         target = (
             context["target"] if schema.__name__ == "InventoryOutput" else context["word"]["lemma"]
         )
         output = payload(target)
-        output["senses"][0]["examples"] = [f'The <t inf="base">{target}</t> arrived.']
+        output["senses"][0]["examples"] = [f"The [{target}] arrived."]
         return stage_payload(output, data, schema)
 
     provider.complete = complete

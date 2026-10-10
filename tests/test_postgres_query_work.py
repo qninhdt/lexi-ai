@@ -195,8 +195,8 @@ async def test_pending_page_skips_deferred_edges_and_reuses_target_candidates(pg
         )
         await session.execute(
             text("""
-            INSERT INTO sense_relations(id,from_sense_id,to_word_id,rel_type,gloss)
-            SELECT n,10000+n,3,'SYNONYM','deferred' FROM generate_series(1,100000)n
+            INSERT INTO sense_relations(id,from_sense_id,to_word_id,rel_type)
+            SELECT n,10000+n,3,'SYNONYM' FROM generate_series(1,100000)n
         """)
         )
         await session.execute(text("ANALYZE"))

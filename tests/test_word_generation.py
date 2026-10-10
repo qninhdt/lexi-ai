@@ -12,6 +12,7 @@ from lexi_ai.references.wordnet import Synset
 from lexi_ai.schema import Base, Definition, Sense, SenseReference, Word, WordRelation, WordSource
 from lexi_ai.words.generate import generate_word
 from lexi_ai.words.schemas import (
+    EnrichmentBatch,
     InventoryOutput,
     InventorySense,
     SenseEnrichment,
@@ -26,7 +27,7 @@ def payload(lemma="bank", source_ref="a1"):
         "lemma": lemma,
         "type": "WORD",
         "aliases": [],
-        "related": [],
+        "related": {},
         "senses": [
             {
                 "definition": "A place for money",
@@ -34,11 +35,11 @@ def payload(lemma="bank", source_ref="a1"):
                 "tier": "CORE",
                 "cefr_level": "A1",
                 "register": None,
-                "examples": ['I went to the <t inf="base">bank</t>.'],
+                "examples": ["I went to the [bank]."],
                 "forms": [],
                 "patterns": [],
                 "collocations": [],
-                "relations": [],
+                "relations": {},
                 "references": [source_ref],
             }
         ],
@@ -56,20 +57,23 @@ def stage_payload(output, data, schema):
                 ],
             }
         )
-    assert schema is SenseEnrichment
+    assert schema is EnrichmentBatch
     context = json.loads(re.search(r"<sense_request>\s*(.*?)\s*</sense_request>", data).group(1))
-    selected = next(
-        s
-        for s in output["senses"]
-        if {key: s[key] for key in ("definition", "pos")} == context["sense"]
-    )
-    details = {k: v for k, v in selected.items() if k not in {"definition", "pos", "references"}}
-    if len(details["examples"]) == 1:
-        first = details["examples"][0]
-        details["examples"] = [first] + [
-            f"Example {i}: {first}" for i in range(1, context["examples_per_sense"])
-        ]
-    return schema.model_validate(details)
+    items = []
+    for seed in context["senses"]:
+        selected = next(
+            s for s in output["senses"] if all(s[key] == seed[key] for key in ("definition", "pos"))
+        )
+        details = {
+            k: v for k, v in selected.items() if k not in {"definition", "pos", "references"}
+        }
+        if len(details["examples"]) == 1:
+            first = details["examples"][0]
+            details["examples"] = [first] + [
+                f"Example {i}: {first}" for i in range(1, context["examples_per_sense"])
+            ]
+        items.append(dict(sense_id=seed["sense_id"], **details))
+    return schema.model_validate({"senses": items})
 
 
 def test_schema_rejects_extras_and_bad_citations():
@@ -138,7 +142,14 @@ def test_generation_schemas_split_inventory_and_enrichment_with_strict_objects()
     assert schema["properties"]["senses"]["minItems"] == 1
     enrichment = to_strict_json_schema(SenseEnrichment)
     assert enrichment["additionalProperties"] is False
-    assert "enum" in enrichment["$defs"]["SenseRelationType"]
+    assert set(enrichment["$defs"]["SenseRelations"]["properties"]) == {
+        "SYNONYM",
+        "ANTONYM",
+        "HYPERNYM",
+        "HYPONYM",
+        "MERONYM",
+        "HOLONYM",
+    }
     sense_fields = enrichment["properties"]
     assert not {"definition", "pos", "lemma", "senses"} & sense_fields.keys()
     assert not {"sources", "references"} & sense_fields.keys()
@@ -165,7 +176,7 @@ class LLM:
     async def complete(self, instruction, evidence, schema):
         self.calls += 1
         if schema is InventoryOutput:
-            assert '"id": "a1"' in evidence
+            assert '"id":"a1"' in evidence
         else:
             assert "references" not in evidence
         return stage_payload(self.data, evidence, schema)
@@ -330,54 +341,39 @@ async def test_evidence_preserves_lexical_identity_and_local_provenance(db, monk
 
     class InspectLLM:
         async def complete(self, instruction, data, schema):
-            tag = "sense_request" if schema is SenseEnrichment else "word_request"
+            tag = "sense_request" if schema is EnrichmentBatch else "word_request"
             request = json.loads(re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", data).group(1))
             common = {
                 "target": "bank",
-                "references": [
-                    {
-                        "id": "a1",
-                        "pos": "NOUN",
-                        "definition": "Money",
-                        "cefr_level": "A1",
-                        "examples": ["SOURCE_EXAMPLE"],
-                        "headword": "SOURCE_HEADWORD",
-                        "phrase_title": "SOURCE_PHRASE",
-                    },
-                    {
-                        "id": "a2",
-                        "pos": "VERB",
-                        "definition": "Tilt an aircraft",
-                        "cefr_level": "C1",
-                        "examples": [],
-                    },
-                    {
-                        "id": "b1",
-                        "synset": "source.long.raw.key.n.01",
-                        "examples": ["WORDNET_EXAMPLE"],
-                        "pos": "NOUN",
-                        "definition": "Money storage",
-                    },
-                    {
-                        "id": "b2",
-                        "synset": "source.other.long.key.v.02",
-                        "examples": [],
-                        "pos": "VERB",
-                        "definition": "Tilt",
-                    },
-                ],
+                "references": {
+                    "NOUN": [
+                        {
+                            "id": "a1",
+                            "definition": "Money",
+                            "headword": "SOURCE_HEADWORD",
+                            "phrasal": "SOURCE_PHRASE",
+                        },
+                        {"id": "b1", "definition": "Money storage"},
+                    ],
+                    "VERB": [
+                        {"id": "a2", "definition": "Tilt an aircraft"},
+                        {"id": "b2", "definition": "Tilt"},
+                    ],
+                },
             }
             if schema is InventoryOutput:
                 assert request == common
             else:
                 assert request == {
                     "word": {k: output[k] for k in ("lemma", "type", "aliases")},
-                    "sense": {"definition": "A place for money", "pos": "NOUN"},
+                    "senses": [{"sense_id": 1, "definition": "A place for money", "pos": "NOUN"}],
                     "examples_per_sense": 1,
                 }
             for noise in (
                 "SOURCE_SLUG",
                 "SOURCE_IPA",
+                "SOURCE_EXAMPLE",
+                "WORDNET_EXAMPLE",
                 "SOURCE_ALTERNATIVE",
                 "987654321",
                 "876543210",
@@ -427,7 +423,7 @@ def test_duplicate_and_empty_citations_rejected():
 async def test_generated_type_independent_of_source_and_alias_identity(db):
     entry = SourceEntry(1, "colour", "colour", "phrase", [SourceSense(101, "noun", "Hue")])
     output = payload(lemma="color") | {"aliases": ["colour"], "type": "WORD"}
-    output["senses"][0]["examples"] = ['It has a bright <t inf="base">color</t>.']
+    output["senses"][0]["examples"] = ["It has a bright [color]."]
     word_id = await generate_word(
         db, Source(entry), LLM(output), encode_reference_id(1), 1, target="colour"
     )
@@ -483,7 +479,7 @@ async def test_generation_passes_explicit_target_to_evidence_validation(db):
         [SourceSense(101, "verb", "Exhaust")],
     )
     output = payload(lemma="run out of") | {"type": "PHRASAL_VERB"}
-    output["senses"][0]["examples"] = ['We <t inf="past">ran out of</t> milk.']
+    output["senses"][0]["examples"] = ["We [ran out of|p] milk."]
     word_id = await generate_word(
         db,
         Source(entry),
@@ -495,8 +491,7 @@ async def test_generation_passes_explicit_target_to_evidence_validation(db):
     assert (await get_word(db, word_id)).lemma == "run out of"
 
 
-async def test_usage_note_and_new_metadata_round_trip(db):
-    note = 'With a pronoun object, use "put it off", not "put off it".'
+async def test_sense_metadata_round_trip(db):
     entry = SourceEntry(
         1,
         "put-off",
@@ -512,20 +507,17 @@ async def test_usage_note_and_new_metadata_round_trip(db):
         tier="LESS_COMMON",
         cefr_level="B1",
         register="INFORMAL",
-        usage_note=note,
-        examples=['We <t inf="base">put</t> it <t inf="base">off</t>.'],
+        examples=["We [put] it [off]."],
     )
     word_id = await generate_word(
         db, Source(entry), LLM(output), encode_reference_id(1), 1, target="put off"
     )
     word = await get_word(db, word_id)
     assert (
-        word.senses[0].usage_note,
         word.senses[0].tier,
         word.senses[0].cefr_level,
         word.senses[0].register,
     ) == (
-        note,
         "LESS_COMMON",
         "B1",
         "INFORMAL",
@@ -599,7 +591,7 @@ def test_text_and_native_schemas_share_required_metadata_contract():
 
 async def test_enriches_fixed_senses_concurrently_in_inventory_order(db):
     output = payload()
-    output["senses"] = [dict(output["senses"][0], definition=f"Meaning {i}") for i in range(6)]
+    output["senses"] = [dict(output["senses"][0], definition=f"Meaning {i}") for i in range(17)]
 
     class ParallelLLM(LLM):
         active = peak = 0
@@ -610,16 +602,18 @@ async def test_enriches_fixed_senses_concurrently_in_inventory_order(db):
             if schema is InventoryOutput:
                 return await super().complete(instruction, data, schema)
             context = json.loads(re.search(r"<sense_request>\s*(.*?)\s*</sense_request>", data)[1])
-            assert set(context) == {"word", "sense", "examples_per_sense"}
+            assert set(context) == {"word", "senses", "examples_per_sense"}
             assert "senses" not in context["word"]
-            assert set(context["sense"]) == {"definition", "pos"}
+            assert all(set(seed) == {"sense_id", "definition", "pos"} for seed in context["senses"])
+            assert 1 <= len(context["senses"]) <= 8
             self.active += 1
             self.peak = max(self.peak, self.active)
             try:
-                index = int(context["sense"]["definition"].split()[-1])
-                await asyncio.sleep((6 - index) * 0.002)
+                index = int(context["senses"][0]["definition"].split()[-1])
+                await asyncio.sleep((17 - index) * 0.002)
                 details = await super().complete(instruction, data, schema)
-                details.examples = [f'Meaning {index} uses <t inf="base">bank</t>.']
+                for item in details.senses:
+                    item.examples = [f"Meaning {item.sense_id - 1} uses [bank]."]
                 return details
             finally:
                 self.active -= 1
@@ -628,11 +622,11 @@ async def test_enriches_fixed_senses_concurrently_in_inventory_order(db):
     entry = SourceEntry(1, "bank", "bank", "word", [SourceSense(101, "noun", "Money")])
     word_id = await generate_word(db, Source(entry), llm, encode_reference_id(1), 1, target="bank")
     word = await get_word(db, word_id)
-    assert llm.requests == ["InventoryOutput"] + ["SenseEnrichment"] * 6
-    assert llm.peak == 6 and llm.active == 0
-    assert [s.definition.content for s in word.senses] == [f"Meaning {i}" for i in range(6)]
+    assert llm.requests == ["InventoryOutput"] + ["EnrichmentBatch"] * 3
+    assert llm.peak == 3 and llm.active == 0
+    assert [s.definition.content for s in word.senses] == [f"Meaning {i}" for i in range(17)]
     assert [s.examples[0].content for s in word.senses] == [
-        f'Meaning {i} uses <t inf="base">bank</t>.' for i in range(6)
+        f"Meaning {i} uses [bank]." for i in range(17)
     ]
 
 
@@ -669,7 +663,7 @@ async def test_enrichment_cannot_rewrite_fixed_definition_or_pos(db, field):
     class RewritingLLM(LLM):
         async def complete(self, instruction, data, schema):
             output = await super().complete(instruction, data, schema)
-            if schema is SenseEnrichment:
+            if schema is EnrichmentBatch:
                 return output.model_dump(by_alias=True) | {field: "changed"}
             return output
 
@@ -687,10 +681,50 @@ async def test_enrichment_cannot_rewrite_fixed_definition_or_pos(db, field):
         assert (await connection.execute(select(Word))).all() == []
 
 
+@pytest.mark.parametrize("defect", ["reordered", "missing", "duplicate", "unknown"])
+async def test_enrichment_matches_supplied_ids_before_publication(db, defect):
+    output = payload()
+    output["senses"] = [output["senses"][0] | {"definition": f"Meaning {i}"} for i in range(3)]
+
+    class IdentifiedLLM(LLM):
+        async def complete(self, instruction, data, schema):
+            result = await super().complete(instruction, data, schema)
+            if schema is InventoryOutput:
+                return result
+            for sense in result.senses:
+                sense.examples = [f"Meaning {sense.sense_id} uses [bank]."]
+            data = result.model_dump(by_alias=True)
+            if defect == "reordered":
+                data["senses"].reverse()
+            elif defect == "missing":
+                data["senses"].pop()
+            elif defect == "duplicate":
+                data["senses"][1]["sense_id"] = 1
+            else:
+                data["senses"][1]["sense_id"] = 99
+            return data
+
+    entry = SourceEntry(1, "bank", "bank", "word", [SourceSense(101, "noun", "Money")])
+    request = generate_word(
+        db, Source(entry), IdentifiedLLM(output), encode_reference_id(1), 1, target="bank"
+    )
+    if defect == "reordered":
+        word = await get_word(db, await request)
+        assert [s.definition.content for s in word.senses] == [f"Meaning {i}" for i in range(3)]
+        assert [s.examples[0].content for s in word.senses] == [
+            f"Meaning {i} uses [bank]." for i in range(1, 4)
+        ]
+    else:
+        with pytest.raises(InvalidOutputError, match="invalid Sense enrichment"):
+            await request
+        async with db.read() as connection:
+            assert (await connection.execute(select(Word))).all() == []
+
+
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_failed_or_cancelled_enrichment_drains_children_and_publishes_nothing(db, cancel):
     output = payload()
-    output["senses"] = [dict(output["senses"][0], definition=f"Meaning {i}") for i in range(3)]
+    output["senses"] = [dict(output["senses"][0], definition=f"Meaning {i}") for i in range(17)]
     started = asyncio.Event()
 
     class BlockingLLM(LLM):
@@ -711,7 +745,7 @@ async def test_failed_or_cancelled_enrichment_drains_children_and_publishes_noth
                         data,
                     )[1]
                 )
-                if not cancel and context["sense"]["definition"] == "Meaning 0":
+                if not cancel and context["senses"][0]["definition"] == "Meaning 0":
                     raise ConnectionError("enrichment failed")
                 await asyncio.Event().wait()
             finally:
@@ -757,11 +791,11 @@ async def test_affix_pos_is_not_lost_in_inventory_evidence(db):
 
     class InspectLLM:
         async def complete(self, instruction, data, schema):
-            tag = "sense_request" if schema is SenseEnrichment else "word_request"
+            tag = "sense_request" if schema is EnrichmentBatch else "word_request"
             request = json.loads(re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", data).group(1))
             if schema is InventoryOutput:
-                assert request["references"][0]["pos"] == "prefix"
-                assert request["references"][0]["headword"] == "bank-"
+                assert request["references"]["prefix"][0]["headword"] == "bank-"
+                assert request["references"]["NOUN"] == [{"id": "a2", "definition": "Money"}]
             else:
                 assert "references" not in request
             return stage_payload(output, data, schema)
@@ -769,18 +803,33 @@ async def test_affix_pos_is_not_lost_in_inventory_evidence(db):
     await generate_word(db, Source(entry), InspectLLM(), encode_reference_id(1), 1, target="bank")
 
 
-@pytest.mark.parametrize("field", ["patterns", "collocations", "usage_note", "relations"])
+@pytest.mark.parametrize("field", ["patterns", "collocations", "relations"])
 def test_enrichment_target_tags_belong_only_in_examples(field):
     output = payload()
     sense = output["senses"][0]
-    tagged = '<t inf="base">bank</t>'
+    tagged = "[bank]"
     sense[field] = {
         "patterns": [f"{tagged} on {{sth}}"],
         "collocations": [f"central {tagged}"],
-        "usage_note": f"Use {tagged} in this context.",
-        "relations": [{"lemma": "institution", "rel_type": "HYPERNYM", "gloss": tagged}],
+        "relations": {"HYPERNYM": [tagged]},
     }[field]
     with pytest.raises(ValueError, match="plain text"):
+        WordOutput.model_validate(output)
+
+
+def test_usage_note_is_absent_from_generation_and_public_contracts():
+    from lexi_ai import contract
+    from lexi_ai.models import Sense
+    from lexi_ai.schema import Sense as StoredSense
+    from lexi_ai.words.schemas import SenseEnrichment
+
+    assert "usage_note" not in SenseEnrichment.model_json_schema()["properties"]
+    assert "usage_note" not in Sense.__dataclass_fields__
+    assert "usage_note" not in StoredSense.__table__.columns
+    assert "usage_note" not in contract.Sense.__table__.columns
+    output = payload()
+    output["senses"][0]["usage_note"] = "Old field"
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
         WordOutput.model_validate(output)
 
 
@@ -788,7 +837,7 @@ def test_enrichment_target_tags_belong_only_in_examples(field):
 async def test_source_variant_display_accepts_its_stored_citation(db, lemma, display):
     entry = SourceEntry(1, lemma.lower(), display, "word", [SourceSense(101, "pronoun", "Meaning")])
     output = payload(lemma)
-    output["senses"][0]["examples"] = [f'<t inf="base">{lemma}</t> appears here.']
+    output["senses"][0]["examples"] = [f"[{lemma}] appears here."]
     word_id = await generate_word(
         db, Source(entry), LLM(output), encode_reference_id(1), 1, target=display
     )
@@ -813,7 +862,7 @@ async def test_mixed_source_display_uses_the_headword_confirmed_citation(db):
         [SourceSense(101, "determiner", "One unspecified item", headword="a")],
     )
     output = payload("a")
-    output["senses"][0]["examples"] = ['I need <t inf="base">a</t> pen.']
+    output["senses"][0]["examples"] = ["I need [a] pen."]
 
     class InspectLLM(LLM):
         async def complete(self, instruction, data, schema):

@@ -175,12 +175,13 @@ class Lexicon:
         *,
         reference_id: str | None = None,
         theme: str | None = None,
-        example_count: int = 5,
+        example_count: int = 3,
         with_usage: bool = False,
     ):
         """Generate/reuse one Word from a string or an explicitly selected reference."""
         self._open()
         target = validate_lemma(target)
+        requested_target = target
         if type(example_count) is not int or example_count < 1:
             raise ValueError("example count must be a positive integer")
         word_id = None
@@ -192,7 +193,11 @@ class Lexicon:
             if hit.kind == "WORD":
                 word_id = hit.word_id
             else:
-                reference_id, target = hit.reference_id, hit.display
+                reference_id = hit.reference_id
+                try:
+                    target = validate_lemma(hit.display)
+                except ValueError:
+                    target = requested_target
         with UsageRecorder(with_usage) as usage:
             if word_id is None:
                 async with self._word_locks.setdefault(reference_id, asyncio.Lock()):

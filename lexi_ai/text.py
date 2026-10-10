@@ -6,13 +6,13 @@ import unicodedata
 from dataclasses import dataclass
 
 from .config import MAX_LEMMA_LENGTH, MAX_TEXT_LENGTH
-from .vocab import SLOTS, Inflection
+from .vocab import INFLECTION_CODES, SLOTS, Inflection
 
 _SPACES = re.compile(r"\s+")
 _BRACES = re.compile(r"\{[^{}]*\}")
-_TAG = re.compile(r'<t inf="([a-z0-9_]+)">([^<>]+)</t>', re.IGNORECASE)
-_ANY_TAG = re.compile(r"</?t\b", re.IGNORECASE)
-_ETC_OR_PAREN = re.compile(r"(?:\b[Ee][Tt][Cc]\.?(?:\s|$)|[()])")
+_TAG = re.compile(r"\[([^\[\]|]+)(?:\|([a-z0-9]+))?\]", re.IGNORECASE)
+_ANY_TAG = re.compile(r"[\[\]]")
+_ETC_OR_PAREN = re.compile(r"(?:\b[Ee][Tt][Cc]\.(?:\s|$)|[()])")
 
 
 def validate_lemma(lemma: str) -> str:
@@ -73,10 +73,10 @@ def parse_marked_example(content: str) -> tuple[str, list[Span]]:
             raise ValueError("invalid target markup")
         result.append(prefix)
         clean_length += len(prefix)
-        inf, surface = match.groups()
+        surface, code = match.groups()
         try:
-            inf = Inflection(inf.upper())
-        except ValueError as exc:
+            inf = INFLECTION_CODES[(code or "").lower()]
+        except KeyError as exc:
             raise ValueError("invalid target inflection") from exc
         if not surface.strip():
             raise ValueError("invalid target inflection")
@@ -98,4 +98,16 @@ def strip_markup(content: str) -> str:
 def canonical_markup(content: str) -> str:
     """Validate before normalizing only known tag/inflection labels, never learner text."""
     parse_marked_example(content)
-    return _TAG.sub(lambda m: f'<t inf="{m[1].lower()}">{m[2]}</t>', content)
+    return _TAG.sub(lambda m: f"[{m[1]}{'|' + m[2].lower() if m[2] else ''}]", content)
+
+
+def parse_form(content: str) -> tuple[str, Inflection]:
+    """Decode a compact surface/inflection pair without guessing morphology."""
+    if not isinstance(content, str):
+        raise ValueError("form must be a string")
+    surface, separator, code = content.partition("|")
+    if separator and (not code or code.lower() not in INFLECTION_CODES):
+        raise ValueError("invalid form inflection")
+    if any(char in surface for char in "[]|"):
+        raise ValueError("invalid form surface")
+    return validate_lemma(surface), INFLECTION_CODES[code.lower()]

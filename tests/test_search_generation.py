@@ -49,9 +49,7 @@ class Transport:
                 senses=[
                     {
                         "definition": "Move quickly during training",
-                        "examples": [
-                            f'I <t inf="base">run</t> for {i} minutes.' for i in range(count)
-                        ],
+                        "examples": [f"I [run] for {i} minutes." for i in range(count)],
                     }
                 ]
             )
@@ -62,8 +60,8 @@ class Transport:
         output["senses"][0].update(
             definition="Move quickly on foot",
             pos="VERB",
-            examples=['I <t inf="base">run</t> every day.'],
-            forms=[{"surface": "running", "inf": "ING"}],
+            examples=["I [run] every day."],
+            forms=["running|ing"],
             patterns=["run {sth}"],
         )
         return stage_payload(output, data, schema)
@@ -165,7 +163,7 @@ async def test_generation_uses_the_selected_reference_identity_for_an_inflected_
         assert (hit.kind, hit.match_kind, hit.matched_surface) == ("REFERENCE", kind, "running")
     result = await catalog.generate_word("running", example_count=1)
     assert result.lemma == "run"
-    assert provider.calls == ["InventoryOutput", "SenseEnrichment"]
+    assert provider.calls == ["InventoryOutput", "EnrichmentBatch"]
     catalog.llm = None
     reused = await catalog.generate_word("running")
     assert reused == result

@@ -16,13 +16,13 @@ class LLM:
 
     async def complete(self, instruction, data, schema):
         self.calls += 1
-        if schema.__name__ in {"InventoryOutput", "SenseEnrichment"}:
+        if schema.__name__ in {"InventoryOutput", "EnrichmentBatch"}:
             return stage_payload(
                 {
                     "lemma": "bank",
                     "type": "WORD",
                     "aliases": [],
-                    "related": [],
+                    "related": {},
                     "senses": [
                         {
                             "definition": "A place to keep money",
@@ -30,11 +30,11 @@ class LLM:
                             "tier": "CORE",
                             "cefr_level": "A1",
                             "register": None,
-                            "examples": ['The <t inf="base">bank</t> opens early.'],
+                            "examples": ["The [bank] opens early."],
                             "forms": [],
                             "patterns": [],
                             "collocations": [],
-                            "relations": [],
+                            "relations": {},
                             "references": ["a1"],
                         }
                     ],
@@ -156,14 +156,13 @@ async def test_example_counts_are_per_generate_call(tmp_path, source, neutral_fi
                     senses=[
                         {
                             "definition": "A safe place for coin",
-                            "examples": ['The <t inf="base">bank</t> opens.'] * count,
+                            "examples": ["The [bank] opens."] * count,
                         }
                     ]
                 )
             output = await super().complete(instruction, data, schema)
-            output.examples = [
-                f'The <t inf="base">bank</t> opens at {hour}.' for hour in range(count)
-            ]
+            for sense in output.senses:
+                sense.examples = [f"The [bank] opens at {hour}." for hour in range(count)]
             return output
 
     llm = CountingLLM()

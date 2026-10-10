@@ -92,7 +92,6 @@ class Sense:
     relations: list[SenseRelation] = field(default_factory=list)
     cefr_level: CEFRLevel | None = None
     register: Register | None = None
-    usage_note: str | None = None
     ipa_uk: str | None = None
     ipa_us: str | None = None
 

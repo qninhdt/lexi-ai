@@ -123,7 +123,7 @@ def parser():
     gen["word"].add_argument("--word-list", type=Path)
     theme(gen["word"])
     theme(gen["question"])
-    gen["word"].add_argument("--example-count", type=int, default=5)
+    gen["word"].add_argument("--example-count", type=int, default=3)
     gen["question"].add_argument("sense_id", type=int)
     gen["question"].add_argument("--type", choices=list(QuestionType), required=True)
     gen["question"].add_argument(

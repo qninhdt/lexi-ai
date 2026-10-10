@@ -27,7 +27,6 @@ class PendingLink:
     source_pos: str
     relation_type: str
     target_word: str
-    target_gloss: str
     candidates: list[Candidate]
 
 
@@ -74,7 +73,6 @@ def _projection(*, with_candidates=False):
         select(
             SenseRelation.id,
             SenseRelation.rel_type,
-            SenseRelation.gloss,
             SenseRelation.to_sense_id,
             SenseRelation.target_hash,
             SenseRelation.to_word_id,
@@ -242,7 +240,6 @@ async def pending_relations(db, batch_size):
                         value["pos"],
                         value["rel_type"],
                         value["target_word"],
-                        value["gloss"],
                         list(candidates),
                     )
                 )
@@ -282,7 +279,6 @@ async def apply_resolution(db, edge_id, candidate, *, expected=None):
                 or value["rel_type"] != expected.relation_type
                 or value["pos"] != expected.source_pos
                 or value["target_word"] != expected.target_word
-                or value["gloss"] != expected.target_gloss
                 or value["source_definition"] != expected.source_definition
                 or [(c.id, c.fingerprint) for c in current]
                 != [(c.id, c.fingerprint) for c in expected.candidates]

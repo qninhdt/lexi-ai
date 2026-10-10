@@ -73,14 +73,13 @@ def test_relation_direction_and_anonymous_candidate_keys(kind, rule):
         source_definition="canine",
         relation_type=kind,
         target_word="animal",
-        target_gloss="living creature",
         candidates=[{"index": i, "pos": "NOUN", "definition": f"meaning{i}"} for i in range(1, 26)],
     )
     assert rule in state["relation"]["rule"]
     assert set(state) == {"source", "relation", "target"}
     criteria = questions["matched_sense"].criteria
     assert set(criteria) == {"no_candidate", *(f"candidate_{i}" for i in range(1, 26))}
-    assert "satisfy `relation.rule`" in questions["matched_sense"].instructions
+    assert "satisfies relation.rule" in questions["matched_sense"].instructions
     assert criteria["candidate_25"] == "animal - NOUN - meaning25"
 
 

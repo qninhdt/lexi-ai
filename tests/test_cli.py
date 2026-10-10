@@ -34,12 +34,12 @@ class Completion:
         if schema.__name__ in {"QuestionBatch", "AnchoredQuestionBatch"}:
             return await self.questions.complete(instruction, data, schema)
         result = await self.words.complete(instruction, data, schema)
-        if schema.__name__ == "SenseEnrichment":
-            result.relations = []
+        if schema.__name__ == "EnrichmentBatch":
+            for item in result.senses:
+                item.relations = {}
             count = prompt_context(data, "sense_request")["examples_per_sense"]
-            result.examples = [
-                f'The <t inf="base">bank</t> opened at {hour}.' for hour in range(count)
-            ]
+            for item in result.senses:
+                item.examples = [f"The [bank] opened at {hour}." for hour in range(count)]
         return result
 
 
@@ -487,11 +487,11 @@ async def test_words_run_in_parallel_with_real_storage(source, tmp_path):
             self.started = []
 
         async def complete(self, instruction, data, schema):
-            tag = "sense_request" if schema.__name__ == "SenseEnrichment" else "word_request"
+            tag = "sense_request" if schema.__name__ == "EnrichmentBatch" else "word_request"
             context = prompt_context(data, tag)
             target = (
                 context["word"]["lemma"]
-                if schema.__name__ == "SenseEnrichment"
+                if schema.__name__ == "EnrichmentBatch"
                 else context["target"]
             )
             if schema.__name__ == "InventoryOutput":
@@ -506,7 +506,7 @@ async def test_words_run_in_parallel_with_real_storage(source, tmp_path):
                 finally:
                     self.active -= 1
             output = payload(target)
-            output["senses"][0]["examples"] = [f'The <t inf="base">{target}</t> opened.']
+            output["senses"][0]["examples"] = [f"The [{target}] opened."]
             return stage_payload(output, data, schema)
 
     url = cli.target_url(str(tmp_path / "content.sqlite"))

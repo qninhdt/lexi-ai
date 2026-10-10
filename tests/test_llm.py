@@ -16,6 +16,18 @@ class Reply(BaseModel):
     answer: str
 
 
+def test_prompt_schema_keeps_descriptions_constraints_and_removes_titles():
+    from lexi_ai.inference.llm import _prompt_schema
+
+    class DescribedReply(BaseModel):
+        answers: list[str] = Field(min_length=1, description="Useful answers")
+
+    schema = _prompt_schema(DescribedReply.model_json_schema())
+    assert "title" not in schema and "title" not in schema["properties"]["answers"]
+    assert schema["properties"]["answers"]["description"] == "Useful answers"
+    assert schema["properties"]["answers"]["minItems"] == 1
+
+
 class FakeCompletions:
     def __init__(self, reply=None):
         self.requests = []
@@ -202,7 +214,13 @@ async def test_output_modes_keep_schema_validation_and_usage(structured_outputs,
         assert "response_format" not in sent and "tools" not in sent
         prompt = sent["messages"][0]["content"]
         assert prompt.startswith("Return an answer")
-        assert json.loads(prompt.split("fences:\n", 1)[1]) == Reply.model_json_schema()
+        assert "one compact JSON document" in prompt
+        assert "without indentation or unnecessary whitespace outside string values" in prompt
+        assert json.loads(prompt.split("fences:\n", 1)[1]) == {
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"],
+            "type": "object",
+        }
     assert usage[0].model_id == "actual-model"
     assert usage[0].input_tokens == 100 and usage[0].output_tokens == 10
 
@@ -270,8 +288,8 @@ async def test_json_repair_is_only_called_for_text_mode(monkeypatch, structured_
         return original(content, **kwargs)
 
     monkeypatch.setattr("lexi_ai.inference.llm.json_repair.loads", repair)
-    content = '{"answer": "She visited the <t inf="base">bank</t>."}'
-    expected = Reply(answer='She visited the <t inf="base">bank</t>.')
+    content = '{"answer": "She visited the [bank]."}'
+    expected = Reply(answer="She visited the [bank].")
     if structured_outputs:
         client = FakeClient(expected)
     else:
@@ -296,9 +314,9 @@ async def test_json_repair_is_only_called_for_text_mode(monkeypatch, structured_
 
 
 @pytest.mark.parametrize("structured_outputs", [True, False])
-async def test_sdk_unescaped_tag_quotes_repair_keeps_usage_without_extra_calls(structured_outputs):
+async def test_sdk_unescaped_quotes_repair_keeps_usage_without_extra_calls(structured_outputs):
     requests = []
-    content = '{"answer": "Café: she visited the <t inf="base">bank</t>."}'
+    content = '{"answer": "Café: she said "bank"."}'
 
     def respond(request):
         requests.append(json.loads(request.content))
@@ -341,7 +359,7 @@ async def test_sdk_unescaped_tag_quotes_repair_keeps_usage_without_extra_calls(s
             usage = caught.value.usage
         else:
             result, usage = await llm.complete("task", "data", Reply, with_usage=True)
-            assert result.answer == 'Café: she visited the <t inf="base">bank</t>.'
+            assert result.answer == 'Café: she said "bank".'
     assert len(requests) == 1
     assert usage[0].input_tokens == 10 and usage[0].output_tokens == 20
 

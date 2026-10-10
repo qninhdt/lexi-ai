@@ -449,7 +449,7 @@ async def test_all_grading_stages_and_gates_collect_only_their_own_calls(
 async def test_translation_cache_and_original_default_return(lexicon):
     text, usage = await lexicon.translate_text("bank", "vi", with_usage=True)
     assert text == "ngân hàng" and usage == [LLM_USAGE]
-    assert await lexicon.translate_text('<t inf="base">bank</t>', "vi", with_usage=True) == (
+    assert await lexicon.translate_text("[bank]", "vi", with_usage=True) == (
         text,
         [],
     )
@@ -521,10 +521,7 @@ async def test_parallel_relation_error_preserves_usage_without_canceling_success
         )
         await session.execute(
             insert(row.SenseRelation),
-            [
-                dict(id=i, from_sense_id=1, to_word_id=i + 1, rel_type="SYNONYM", gloss="target")
-                for i in (1, 2)
-            ],
+            [dict(id=i, from_sense_id=1, to_word_id=i + 1, rel_type="SYNONYM") for i in (1, 2)],
         )
 
     class PartialDecision:

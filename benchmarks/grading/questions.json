@@ -112,7 +112,7 @@
       "sense_id": 153,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">break the ice</t>",
+      "content": "[break the ice]",
       "correct": {
         "id": "75a6dfc4300c45db89db6122e2a5e32f",
         "content": "to do or say something that relieves tension or awkwardness, helping people feel more comfortable and willing to talk to one another",
@@ -147,26 +147,26 @@
       "sense_id": 38,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">advice</t> — Suggestions or recommendations offered to someone about what they should do or how they should handle a situation",
+      "content": "[advice] — Suggestions or recommendations offered to someone about what they should do or how they should handle a situation",
       "correct": {
         "id": "a8e0048c46f044c38d95dbf254624817",
-        "content": "When Lucas was struggling to choose a college major, he asked his older sister for <t inf=\"base\">advice</t>.",
+        "content": "When Lucas was struggling to choose a college major, he asked his older sister for [advice].",
         "explanation": "This sentence correctly uses 'advice' as an uncountable noun in the standard pattern 'ask someone for advice', expressing recommendations or guidance about how to handle a situation."
       },
       "distractors": [
         {
           "id": "d1ddc551c32c49c1b17b6cb3d4184461",
-          "content": "My professor offered me a helpful <t inf=\"base\">advice</t> about which topics to explore for my research paper.",
+          "content": "My professor offered me a helpful [advice] about which topics to explore for my research paper.",
           "explanation": "'Advice' is an uncountable noun in English and cannot be preceded by the indefinite article 'a'. The sentence should use 'some helpful advice' or 'a helpful piece of advice'."
         },
         {
           "id": "d91fbd8969454f0d84242c3d1fb8e97b",
-          "content": "The financial planner gave us sound <t inf=\"base\">advice</t> of investing our savings in diverse funds.",
+          "content": "The financial planner gave us sound [advice] of investing our savings in diverse funds.",
           "explanation": "The noun 'advice' does not take the preposition 'of' followed by a gerund to describe the recommended action. Standard English requires 'advice on investing' (or 'about investing') or an infinitive such as 'advice to invest'."
         },
         {
           "id": "76c816d915a64f79aa1be66b6f1d0b97",
-          "content": "The career consultant made useful <t inf=\"base\">advice</t> on how to answer difficult interview questions.",
+          "content": "The career consultant made useful [advice] on how to answer difficult interview questions.",
           "explanation": "The verb 'make' does not collocate with 'advice'. To describe providing recommendations, English uses verbs such as 'give', 'offer', or 'provide' (e.g., 'gave useful advice')."
         }
       ],
@@ -221,7 +221,7 @@
       "correct": {
         "id": "567002386b4a4b918fb0487563a35f31",
         "content": "research",
-        "explanation": "This multi-year endeavor systematically gathers diverse evidence—field samples, firsthand testimonies, and archival records—to uncover new facts and build a deeper understanding of an environmental issue, which precisely defines <t inf=\"base\">research</t>."
+        "explanation": "This multi-year endeavor systematically gathers diverse evidence—field samples, firsthand testimonies, and archival records—to uncover new facts and build a deeper understanding of an environmental issue, which precisely defines [research]."
       },
       "distractors": [
         {
@@ -287,7 +287,7 @@
       "sense_id": 42,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">run</t>",
+      "content": "[run]",
       "correct": {
         "id": "147f1534fb3b41b282b83e6aa7d0f5ee",
         "content": "To move quickly on foot, faster than walking, by lifting each foot off the ground before the other lands.",
@@ -322,26 +322,26 @@
       "sense_id": 154,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">spill the beans</t> — to reveal secret or confidential information, often prematurely or by accident",
+      "content": "[spill the beans] — to reveal secret or confidential information, often prematurely or by accident",
       "correct": {
         "id": "0e8cc4e834054b4089fa42a2e483a5fe",
-        "content": "The studio managed to keep the casting decision under wraps for months until an extra <t inf=\"past\">spilled</t> <t inf=\"base\">the</t> <t inf=\"plural\">beans</t> during an online interview.",
+        "content": "The studio managed to keep the casting decision under wraps for months until an extra [spilled|p] [the] [beans|pl] during an online interview.",
         "explanation": "This sentence correctly uses the idiom to describe disclosing confidential details (an unannounced film role) to the public before an official release."
       },
       "distractors": [
         {
           "id": "2c984a3e585442d4bb122417d4c355d2",
-          "content": "Whenever Chloe feels overwhelmed by grief, she calls her sister to <t inf=\"base\">spill</t> <t inf=\"base\">the</t> <t inf=\"plural\">beans</t> until she feels comforted.",
+          "content": "Whenever Chloe feels overwhelmed by grief, she calls her sister to [spill] [the] [beans|pl] until she feels comforted.",
           "explanation": "\"Spill the beans\" refers to revealing secret or confidential facts, not unburdening personal sorrow or emotional vulnerability (which would be described by expressions like \"pour one's heart out\")."
         },
         {
           "id": "81de5c5d057d4e64b075b9f2798d949d",
-          "content": "The two childhood friends spent the entire afternoon at the café <t inf=\"ing\">spilling</t> <t inf=\"base\">the</t> <t inf=\"plural\">beans</t> about everyday topics like the weather and gardening.",
+          "content": "The two childhood friends spent the entire afternoon at the café [spilling|ing] [the] [beans|pl] about everyday topics like the weather and gardening.",
           "explanation": "\"Spill the beans\" requires the disclosure of hidden or secret information; it cannot refer to casual small talk or chatting about ordinary, mundane subjects."
         },
         {
           "id": "95419825bb4344fe99b3c59b733f1f7b",
-          "content": "While unpacking the grocery crates in the pantry, Liam accidentally dropped a jar and <t inf=\"past\">spilled</t> <t inf=\"base\">the</t> <t inf=\"plural\">beans</t> across the floor.",
+          "content": "While unpacking the grocery crates in the pantry, Liam accidentally dropped a jar and [spilled|p] [the] [beans|pl] across the floor.",
           "explanation": "This sentence uses the words in their literal, physical sense (scattering edible legumes) rather than the idiomatic sense of disclosing secret information."
         }
       ],
@@ -462,7 +462,7 @@
       "sense_id": 101,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">borrow</t>",
+      "content": "[borrow]",
       "correct": {
         "id": "6893a78b3d9e48ada8b8d2cea79bb794",
         "content": "To take and use something that belongs to someone else, with the intention of returning it after a period of time.",
@@ -497,26 +497,26 @@
       "sense_id": 105,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">lend</t> — to allow someone to borrow something that belongs to you for a period of time, expecting it to be returned",
+      "content": "[lend] — to allow someone to borrow something that belongs to you for a period of time, expecting it to be returned",
       "correct": {
         "id": "13ca00020fbb4376837eb9927165c522",
-        "content": "Sarah agreed to <t inf=\"base\">lend</t> her brother some money until he received his next paycheck.",
+        "content": "Sarah agreed to [lend] her brother some money until he received his next paycheck.",
         "explanation": "This sentence correctly uses 'lend' to describe allowing someone to temporarily have and use money belonging to the speaker, with the clear expectation that it will be returned later."
       },
       "distractors": [
         {
           "id": "7eecade4f7684c37a343b1872ad82a17",
-          "content": "Excuse me, could I <t inf=\"base\">lend</t> your pen for a moment to sign this receipt?",
+          "content": "Excuse me, could I [lend] your pen for a moment to sign this receipt?",
           "explanation": "This sentence confuses 'lend' with 'borrow.' When asking to temporarily take and use an item that belongs to someone else, the correct verb is 'borrow' ('could I borrow your pen'). 'Lend' means to provide or give something temporarily."
         },
         {
           "id": "de113b9788e545369642e96ca9bfdfa9",
-          "content": "Would you mind <t inf=\"ing\">lending</t> a hand with carrying these heavy grocery boxes inside?",
+          "content": "Would you mind [lending|ing] a hand with carrying these heavy grocery boxes inside?",
           "explanation": "In the common idiom 'lend a hand,' the verb means to provide help or assistance. It does not describe allowing someone to borrow physical property or money with the expectation of return."
         },
         {
           "id": "e25db5fbac0f4a51988483ef99b753d7",
-          "content": "The soft background music <t inf=\"present_3sg\">lends</t> a calm and relaxing atmosphere to the small café.",
+          "content": "The soft background music [lends|3] a calm and relaxing atmosphere to the small café.",
           "explanation": "Here, 'lends' is used in the figurative sense of imparting or contributing a particular quality or mood to a place, rather than allowing a person to borrow property or funds."
         }
       ],
@@ -637,7 +637,7 @@
       "sense_id": 147,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">put off</t>",
+      "content": "[put off]",
       "correct": {
         "id": "077634eed6074c4197c8c3fe1b48d17d",
         "content": "To delay or postpone an event, activity, or task until a later time or date.",
@@ -672,26 +672,26 @@
       "sense_id": 118,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">sensible</t> — Showing or based on good judgment, practical thinking, and sound reason rather than emotion.",
+      "content": "[sensible] — Showing or based on good judgment, practical thinking, and sound reason rather than emotion.",
       "correct": {
         "id": "1ac54c7ed1a34ce19cd1e252425a0d39",
-        "content": "Instead of panicking and selling his investments during the market downturn, David took a <t inf=\"base\">sensible</t> approach and waited for conditions to stabilize.",
+        "content": "Instead of panicking and selling his investments during the market downturn, David took a [sensible] approach and waited for conditions to stabilize.",
         "explanation": "This sentence correctly uses sensible to describe an approach grounded in sound judgment and practical thinking rather than an emotional reaction."
       },
       "distractors": [
         {
           "id": "8a5ae094d5df4bb4ad32cf396458e700",
-          "content": "You should be gentle when offering feedback, as Aaron is deeply <t inf=\"base\">sensible</t> and tends to take any criticism personally.",
+          "content": "You should be gentle when offering feedback, as Aaron is deeply [sensible] and tends to take any criticism personally.",
           "explanation": "This sentence confuses sensible with sensitive. Sensible means showing good judgment or practical wisdom, whereas sensitive describes someone who is easily hurt or emotionally responsive."
         },
         {
           "id": "4055703d0ca6493c8a7e6fb6fe779069",
-          "content": "The audit discovered that the company's internal server contained highly <t inf=\"base\">sensible</t> customer data that was not properly encrypted.",
+          "content": "The audit discovered that the company's internal server contained highly [sensible] customer data that was not properly encrypted.",
           "explanation": "This sentence incorrectly uses sensible instead of sensitive. Data that is confidential or requires protection is described as sensitive, while sensible applies to actions, decisions, or people demonstrating sound reason."
         },
         {
           "id": "51e9716658c141c5b169d5bc2b805827",
-          "content": "Dermatologists advise using a fragrance-free cleanser if you have dry or <t inf=\"base\">sensible</t> skin that is prone to redness.",
+          "content": "Dermatologists advise using a fragrance-free cleanser if you have dry or [sensible] skin that is prone to redness.",
           "explanation": "This sentence incorrectly substitutes sensible for sensitive. Skin that reacts easily to irritation is sensitive, whereas sensible refers to having or exercising practical judgment."
         }
       ],
@@ -746,7 +746,7 @@
       "correct": {
         "id": "17e099277fba400a85ea5b0022ef7c87",
         "content": "run out of",
-        "explanation": "The phrase '<t inf=\"base\">run</t> <t inf=\"base\">out</t> <t inf=\"base\">of</t>' appropriately describes this scenario because the baker has completely depleted the available supply of butter and has none left in reserve to continue baking."
+        "explanation": "The phrase '[run] [out] [of]' appropriately describes this scenario because the baker has completely depleted the available supply of butter and has none left in reserve to continue baking."
       },
       "distractors": [
         {
@@ -812,7 +812,7 @@
       "sense_id": 156,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">a piece of cake</t>",
+      "content": "[a piece of cake]",
       "correct": {
         "id": "2ac3c5812d9449f5819a8fe42f364626",
         "content": "something that is very easy and simple to do or achieve",
@@ -847,26 +847,26 @@
       "sense_id": 2,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">bank</t> — The sloping land alongside a river, stream, lake, or other body of water.",
+      "content": "[bank] — The sloping land alongside a river, stream, lake, or other body of water.",
       "correct": {
         "id": "3a711f30e2f8469c8a4558353ac7968f",
-        "content": "Local conservationists planted native trees along the unstable <t inf=\"base\">bank</t> of the river to prevent the soil from washing away.",
+        "content": "Local conservationists planted native trees along the unstable [bank] of the river to prevent the soil from washing away.",
         "explanation": "This sentence correctly uses 'bank' in the displayed sense to refer to the sloping ground bordering a river that is prone to water erosion."
       },
       "distractors": [
         {
           "id": "2dfc8490dd774ff79e093a51eb04b9c8",
-          "content": "We rested on a grassy <t inf=\"base\">bank</t> river and watched the water flow past.",
+          "content": "We rested on a grassy [bank] river and watched the water flow past.",
           "explanation": "In this intended noun phrase, bank needs a linking of before river, as in bank of the river, or river must precede it in river bank. Bank river is not the licensed construction intended here."
         },
         {
           "id": "8dc7b35d1818424f85b0f8503e7a10ed",
-          "content": "The security team monitored incoming visitors using a large <t inf=\"base\">bank</t> of screens mounted on the wall.",
+          "content": "The security team monitored incoming visitors using a large [bank] of screens mounted on the wall.",
           "explanation": "This sentence illustrates another established sense of 'bank' meaning a row or series of similar electronic devices, rather than land bordering a body of water."
         },
         {
           "id": "8500ba03da764506afae29f7a0c4a211",
-          "content": "She stopped by the neighborhood <t inf=\"base\">bank</t> on her lunch break to deposit the check into her savings account.",
+          "content": "She stopped by the neighborhood [bank] on her lunch break to deposit the check into her savings account.",
           "explanation": "This sentence uses 'bank' in its familiar financial institution sense, which does not match the geographical definition."
         }
       ],
@@ -921,7 +921,7 @@
       "correct": {
         "id": "89582b5868f34d75aa3a593124e0c26a",
         "content": "charge",
-        "explanation": "To <t inf=\"base\">charge</t> an expense means to record it on an account or pay using credit so that it can be paid at a later time. In this situation, the guest asks to place the cost of the meal onto his room account instead of paying right away."
+        "explanation": "To [charge] an expense means to record it on an account or pay using credit so that it can be paid at a later time. In this situation, the guest asks to place the cost of the meal onto his room account instead of paying right away."
       },
       "distractors": [
         {
@@ -987,7 +987,7 @@
       "sense_id": 39,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">advice</t>",
+      "content": "[advice]",
       "correct": {
         "id": "ad9bd6f3d78a4e52a088f375ef1fd0a6",
         "content": "A formal or official notice giving information, especially about a business or financial transaction",
@@ -1022,26 +1022,26 @@
       "sense_id": 153,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">break the ice</t> — to do or say something that relieves tension or awkwardness, helping people feel more comfortable and willing to talk to one another",
+      "content": "[break the ice] — to do or say something that relieves tension or awkwardness, helping people feel more comfortable and willing to talk to one another",
       "correct": {
         "id": "8986844f3713466e8d19645bafc84a1c",
-        "content": "When an unexpected delay left everyone waiting silently in the lobby, the tour guide <t inf=\"past\">broke</t> <t inf=\"base\">the</t> <t inf=\"base\">ice</t> by handing out local snacks and chatting about nearby sights.",
+        "content": "When an unexpected delay left everyone waiting silently in the lobby, the tour guide [broke|p] [the] [ice] by handing out local snacks and chatting about nearby sights.",
         "explanation": "This sentence correctly uses \"break the ice\" in the displayed sense, showing an action taken to relieve awkward silence and help people feel comfortable talking to one another."
       },
       "distractors": [
         {
           "id": "fc39e6c5e2c84817b8e4ccc82aa0196f",
-          "content": "The surgeon met privately with the patient's relatives to gently <t inf=\"base\">break</t> <t inf=\"base\">the</t> <t inf=\"base\">ice</t> about the complications during the procedure.",
+          "content": "The surgeon met privately with the patient's relatives to gently [break] [the] [ice] about the complications during the procedure.",
           "explanation": "This sentence incorrectly uses \"break the ice\" instead of \"break the news.\" While both idioms involve delicate speech in tense moments, \"break the news\" is used to disclose serious or distressing information, whereas \"break the ice\" specifically refers to easing initial social awkwardness."
         },
         {
           "id": "d86da5168b8d43a58468539f7cc7fca5",
-          "content": "After months of refusing to comment publicly, the spokesperson finally <t inf=\"past\">broke</t> <t inf=\"base\">the</t> <t inf=\"base\">ice</t> about the financial audit during a live press briefing.",
+          "content": "After months of refusing to comment publicly, the spokesperson finally [broke|p] [the] [ice] about the financial audit during a live press briefing.",
           "explanation": "This sentence confuses \"break the ice\" with \"break the silence.\" \"Break the silence\" means making a public statement after withholding comment on an issue, whereas \"break the ice\" describes informal social behavior meant to overcome hesitation among people."
         },
         {
           "id": "aa54aa0349a44c34ad18d641f5070e3e",
-          "content": "During the sub-zero winter, the port authority deployed specialized tugboats to <t inf=\"base\">break</t> <t inf=\"base\">the</t> <t inf=\"base\">ice</t> and keep the shipping channels clear.",
+          "content": "During the sub-zero winter, the port authority deployed specialized tugboats to [break] [the] [ice] and keep the shipping channels clear.",
           "explanation": "This sentence uses \"break the ice\" in its literal, physical sense of crushing frozen water for navigation. It does not demonstrate the target figurative sense of relieving social tension to help people converse."
         }
       ],
@@ -1096,7 +1096,7 @@
       "correct": {
         "id": "f3e77a43cc0649db9f7a8ff41f386e06",
         "content": "research",
-        "explanation": "The scenario describes a thorough, evidence-based inquiry into an unresolved problem—systematically gathering physical samples, environmental measurements, and historical records to discover underlying facts. This systematic investigation exemplifies the verb <t inf=\"base\">research</t>."
+        "explanation": "The scenario describes a thorough, evidence-based inquiry into an unresolved problem—systematically gathering physical samples, environmental measurements, and historical records to discover underlying facts. This systematic investigation exemplifies the verb [research]."
       },
       "distractors": [
         {
@@ -1162,7 +1162,7 @@
       "sense_id": 43,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">run</t>",
+      "content": "[run]",
       "correct": {
         "id": "a6881e88e74d4415965c791903bd2590",
         "content": "To go or hurry somewhere quickly, especially because of a rush, an emergency, or to escape danger.",
@@ -1197,27 +1197,27 @@
       "sense_id": 86,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">raise</t> — to cause something to increase in amount, level, degree, or value",
+      "content": "[raise] — to cause something to increase in amount, level, degree, or value",
       "correct": {
         "id": "07c56bd740ae4e86b86f99fa601e1112",
-        "content": "The city council voted to <t inf=\"base\">raise</t> property taxes to help fund the new public transit network.",
-        "explanation": "This sentence correctly uses <t inf=\"base\">raise</t> in the defined sense of causing an amount or rate (property taxes) to increase, operating as a transitive verb with a direct object."
+        "content": "The city council voted to [raise] property taxes to help fund the new public transit network.",
+        "explanation": "This sentence correctly uses [raise] in the defined sense of causing an amount or rate (property taxes) to increase, operating as a transitive verb with a direct object."
       },
       "distractors": [
         {
           "id": "f5a858bd44cd46cc8c5c0819dd54a7dd",
-          "content": "Consumer prices are expected to <t inf=\"base\">raise</t> noticeably before the end of the fiscal year.",
-          "explanation": "Unlike the intransitive verb 'rise', <t inf=\"base\">raise</t> is transitive and requires a direct object. Because the subject itself is increasing, 'rise' should be used instead."
+          "content": "Consumer prices are expected to [raise] noticeably before the end of the fiscal year.",
+          "explanation": "Unlike the intransitive verb 'rise', [raise] is transitive and requires a direct object. Because the subject itself is increasing, 'rise' should be used instead."
         },
         {
           "id": "5b000610415046249d2de1e975a72366",
-          "content": "The construction crew used a crane to <t inf=\"base\">raise</t> the steel beam onto the upper floor.",
-          "explanation": "In this sentence, <t inf=\"base\">raise</t> refers to physically lifting an object to a higher location, rather than causing a quantitative amount, level, or value to increase."
+          "content": "The construction crew used a crane to [raise] the steel beam onto the upper floor.",
+          "explanation": "In this sentence, [raise] refers to physically lifting an object to a higher location, rather than causing a quantitative amount, level, or value to increase."
         },
         {
           "id": "93975818e6c44767a0cc2af3231ad01a",
-          "content": "After relocating to a rural town, the couple began to <t inf=\"base\">raise</t> sheep and cultivate organic vegetables.",
-          "explanation": "Here, <t inf=\"base\">raise</t> means to breed and care for livestock, which does not match the definition of increasing an amount, level, degree, or value."
+          "content": "After relocating to a rural town, the couple began to [raise] sheep and cultivate organic vegetables.",
+          "explanation": "Here, [raise] means to breed and care for livestock, which does not match the definition of increasing an amount, level, degree, or value."
         }
       ],
       "correct_alternatives": [],
@@ -1271,7 +1271,7 @@
       "correct": {
         "id": "a9854d08f0da4f84ac06a2212d14eb26",
         "content": "spill the beans",
-        "explanation": "To <t inf=\"base\">spill</t> <t inf=\"base\">the</t> <t inf=\"plural\">beans</t> means to disclose confidential or secret information, especially prematurely or indiscreetly. In this scenario, the office is trying to keep a celebration secret, and the coworker is fighting the impulse to give away the surprise, making this expression fit the context precisely."
+        "explanation": "To [spill] [the] [beans|pl] means to disclose confidential or secret information, especially prematurely or indiscreetly. In this scenario, the office is trying to keep a celebration secret, and the coworker is fighting the impulse to give away the surprise, making this expression fit the context precisely."
       },
       "distractors": [
         {
@@ -1337,7 +1337,7 @@
       "sense_id": 139,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">take off</t>",
+      "content": "[take off]",
       "correct": {
         "id": "07ab87d6ab064a51b4caa5545751c0b2",
         "content": "To remove an item of clothing, jewelry, or an accessory from your body.",
@@ -1372,26 +1372,26 @@
       "sense_id": 106,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">lend</t> — to provide money to a person or organization on the condition that it will be paid back, usually along with interest",
+      "content": "[lend] — to provide money to a person or organization on the condition that it will be paid back, usually along with interest",
       "correct": {
         "id": "135fdd262db74c3bbc812e853b744977",
-        "content": "Several commercial banks agreed to <t inf=\"base\">lend</t> capital to the clean-energy startup at a competitive interest rate.",
+        "content": "Several commercial banks agreed to [lend] capital to the clean-energy startup at a competitive interest rate.",
         "explanation": "This sentence correctly uses 'lend' to describe financial institutions providing funds to a borrower under the condition of repayment with interest."
       },
       "distractors": [
         {
           "id": "068178b039924efeb90010aaea32b067",
-          "content": "To finance the construction of the new warehouse, the logistics company sought to <t inf=\"base\">lend</t> five million dollars from a consortium of private lenders.",
+          "content": "To finance the construction of the new warehouse, the logistics company sought to [lend] five million dollars from a consortium of private lenders.",
           "explanation": "This sentence incorrectly uses 'lend' where 'borrow' is required; a recipient takes or borrows money 'from' a creditor, whereas a creditor provides or lends money 'to' a recipient."
         },
         {
           "id": "4872e5f2572a40deba3644e67c576ae1",
-          "content": "The inclusion of verifiable case studies <t inf=\"present_3sg\">lends</t> considerable credibility to the research team's financial proposal.",
+          "content": "The inclusion of verifiable case studies [lends|3] considerable credibility to the research team's financial proposal.",
           "explanation": "While this sentence correctly uses 'lend' in its figurative sense meaning to impart or contribute a quality, it does not match the displayed financial definition involving money, repayment, and interest."
         },
         {
           "id": "901b4fec6a374f8dbbfdabaeaa2d31cb",
-          "content": "Because the disaster relief fund was a non-repayable gift, the charity <t inf=\"past\">lent</t> five thousand dollars directly to each homeowner without expecting the money back.",
+          "content": "Because the disaster relief fund was a non-repayable gift, the charity [lent|p] five thousand dollars directly to each homeowner without expecting the money back.",
           "explanation": "'Lend' inherently denotes providing funds on the condition that they will be returned; money given permanently without any expectation of repayment is granted or donated, not lent."
         }
       ],
@@ -1512,7 +1512,7 @@
       "sense_id": 155,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">once in a blue moon</t>",
+      "content": "[once in a blue moon]",
       "correct": {
         "id": "5c3c3ceceb1c43b48e929848947bf3d5",
         "content": "Very rarely; almost never.",
@@ -1547,26 +1547,26 @@
       "sense_id": 122,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">reluctant</t> — Not willing or eager to do something, or done, given, or acting with hesitation and unwillingness.",
+      "content": "[reluctant] — Not willing or eager to do something, or done, given, or acting with hesitation and unwillingness.",
       "correct": {
         "id": "372a3c02205a4e98a7629ae1120232c0",
-        "content": "The university administration was <t inf=\"base\">reluctant</t> to increase tuition fees, doing so only after exhausting all available government subsidies.",
+        "content": "The university administration was [reluctant] to increase tuition fees, doing so only after exhausting all available government subsidies.",
         "explanation": "This sentence correctly uses 'reluctant' to describe an institution's unwillingness or hesitation to take an action, properly followed by a to-infinitive complement ('to increase')."
       },
       "distractors": [
         {
           "id": "11fb019d6ec8416da22d35caf8b6537c",
-          "content": "Although the lead architect saw merit in the revisions, she remained <t inf=\"base\">reluctant</t> to adopting the proposed structural changes.",
+          "content": "Although the lead architect saw merit in the revisions, she remained [reluctant] to adopting the proposed structural changes.",
           "explanation": "While 'reluctant' expresses unwillingness, standard grammar requires a to-infinitive complement ('reluctant to adopt') rather than the preposition 'to' followed by a gerund ('to adopting')."
         },
         {
           "id": "4607f2ee25d944ee899091af6f9edc80",
-          "content": "Many board members were initially <t inf=\"base\">reluctant</t> of the acquisition, questioning whether the startup's valuation was justified.",
+          "content": "Many board members were initially [reluctant] of the acquisition, questioning whether the startup's valuation was justified.",
           "explanation": "'Reluctant' does not collocate with the preposition 'of'. When expressing hesitation regarding a noun phrase, standard usage requires 'about' ('reluctant about the acquisition') or a to-infinitive clause ('reluctant to approve the acquisition')."
         },
         {
           "id": "22a39ae2432c4b5180c38cc9f69cd7a1",
-          "content": "The lead investigator was openly <t inf=\"base\">reluctant</t> that the suspect's alibi would hold up under closer scrutiny.",
+          "content": "The lead investigator was openly [reluctant] that the suspect's alibi would hold up under closer scrutiny.",
           "explanation": "'Reluctant' denotes hesitation or unwillingness to act, not cognitive disbelief or skepticism. Furthermore, it cannot govern a declarative 'that'-clause; an adjective such as 'doubtful' or 'skeptical' is required."
         }
       ],
@@ -1687,7 +1687,7 @@
       "sense_id": 3,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">bank</t>",
+      "content": "[bank]",
       "correct": {
         "id": "14d8b0836dcd42d98dbea45a44a1ac95",
         "content": "A raised mound, ridge, or steep heap of earth, sand, snow, clouds, or other material.",
@@ -1722,26 +1722,26 @@
       "sense_id": 156,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">a piece of cake</t> — something that is very easy and simple to do or achieve",
+      "content": "[a piece of cake] — something that is very easy and simple to do or achieve",
       "correct": {
         "id": "0f6c6c20a2ae4bdc80f53dbe678f2231",
-        "content": "The intuitive user interface makes updating the company blog <t inf=\"base\">a</t> <t inf=\"base\">piece</t> <t inf=\"base\">of</t> <t inf=\"base\">cake</t>, even for staff members without technical training.",
+        "content": "The intuitive user interface makes updating the company blog [a] [piece] [of] [cake], even for staff members without technical training.",
         "explanation": "This sentence correctly uses the idiom in the pattern 'make something a piece of cake' to describe an activity (updating the blog) that is straightforward and effortless to carry out."
       },
       "distractors": [
         {
           "id": "cf0e44db322e429e93b910020685b27b",
-          "content": "The hotel room had a stunning ocean view, and the complimentary breakfast was <t inf=\"base\">a</t> <t inf=\"base\">piece</t> <t inf=\"base\">of</t> <t inf=\"base\">cake</t> that made our stay unforgettable.",
+          "content": "The hotel room had a stunning ocean view, and the complimentary breakfast was [a] [piece] [of] [cake] that made our stay unforgettable.",
           "explanation": "This sentence confuses 'a piece of cake' with 'the icing on the cake'. While 'the icing on the cake' refers to an extra perk or enhancement that makes an already good situation even better, 'a piece of cake' denotes an action or task that is easy to do or achieve."
         },
         {
           "id": "69caefcadfef4c47a8d6d82d9fe8388e",
-          "content": "After the startup secured millions in new funding, every early investor demanded <t inf=\"base\">a</t> <t inf=\"base\">piece</t> <t inf=\"base\">of</t> <t inf=\"base\">cake</t>.",
+          "content": "After the startup secured millions in new funding, every early investor demanded [a] [piece] [of] [cake].",
           "explanation": "This sentence confuses 'a piece of cake' with 'a piece of the pie'. In financial and business contexts, demanding a share or cut of profits or capital is expressed by 'a piece of the pie', whereas 'a piece of cake' refers only to an easily accomplished task."
         },
         {
           "id": "14661fad705848258468bf34af87b053",
-          "content": "Our IT specialist solved the database connection error <t inf=\"base\">a</t> <t inf=\"base\">piece</t> <t inf=\"base\">of</t> <t inf=\"base\">cake</t> before anyone else noticed the outage.",
+          "content": "Our IT specialist solved the database connection error [a] [piece] [of] [cake] before anyone else noticed the outage.",
           "explanation": "This sentence misuses 'a piece of cake' as an adverbial modifier of manner to mean 'easily'. As a noun phrase, the idiom functions predicatively (for example, 'solving the error was a piece of cake') rather than as an adverb modifying the verb 'solved'."
         }
       ],
@@ -1862,7 +1862,7 @@
       "sense_id": 38,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">advice</t>",
+      "content": "[advice]",
       "correct": {
         "id": "9948dca3d43d45e09831c91b69eabb3c",
         "content": "Suggestions or recommendations offered to someone about what they should do or how they should handle a situation",
@@ -1897,26 +1897,26 @@
       "sense_id": 40,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">research</t> — The systematic study and investigation of materials, sources, or data in order to discover new facts, test theories, or reach a deeper understanding of a subject.",
+      "content": "[research] — The systematic study and investigation of materials, sources, or data in order to discover new facts, test theories, or reach a deeper understanding of a subject.",
       "correct": {
         "id": "00e5f09c73a14512bc3662ab7f38b381",
-        "content": "Her team conducted independent <t inf=\"base\">research</t> into the long-term cognitive benefits of bilingual education.",
+        "content": "Her team conducted independent [research] into the long-term cognitive benefits of bilingual education.",
         "explanation": "This sentence correctly uses 'research' as an uncountable noun with the verb 'conduct' to describe a systematic academic investigation."
       },
       "distractors": [
         {
           "id": "335c48ccce304df784affa06448fafd9",
-          "content": "The committee made extensive <t inf=\"base\">research</t> into the environmental impact of the new highway before issuing its recommendations.",
+          "content": "The committee made extensive [research] into the environmental impact of the new highway before issuing its recommendations.",
           "explanation": "In English, 'research' does not collocate with the verb 'make'. Standard collocations include 'do', 'conduct', or 'carry out' research."
         },
         {
           "id": "3e2ac79dd6b64594b71a92c373362a85",
-          "content": "The department recently published a comprehensive <t inf=\"base\">research</t> analyzing employment rates among recent university graduates.",
+          "content": "The department recently published a comprehensive [research] analyzing employment rates among recent university graduates.",
           "explanation": "In the displayed modern general-English meaning, research is used as an uncountable noun. This sentence should use a comprehensive study or a comprehensive piece of research rather than a comprehensive research."
         },
         {
           "id": "86fcfd89c86c46d187f07418903ff12f",
-          "content": "Rescue teams conducted extensive <t inf=\"base\">research</t> across the national park to find the lost hikers before nightfall.",
+          "content": "Rescue teams conducted extensive [research] across the national park to find the lost hikers before nightfall.",
           "explanation": "This sentence confuses 'research' with 'search'. 'Research' refers to systematic intellectual or scientific study, whereas physically looking for missing persons in a location is a 'search'."
         }
       ],
@@ -2037,7 +2037,7 @@
       "sense_id": 136,
       "theme_id": null,
       "question_type": "WORD_TO_DEFINITION",
-      "content": "<t inf=\"base\">look after</t>",
+      "content": "[look after]",
       "correct": {
         "id": "78f80ee670014846b2eca4383e5ee6e9",
         "content": "To take care of someone or something, keeping them safe, healthy, or in good condition",
@@ -2072,26 +2072,26 @@
       "sense_id": 87,
       "theme_id": null,
       "question_type": "WORD_TO_USAGE",
-      "content": "<t inf=\"base\">raise</t> — to care for a child until they are fully grown",
+      "content": "[raise] — to care for a child until they are fully grown",
       "correct": {
         "id": "f5534c1b88864254b6dc390a964bf526",
-        "content": "After moving to the countryside, the couple spent the next two decades <t inf=\"ing\">raising</t> four children on their family farm.",
+        "content": "After moving to the countryside, the couple spent the next two decades [raising|ing] four children on their family farm.",
         "explanation": "This sentence correctly uses \"raise\" as a transitive verb with the direct object \"four children\" to describe nurturing and caring for offspring throughout their youth."
       },
       "distractors": [
         {
           "id": "5bd624e41e8b4445aa72717963b079e1",
-          "content": "Even though he <t inf=\"past\">raised</t> in a bilingual household, he never became completely comfortable speaking French.",
+          "content": "Even though he [raised|p] in a bilingual household, he never became completely comfortable speaking French.",
           "explanation": "Here, \"raise\" is incorrectly used as an intransitive verb in place of \"grew up.\" In the sense of childhood upbringing, \"raise\" requires a direct object or a passive construction (e.g., \"he was raised in a bilingual household\")."
         },
         {
           "id": "a16fd07f56e04002b1b8142147a4ab2d",
-          "content": "The parent-teacher association organized an annual charity dinner to <t inf=\"base\">raise</t> funds for new classroom computers.",
+          "content": "The parent-teacher association organized an annual charity dinner to [raise] funds for new classroom computers.",
           "explanation": "In this sentence, \"raise\" means to collect or accumulate money, which does not match the displayed sense of caring for a child until adulthood."
         },
         {
           "id": "83ff71238eee4d048051468b290f8bb6",
-          "content": "During the staff meeting, several teachers decided to <t inf=\"base\">raise</t> concerns regarding the recent changes to the school schedule.",
+          "content": "During the staff meeting, several teachers decided to [raise] concerns regarding the recent changes to the school schedule.",
           "explanation": "In this context, \"raise\" means to bring up or introduce a topic or question for discussion rather than caring for a child until they are fully grown."
         }
       ],
